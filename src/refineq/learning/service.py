@@ -122,7 +122,7 @@ class AnswerResponse(BaseModel):
 class ProgressResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    project_id: str
+    workspace_id: str
     goal: str
     mastery: dict[str, float]
     diagnostic_count: int
@@ -159,7 +159,7 @@ class LearningService:
         progress = LearningService._progress(data)
         plan = progress.get("plan")
         return ProgressResponse(
-            project_id=data["project_id"],
+            workspace_id=data.get("workspace_id") or data["project_id"],
             goal=progress["goal"],
             mastery={
                 topic_id: BKTState.model_validate(state).p_mastery

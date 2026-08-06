@@ -35,7 +35,7 @@ export function PracticeCard({
         <span className="practice-glyph" aria-hidden="true">Q</span>
       </div>
       {!question ? (
-        <button className="primary-action wide" onClick={onGetQuestion} disabled={busy}>
+        <button data-testid="get-question" className="primary-action wide" onClick={onGetQuestion} disabled={busy}>
           {t("getQuestion")} <ArrowRight size={18} />
         </button>
       ) : (
@@ -43,12 +43,14 @@ export function PracticeCard({
           <span className="topic-label">{question.topic_id}</span>
           <h3>{question.prompt}</h3>
           <textarea
+            data-testid="practice-answer"
             value={answer}
             onChange={(event) => onAnswerChange(event.target.value)}
             placeholder={t("answerPlaceholder")}
             rows={6}
           />
           <button
+            data-testid="submit-answer"
             className="primary-action"
             onClick={onSubmit}
             disabled={busy || answer.trim().length === 0}

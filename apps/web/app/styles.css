@@ -67,8 +67,8 @@ input, textarea { width: 100%; border: 0; border-bottom: 1px solid var(--ink); b
 .quiet-button:hover, .icon-button:hover { background: rgba(30,41,36,.07); }
 .dossier-rail { grid-row: 2 / 4; border-right: 1px solid var(--ink); padding: 34px 28px; display: flex; flex-direction: column; position: relative; background: rgba(238,233,220,.72); }
 .vertical-label { position: absolute; writing-mode: vertical-rl; right: 8px; bottom: 25px; font-size: 8px; letter-spacing: .18em; color: var(--muted); }
-.rail-project h1 { font-size: 37px; line-height: .95; margin: 13px 0 18px; }
-.rail-project p { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.rail-learning h1 { font-size: 37px; line-height: .95; margin: 13px 0 18px; }
+.rail-learning p { color: var(--muted); font-size: 12px; line-height: 1.7; }
 .mastery-dial { width: 142px; height: 142px; border-radius: 50%; margin: 45px auto; padding: 9px; background: conic-gradient(var(--jade) var(--mastery), rgba(30,41,36,.1) 0); position: relative; }
 .mastery-dial::before { content: ""; position: absolute; inset: 9px; border-radius: 50%; background: var(--paper); }
 .mastery-dial > div { position: relative; height: 100%; display: grid; place-content: center; text-align: center; }

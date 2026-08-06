@@ -84,6 +84,8 @@ def test_intents_create_reuse_switch_and_restore_learning_spaces(
         assert snapshot.status_code == 200
         body = snapshot.json()
         assert body["workspace"]["id"] == math_id
+        assert body["progress"]["workspace_id"] == math_id
+        assert "project_id" not in body["progress"]
         assert body["progress"]["goal"] == "我要在两周内复习高数极限"
         assert body["plan"]["sessions"]
         assert body["materials"][0]["filename"] == "limits.md"

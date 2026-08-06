@@ -26,18 +26,18 @@ from refineq.storage.json_store import (
     RecordNotFoundError,
 )
 from refineq.storage.learning import LearningRepository
-from refineq.storage.projects import ProjectRepository
+from refineq.storage.workspaces import WorkspaceRepository
 
 DEMO_EMAIL = "learner@refineq.local"
 DEMO_PASSWORD = "learn-with-refineq"
-DEMO_PROJECT_ID = "refineq-demo"
+DEMO_WORKSPACE_ID = "refineq-demo"
 DEMO_MATERIAL_ID = "demo-material"
 
 
 @dataclass(frozen=True, slots=True)
 class DemoResult:
     owner_id: str
-    project_id: str
+    workspace_id: str
     email: str
     password: str
 
@@ -78,14 +78,23 @@ def seed_demo(data_root: Path) -> DemoResult:
         user = identity.authenticate(email=DEMO_EMAIL, password=DEMO_PASSWORD)
 
     store = AtomicJsonStore(root)
-    projects = ProjectRepository(store)
+    workspaces = WorkspaceRepository(store)
     learning = LearningRepository(store)
-    service = LearningService(projects, learning)
+    service = LearningService(workspaces, learning)
     with suppress(RecordAlreadyExistsError):
-        projects.create(user.id, DEMO_PROJECT_ID, name="Calculus Sprint")
+        workspaces.create(
+            user.id,
+            DEMO_WORKSPACE_ID,
+            title="Calculus Sprint",
+            subject="mathematics",
+            goal="Master the calculus foundations for the final exam",
+            topics=["Derivative", "Chain Rule", "Integral"],
+            keywords=["calculus", "derivative", "chain rule", "integral"],
+            routing_summary="Presentation-ready demo learning space.",
+        )
 
     try:
-        learning_record = learning.get(user.id, DEMO_PROJECT_ID)
+        learning_record = learning.get(user.id, DEMO_WORKSPACE_ID)
         seeded = bool(learning_record.data.get("progress", {}).get("seeded"))
     except RecordNotFoundError:
         seeded = False
@@ -93,7 +102,7 @@ def seed_demo(data_root: Path) -> DemoResult:
     if not seeded:
         service.seed(
             user.id,
-            DEMO_PROJECT_ID,
+            DEMO_WORKSPACE_ID,
             SeedRequest(
                 goal="Master the calculus foundations for the final exam",
                 exam_at=datetime.now(UTC) + timedelta(days=14),
@@ -119,7 +128,7 @@ def seed_demo(data_root: Path) -> DemoResult:
         )
         service.diagnose(
             user.id,
-            DEMO_PROJECT_ID,
+            DEMO_WORKSPACE_ID,
             DiagnosticRequest(
                 diagnostic_id="demo-diagnostic",
                 results=[
@@ -129,11 +138,11 @@ def seed_demo(data_root: Path) -> DemoResult:
                 ],
             ),
         )
-        service.create_plan(user.id, DEMO_PROJECT_ID)
-        question = service.next_question(user.id, DEMO_PROJECT_ID)
+        service.create_plan(user.id, DEMO_WORKSPACE_ID)
+        question = service.next_question(user.id, DEMO_WORKSPACE_ID)
         service.submit_answer(
             user.id,
-            DEMO_PROJECT_ID,
+            DEMO_WORKSPACE_ID,
             AnswerRequest(
                 attempt_id="demo-attempt",
                 question_id=question.id,
@@ -145,7 +154,7 @@ def seed_demo(data_root: Path) -> DemoResult:
     try:
         knowledge.get_material(
             owner_id=user.id,
-            project_id=DEMO_PROJECT_ID,
+            project_id=DEMO_WORKSPACE_ID,
             material_id=DEMO_MATERIAL_ID,
         )
     except MaterialNotFoundError:
@@ -159,15 +168,15 @@ def seed_demo(data_root: Path) -> DemoResult:
             / "users"
             / user.id
             / "knowledge"
-            / "projects"
-            / DEMO_PROJECT_ID
+            / "workspaces"
+            / DEMO_WORKSPACE_ID
             / "materials"
             / f"{DEMO_MATERIAL_ID}.txt"
         )
         _write_once(material_path, material_text.encode("utf-8"))
         knowledge.add_document(
             owner_id=user.id,
-            project_id=DEMO_PROJECT_ID,
+            project_id=DEMO_WORKSPACE_ID,
             material_id=DEMO_MATERIAL_ID,
             filename="calculus-notes.txt",
             text=material_text,
@@ -175,7 +184,7 @@ def seed_demo(data_root: Path) -> DemoResult:
 
     return DemoResult(
         owner_id=user.id,
-        project_id=DEMO_PROJECT_ID,
+        workspace_id=DEMO_WORKSPACE_ID,
         email=DEMO_EMAIL,
         password=DEMO_PASSWORD,
     )

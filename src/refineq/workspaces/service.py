@@ -14,6 +14,7 @@ from refineq.learning.service import LearningService, ProgressResponse, SeedRequ
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.workspaces import WorkspaceRepository
+from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.routing import route_workspace
 
@@ -74,11 +75,13 @@ class WorkspaceService:
         learning: LearningRepository,
         learning_service: LearningService,
         knowledge: KnowledgeIndex,
+        routing: WorkspaceRoutingIntelligence | None = None,
     ) -> None:
         self._workspaces = workspaces
         self._learning = learning
         self._learning_service = learning_service
         self._knowledge = knowledge
+        self._routing = routing
 
     def resolve(
         self,
@@ -88,7 +91,12 @@ class WorkspaceService:
         now: datetime | None = None,
     ) -> WorkspaceRouteResponse:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
-        decision = route_workspace(payload.intent, self._workspaces.list(owner_id))
+        workspaces = self._workspaces.list(owner_id)
+        decision = (
+            self._routing.route(payload.intent, owner_id, workspaces)
+            if self._routing is not None
+            else route_workspace(payload.intent, workspaces)
+        )
         if decision.workspace_id is not None:
             workspace = self._workspaces.touch(
                 owner_id,
@@ -152,4 +160,3 @@ class WorkspaceService:
                 project_id=workspace_id,
             ),
         )
-

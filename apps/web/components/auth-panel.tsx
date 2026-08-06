@@ -54,18 +54,18 @@ export function AuthPanel({
           <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
             {t("login")}
           </button>
-          <button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>
+          <button data-testid="register-tab" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>
             {t("register")}
           </button>
         </div>
         <form onSubmit={submit}>
           {mode === "register" && (
-            <label>{t("displayName")}<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required /></label>
+            <label>{t("displayName")}<input data-testid="display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required /></label>
           )}
-          <label>{t("email")}<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label>{t("password")}<input type="password" minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+          <label>{t("email")}<input data-testid="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+          <label>{t("password")}<input data-testid="password" type="password" minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
           {error && <p className="form-error">{error}</p>}
-          <button className="primary-action wide" disabled={busy}>
+          <button data-testid="auth-submit" className="primary-action wide" disabled={busy}>
             <LockKeyhole size={17} /> {busy ? t("loading") : t(mode)} <ArrowUpRight size={18} />
           </button>
         </form>

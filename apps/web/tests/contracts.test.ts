@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
@@ -18,10 +21,10 @@ describe("authentication and API errors", () => {
   });
 
   it("preserves stable API error codes", () => {
-    const error = new ApiError(404, "project_not_found", "Project not found");
+    const error = new ApiError(404, "workspace_not_found", "Learning space not found");
 
     expect(error.status).toBe(404);
-    expect(error.code).toBe("project_not_found");
+    expect(error.code).toBe("workspace_not_found");
   });
 
   it("turns an API error envelope into ApiError", async () => {
@@ -65,6 +68,21 @@ describe("authentication and API errors", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+
+describe("projectless product surface", () => {
+  it("does not ship the retired project wizard or call project routes", () => {
+    const wizard = fileURLToPath(new URL("../components/goal-wizard.tsx", import.meta.url));
+    const apiSource = readFileSync(
+      fileURLToPath(new URL("../lib/api.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(wizard)).toBe(false);
+    expect(apiSource).not.toContain("/projects/");
+    expect(apiSource).not.toContain("createProject");
   });
 });
 

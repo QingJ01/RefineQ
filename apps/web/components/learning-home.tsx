@@ -37,13 +37,14 @@ export function LearningHome({
         <p>{t("learningPromptHint")}</p>
         <form className="intent-compose" onSubmit={submit}>
           <textarea
+            data-testid="learning-intent"
             value={intent}
             onChange={(event) => setIntent(event.target.value)}
             placeholder={t("learningIntentPlaceholder")}
             rows={4}
             autoFocus
           />
-          <button className="primary-action" disabled={busy || !intent.trim()}>
+          <button data-testid="start-learning" className="primary-action" disabled={busy || !intent.trim()}>
             <Sparkles size={17} /> {busy ? t("loading") : t("startLearning")}
             <ArrowRight size={18} />
           </button>
@@ -71,4 +72,3 @@ export function LearningHome({
     </main>
   );
 }
-

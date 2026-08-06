@@ -1,4 +1,4 @@
-"""Idempotent persistence for project learning state."""
+"""Idempotent persistence for personal learning-space state."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class LearningRepository:
                     owner_id,
                     "learning",
                     project_id,
-                    {"project_id": project_id, "attempts": {}, "progress": {}},
+                    {"workspace_id": project_id, "attempts": {}, "progress": {}},
                     schema_version=LEARNING_SCHEMA_VERSION,
                 )
             except RecordAlreadyExistsError:

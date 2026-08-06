@@ -1,19 +1,21 @@
 # RefineQ（砺问）
 
-RefineQ 是面向高中生、大学生和高级学习者的个人学习 Agent。用户可以上传自己的
-教材、讲义、试卷和笔记，系统据此完成目标拆解、诊断、每日计划、针对性练习、
-错因反馈、间隔复习和可追溯的学习进度记录。
+RefineQ 是面向高中生、大学生和高级学习者的个人学习 Agent。用户只需说出“今天
+想学什么”，系统会自动识别学习方向、建立或切换学习空间，并恢复该方向下的资料、
+计划、练习与进度。用户也可以上传自己的教材、讲义、试卷和笔记。
 
 它不会把“聊过了”当成“学会了”。掌握度必须由作答、复习和引用证据共同支撑。
 
 ## 主要能力
 
-- 为考试日期、科目、每日时间预算和成功标准建立独立学习项目。
-- 上传 PDF、DOCX、Markdown 和纯文本资料，建立按用户与项目隔离的知识索引。
+- 根据自然语言意图自动建立、复用或切换个人学习空间，并在刷新后恢复现场。
+- 上传 PDF、DOCX、Markdown 和纯文本资料，建立按用户与学习空间隔离的知识索引。
 - 使用 BKT 更新掌握度，用诊断结果和截止日期生成可解释的今日计划。
+- 基于个人资料生成题目，使用结构化评分量表判分并解释优点、缺口和误区。
 - 保存作答、错因、难度变化与间隔复习状态，形成连续学习证据。
 - 在 Agent 对话中自动带入当前目标、薄弱点、计划和资料引用。
-- 提供中英文界面、模型设置、本地备份恢复和容器化部署。
+- 模型未配置或暂时不可用时，自动使用确定性路由、出题和判分降级流程。
+- 提供中英文界面、每位学习者独立的模型设置、本地备份恢复和容器化部署。
 
 ## 技术栈
 
@@ -71,6 +73,7 @@ npm run build
 python scripts/seed_demo.py --data-root .\data-demo
 python scripts/backup.py .\backups\refineq.zip --data-root .\data
 python scripts/restore.py .\backups\refineq.zip .\restored-data
+python scripts/migrate_workspaces.py .\data .\backups\before-workspaces.zip
 ```
 
 完整的校验规则与迁移方式见 [运维指南](docs/operations.md)。

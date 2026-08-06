@@ -155,13 +155,16 @@ class AgentService:
         validate_identifier(session_id, field="session_id")
         try:
             session = self._sessions.get(owner_id, session_id)
-            if session.data.get("project_id") != project_id:
-                raise AgentSessionConflictError("Session belongs to another project")
+            session_workspace_id = session.data.get("workspace_id") or session.data.get(
+                "project_id"
+            )
+            if session_workspace_id != project_id:
+                raise AgentSessionConflictError("Session belongs to another learning space")
         except RecordNotFoundError:
             session = self._sessions.create(
                 owner_id,
                 session_id,
-                {"project_id": project_id, "messages": []},
+                {"workspace_id": project_id, "messages": []},
             )
 
         history = [

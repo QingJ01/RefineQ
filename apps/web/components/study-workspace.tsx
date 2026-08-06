@@ -243,12 +243,12 @@ export function StudyWorkspace() {
       </header>
       <aside className="dossier-rail">
         <span className="vertical-label">PERSONAL MEMORY · ACTIVE</span>
-        <div className="rail-project"><span className="kicker">CURRENT LEARNING</span><h1>{workspace.title}</h1><p>{workspace.goal}</p></div>
+        <div className="rail-learning"><span className="kicker">CURRENT LEARNING</span><h1>{workspace.title}</h1><p>{workspace.goal}</p></div>
         <div className="mastery-dial" style={{ "--mastery": `${Math.round(averageMastery * 360)}deg` } as React.CSSProperties}><div><strong>{Math.round(averageMastery * 100)}</strong><span>% {t("mastery")}</span></div></div>
         <dl className="rail-stats"><div><dt>{t("attempts")}</dt><dd>{String(progress?.attempt_count ?? 0).padStart(2, "0")}</dd></div><div><dt>{t("diagnostic")}</dt><dd>{String(progress?.diagnostic_count ?? 0).padStart(2, "0")}</dd></div></dl>
         <button className="quiet-button switch-learning" onClick={() => setWorkspace(null)}><Sparkles size={15} /> {t("recentLearning")}</button>
       </aside>
-      <nav className="study-nav" aria-label="Study sections">{nav.map(({ id, icon: Icon }, index) => <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{String(index + 1).padStart(2, "0")}</span><Icon size={18} />{t(id)}</button>)}</nav>
+      <nav className="study-nav" aria-label="Study sections">{nav.map(({ id, icon: Icon }, index) => <button key={id} data-testid={`nav-${id}`} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{String(index + 1).padStart(2, "0")}</span><Icon size={18} />{t(id)}</button>)}</nav>
       <section className="workspace-main">
         {error && <div className="error-banner"><strong>{t("error")}</strong><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
         {section === "today" && <div className="today-grid"><div className="daily-heading"><span className="kicker">TODAY / FOCUS</span><h2>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date())}</h2></div><PlanTimeline plan={plan} locale={locale} t={t} /><PracticeCard question={question} answer={answer} result={result} busy={busy} onAnswerChange={setAnswer} onGetQuestion={getQuestion} onSubmit={submitAnswer} t={t} /></div>}

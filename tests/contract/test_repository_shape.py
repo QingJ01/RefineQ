@@ -43,6 +43,9 @@ FORBIDDEN_ROOT_FILES = {
     "requirements.txt",
     "SKILL.md",
 }
+FORBIDDEN_PRODUCT_PATHS = {
+    "apps/web/components/goal-wizard.tsx",
+}
 TEXT_SUFFIXES = {
     ".css",
     ".html",
@@ -87,6 +90,19 @@ def test_final_repository_roots_are_focused() -> None:
         assert not (REPOSITORY_ROOT / relative_path).exists(), (
             f"Superseded root file still exists: {relative_path}"
         )
+    for relative_path in FORBIDDEN_PRODUCT_PATHS:
+        assert not (REPOSITORY_ROOT / relative_path).exists(), (
+            f"Superseded product path still exists: {relative_path}"
+        )
+
+
+def test_browser_client_uses_only_learning_workspace_routes() -> None:
+    api_source = (REPOSITORY_ROOT / "apps" / "web" / "lib" / "api.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/projects/" not in api_source
+    assert "createProject" not in api_source
 
 
 def test_tracked_product_text_has_no_legacy_brand_names() -> None:

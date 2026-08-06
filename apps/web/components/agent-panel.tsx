@@ -44,7 +44,7 @@ export function AgentPanel({ token, workspaceId, t }: { token: string; workspace
 
   return (
     <section className="paper-card agent-card">
-      <div className="section-heading"><div><span className="kicker">GROUNDED / PROJECT</span><h2>{t("askCoach")}</h2></div><button className="icon-button" onClick={() => setShowSettings((value) => !value)} aria-label={t("modelSettings")}><Settings2 size={20} /></button></div>
+      <div className="section-heading"><div><span className="kicker">GROUNDED / LEARNING MEMORY</span><h2>{t("askCoach")}</h2></div><button data-testid="model-settings" className="icon-button" onClick={() => setShowSettings((value) => !value)} aria-label={t("modelSettings")}><Settings2 size={20} /></button></div>
       {showSettings && <form className="settings-strip" onSubmit={saveSettings}><label>{t("baseUrl")}<input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} required /></label><label>{t("model")}<input value={model} onChange={(e) => setModel(e.target.value)} required /></label><label>{t("apiKey")}<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} required /></label><button className="secondary-action">{t("save")}</button></form>}
       <div className="chat-log">
         {messages.length === 0 && <div className="agent-empty"><Bot size={32} strokeWidth={1.2} /><p>{t("messagePlaceholder")}</p></div>}

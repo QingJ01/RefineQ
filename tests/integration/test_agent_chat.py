@@ -212,3 +212,6 @@ def test_agent_chat_works_through_an_implicit_workspace(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["citations"] == ["material-1#0"]
     assert transport.calls
+    session = app.state.sessions.get(user["user_id"], response.json()["session_id"])
+    assert session.data["workspace_id"] == workspace_id
+    assert "project_id" not in session.data

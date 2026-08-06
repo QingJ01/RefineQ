@@ -35,6 +35,7 @@ from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
 from refineq.storage.workspaces import WorkspaceRepository
+from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.service import WorkspaceService
 
 
@@ -74,6 +75,10 @@ def create_app(
         learning=app.state.learning,
         learning_service=app.state.workspace_learning_service,
         knowledge=app.state.knowledge,
+        routing=WorkspaceRoutingIntelligence(
+            app.state.model_settings,
+            learning_model_transport or OpenAICompatibleStructuredTransport(),
+        ),
     )
     app.state.sessions = SessionRepository(app.state.store)
     app.state.agent = AgentService(

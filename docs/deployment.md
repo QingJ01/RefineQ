@@ -60,5 +60,6 @@ docker compose --env-file .env -f infra/compose.yml up -d
 docker compose --env-file .env -f infra/compose.yml ps
 ```
 
-Keep the previous images and a verified backup until registration, upload, planning, practice, and
-Agent navigation have all been smoke-tested.
+Keep the previous images and a verified backup until registration, automatic learning-space
+routing, upload, question grading, refresh recovery, and Agent navigation have all been
+smoke-tested.

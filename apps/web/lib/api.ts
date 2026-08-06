@@ -2,15 +2,10 @@ import type {
   AgentReply,
   AnswerResult,
   AuthResponse,
-  LearningEvidence,
   LearningWorkspace,
   MaterialRecord,
   PracticeQuestion,
-  Progress,
-  Project,
   PublicModelSettings,
-  StudyPlan,
-  TopicSeed,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -87,14 +82,6 @@ export class ApiClient {
     return this.request("/auth/me", {}, token);
   }
 
-  createProject(token: string, name: string): Promise<Project> {
-    return this.request(
-      "/projects",
-      { method: "POST", body: JSON.stringify({ name }) },
-      token,
-    );
-  }
-
   listWorkspaces(token: string): Promise<LearningWorkspace[]> {
     return this.request("/workspaces", {}, token);
   }
@@ -109,59 +96,6 @@ export class ApiClient {
 
   getWorkspaceSnapshot(token: string, workspaceId: string): Promise<WorkspaceSnapshot> {
     return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
-  }
-
-  seedProject(
-    token: string,
-    projectId: string,
-    input: {
-      goal: string;
-      exam_at: string;
-      daily_minutes: number;
-      topics: TopicSeed[];
-    },
-  ): Promise<Progress> {
-    return this.request(
-      `/projects/${projectId}/learning/seed`,
-      { method: "POST", body: JSON.stringify(input) },
-      token,
-    );
-  }
-
-  createPlan(token: string, projectId: string): Promise<StudyPlan> {
-    return this.request(
-      `/projects/${projectId}/learning/plan`,
-      { method: "POST" },
-      token,
-    );
-  }
-
-  getProgress(token: string, projectId: string): Promise<Progress> {
-    return this.request(`/projects/${projectId}/learning/progress`, {}, token);
-  }
-
-  getQuestion(token: string, projectId: string): Promise<PracticeQuestion> {
-    return this.request(`/projects/${projectId}/learning/question`, {}, token);
-  }
-
-  submitAnswer(
-    token: string,
-    projectId: string,
-    questionId: string,
-    answer: string,
-  ): Promise<AnswerResult> {
-    return this.request(
-      `/projects/${projectId}/learning/answer`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          attempt_id: crypto.randomUUID().replaceAll("-", ""),
-          question_id: questionId,
-          answer,
-        }),
-      },
-      token,
-    );
   }
 
   getWorkspaceQuestion(token: string, workspaceId: string): Promise<PracticeQuestion> {
@@ -188,24 +122,6 @@ export class ApiClient {
     );
   }
 
-  getEvidence(token: string, projectId: string): Promise<LearningEvidence[]> {
-    return this.request(`/projects/${projectId}/learning/evidence`, {}, token);
-  }
-
-  uploadMaterials(
-    token: string,
-    projectId: string,
-    files: File[],
-  ): Promise<MaterialRecord[]> {
-    const body = new FormData();
-    files.forEach((file) => body.append("files", file));
-    return this.request(
-      `/projects/${projectId}/materials`,
-      { method: "POST", body },
-      token,
-    );
-  }
-
   uploadWorkspaceMaterials(
     token: string,
     workspaceId: string,
@@ -216,22 +132,6 @@ export class ApiClient {
     return this.request(
       `/workspaces/${workspaceId}/materials`,
       { method: "POST", body },
-      token,
-    );
-  }
-
-  chat(
-    token: string,
-    projectId: string,
-    message: string,
-    sessionId?: string,
-  ): Promise<AgentReply> {
-    return this.request(
-      `/projects/${projectId}/agent/chat`,
-      {
-        method: "POST",
-        body: JSON.stringify({ message, session_id: sessionId }),
-      },
       token,
     );
   }

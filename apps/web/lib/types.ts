@@ -13,12 +13,6 @@ export interface AuthResponse {
   user: User;
 }
 
-export interface Project {
-  id: string;
-  name: string;
-  created_at: string;
-}
-
 export interface LearningWorkspace {
   id: string;
   title: string;
@@ -46,14 +40,6 @@ export interface WorkspaceSnapshot {
   materials: MaterialRecord[];
 }
 
-export type KnowledgeType = "memory" | "concept" | "procedure" | "design";
-
-export interface TopicSeed {
-  id: string;
-  name: string;
-  knowledge_type: KnowledgeType;
-}
-
 export interface StudySession {
   id: string;
   topic_id: string;
@@ -70,7 +56,6 @@ export interface StudyPlan {
 }
 
 export interface Progress {
-  project_id: string;
   goal: string;
   mastery: Record<string, number>;
   diagnostic_count: number;
@@ -123,7 +108,6 @@ export interface LearningEvidence {
 
 export interface MaterialRecord {
   id: string;
-  project_id: string;
   filename: string;
   content_type: string;
   size: number;

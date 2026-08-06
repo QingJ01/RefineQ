@@ -16,9 +16,8 @@ def main() -> None:
     root = arguments.data_root or Settings().data_root
     result = seed_demo(root)
     print(f"Demo ready: {result.email} / {result.password}")
-    print(f"Project: {result.project_id}")
+    print(f"Learning space: {result.workspace_id}")
 
 
 if __name__ == "__main__":
     main()
-

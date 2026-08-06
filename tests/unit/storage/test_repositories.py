@@ -42,6 +42,8 @@ def test_attempt_writes_are_idempotent(tmp_path: Path) -> None:
     assert replay.replayed is True
     assert replay.attempt == first.attempt
     assert len(replay.record.data["attempts"]) == 1
+    assert replay.record.data["workspace_id"] == "project-1"
+    assert "project_id" not in replay.record.data
 
 
 def test_session_repository_persists_versioned_session_data(tmp_path: Path) -> None:

@@ -1,61 +1,67 @@
 import { expect, test } from "@playwright/test";
 
 
-test("learner completes the evidence-driven study journey", async ({ page }) => {
+test("learner completes and restores a projectless study journey", async ({ page }) => {
   const uniqueEmail = `learner-${Date.now()}@example.com`;
-  const examDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
 
-  await test.step("register and define an exam goal", async () => {
+  await test.step("register and let the Agent establish a learning space", async () => {
     await page.goto("/");
-    await page.locator(".auth-tabs").getByRole("button", { name: "注册" }).click();
-    await page.getByLabel("怎么称呼你").fill("端到端学习者");
-    await page.getByLabel("邮箱").fill(uniqueEmail);
-    await page.getByLabel("密码").fill("correct-horse-battery-staple");
-    await page.locator("form").getByRole("button", { name: /注册/ }).click();
+    await page.getByTestId("register-tab").click();
+    await page.getByTestId("display-name").fill("End-to-end learner");
+    await page.getByTestId("email").fill(uniqueEmail);
+    await page.getByTestId("password").fill("correct-horse-battery-staple");
+    await page.getByTestId("auth-submit").click();
 
-    await expect(page.getByRole("heading", { name: "建立备考项目" })).toBeVisible();
-    await page.getByLabel("项目名称").fill("微积分冲刺");
-    await page.getByLabel("考试目标").fill("掌握极限与导数基础");
-    await page.getByLabel("考试日期").fill(examDate);
-    await page.getByLabel("每日分钟").fill("45");
-    await page.getByLabel("知识点（逗号分隔）").fill("Limits, Derivatives");
-    await page.getByRole("button", { name: /生成学习路径/ }).click();
+    await expect(page.getByTestId("learning-intent")).toBeVisible();
+    await page
+      .getByTestId("learning-intent")
+      .fill("I have a calculus exam in two weeks and want to review limits today");
+    await page.getByTestId("start-learning").click();
 
-    await expect(page.getByRole("heading", { name: "微积分冲刺" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "学习路径" })).toBeVisible();
+    await expect(page.locator(".rail-learning h1")).toBeVisible();
+    await expect(page.locator(".plan-card")).toBeVisible();
   });
 
+  const workspaceTitle = await page.locator(".rail-learning h1").innerText();
+
   await test.step("upload personal study material", async () => {
-    await page.getByRole("button", { name: /资料/ }).click();
+    await page.getByTestId("nav-materials").click();
     await page.locator('input[type="file"]').setInputFiles({
       name: "calculus-notes.txt",
       mimeType: "text/plain",
-      buffer: Buffer.from("A limit describes the value approached by a function."),
+      buffer: Buffer.from(
+        "Calculus limits describe the value approached by a function. For example, x squared approaches four as x approaches two.",
+      ),
     });
     await expect(page.getByText("calculus-notes.txt")).toBeVisible();
-    await expect(page.getByText(/资料已建立索引/)).toBeVisible();
   });
 
-  await test.step("answer a retrieval question and see progress evidence", async () => {
-    await page.getByRole("button", { name: /今日/ }).click();
-    await page.getByRole("button", { name: "抽一道题" }).click();
-    await expect(page.getByRole("heading", { name: "Define or explain: Limits" })).toBeVisible();
-    await page.getByPlaceholder("用自己的话写下答案……").fill("Limits");
-    await page.getByRole("button", { name: /提交作答/ }).click();
-    await expect(page.getByRole("status")).toContainText("已掌握");
+  await test.step("answer a generated question and record grading evidence", async () => {
+    await page.getByTestId("nav-today").click();
+    await page.getByTestId("get-question").click();
+    await expect(page.locator(".question-sheet h3")).toBeVisible();
+    await page
+      .getByTestId("practice-answer")
+      .fill(
+        "A calculus limit is the value that a function approaches. For example, x squared approaches four when x approaches two.",
+      );
+    await page.getByTestId("submit-answer").click();
+    await expect(page.getByRole("status")).toContainText(/评分|Score/);
     await expect(page.locator(".rail-stats")).toContainText("01");
 
-    await page.getByRole("button", { name: /证据/ }).click();
-    await expect(page.getByRole("heading", { name: "学习证据账本" })).toBeVisible();
-    await expect(page.getByText(/Practice response for topic-1 was correct/)).toBeVisible();
+    await page.getByTestId("nav-evidence").click();
+    await expect(page.locator(".ledger-list li")).toHaveCount(1);
   });
 
-  await test.step("open the project-grounded learning agent", async () => {
-    await page.getByRole("button", { name: /学习 Agent/ }).click();
-    await expect(page.getByRole("heading", { name: "向 Agent 提问" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "模型设置" })).toBeVisible();
+  await test.step("restore the same space and material after refresh", async () => {
+    await page.reload();
+    await expect(page.locator(".rail-learning h1")).toHaveText(workspaceTitle);
+    await page.getByTestId("nav-materials").click();
+    await expect(page.getByText("calculus-notes.txt")).toBeVisible();
+  });
+
+  await test.step("open the grounded learning Agent", async () => {
+    await page.getByTestId("nav-coach").click();
+    await expect(page.getByTestId("model-settings")).toBeVisible();
   });
 });
-

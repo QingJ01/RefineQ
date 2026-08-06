@@ -9,7 +9,7 @@ production backup or restore so the application and operator have a clear mainte
 python scripts/seed_demo.py --data-root .\data-demo
 ```
 
-The command prints the local demo credentials and project identifier. Re-running it leaves existing
+The command prints the local demo credentials and learning-space identifier. Re-running it leaves existing
 attempts, mastery, and plans unchanged.
 
 ## Backup
@@ -44,3 +44,16 @@ python scripts/migrate_data.py .\data .\data-new .\backups\before-migration.zip
 Migration is a backup followed by a verified restore. No destination file is written until the
 source backup has completed, and a non-empty destination is rejected.
 
+## Upgrade legacy project data
+
+```powershell
+python scripts/migrate_workspaces.py .\data .\backups\before-workspaces.zip
+```
+
+This command detects older `projects` records and converts them in place to personal learning
+spaces. It performs a complete conflict preflight and creates a verified full-data backup before
+changing the first record. Learning state and Agent sessions are relinked to `workspace_id`; the
+old record is removed only after the replacement is durable. Re-running the command is a no-op.
+
+Choose a new archive path outside the data root. If a workspace with the same ID but incompatible
+content already exists, migration stops without creating a backup or modifying data.
