@@ -34,6 +34,9 @@ test("learner completes and restores a projectless study journey", async ({ page
       ),
     });
     await expect(page.getByText("calculus-notes.txt")).toBeVisible();
+    await page.getByTestId("nav-today").click();
+    await page.getByTestId("nav-materials").click();
+    await expect(page.getByText("calculus-notes.txt")).toBeVisible();
   });
 
   await test.step("answer a generated question and record grading evidence", async () => {
@@ -49,8 +52,18 @@ test("learner completes and restores a projectless study journey", async ({ page
     await expect(page.getByRole("status")).toContainText(/评分|Score/);
     await expect(page.locator(".rail-stats")).toContainText("01");
 
+    await page.getByTestId("next-question").click();
+    await expect(page.getByTestId("practice-answer")).toBeVisible();
+    await page
+      .getByTestId("practice-answer")
+      .fill(
+        "A limit describes a function's approached value near a point. For example, x approaches two while x squared approaches four.",
+      );
+    await page.getByTestId("submit-answer").click();
+    await expect(page.locator(".rail-stats")).toContainText("02");
+
     await page.getByTestId("nav-evidence").click();
-    await expect(page.locator(".ledger-list li")).toHaveCount(1);
+    await expect(page.locator(".ledger-list li")).toHaveCount(2);
   });
 
   await test.step("restore the same space and material after refresh", async () => {
@@ -63,5 +76,11 @@ test("learner completes and restores a projectless study journey", async ({ page
   await test.step("open the grounded learning Agent", async () => {
     await page.getByTestId("nav-coach").click();
     await expect(page.getByTestId("model-settings")).toBeVisible();
+    await page.locator(".chat-compose textarea").fill("Explain my weakest point");
+    await page.locator(".chat-compose button").click();
+    await expect(page.locator(".agent-card .error-banner")).toContainText(
+      /模型设置|Configure a model/,
+    );
+    await expect(page.getByTestId("agent-retry")).toBeVisible();
   });
 });

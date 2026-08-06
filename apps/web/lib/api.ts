@@ -35,6 +35,7 @@ export class ApiClient {
   constructor(
     private readonly baseUrl = "/api",
     fetcher: Fetcher = globalThis.fetch.bind(globalThis),
+    private readonly timeoutMs = 30_000,
   ) {
     this.fetcher = fetcher;
   }
@@ -44,24 +45,45 @@ export class ApiClient {
     options: RequestInit = {},
     token: string | null = null,
   ): Promise<T> {
-    const isForm = options.body instanceof FormData;
-    const response = await this.fetcher(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: {
-        ...(isForm ? {} : { "Content-Type": "application/json" }),
-        ...authHeaders(token),
-        ...options.headers,
-      },
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      throw new ApiError(
-        response.status,
-        body?.error?.code ?? "request_error",
-        body?.error?.message ?? `Request failed (${response.status})`,
-      );
+    const controller = new AbortController();
+    const externalSignal = options.signal;
+    let timedOut = false;
+    const abortFromCaller = () => controller.abort(externalSignal?.reason);
+    if (externalSignal?.aborted) abortFromCaller();
+    else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.timeoutMs);
+    try {
+      const isForm = options.body instanceof FormData;
+      const response = await this.fetcher(`${this.baseUrl}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...(isForm ? {} : { "Content-Type": "application/json" }),
+          ...authHeaders(token),
+          ...options.headers,
+        },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new ApiError(
+          response.status,
+          body?.error?.code ?? "request_error",
+          body?.error?.message ?? `Request failed (${response.status})`,
+        );
+      }
+      return await response.json() as T;
+    } catch (caught) {
+      if (timedOut) {
+        throw new ApiError(408, "request_timeout", "Request timed out");
+      }
+      throw caught;
+    } finally {
+      clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", abortFromCaller);
     }
-    return response.json() as Promise<T>;
   }
 
   register(email: string, password: string, displayName: string): Promise<AuthResponse> {

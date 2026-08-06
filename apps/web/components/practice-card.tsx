@@ -38,7 +38,7 @@ export function PracticeCard({
         <button data-testid="get-question" className="primary-action wide" onClick={onGetQuestion} disabled={busy}>
           {t("getQuestion")} <ArrowRight size={18} />
         </button>
-      ) : (
+      ) : !result ? (
         <div className="question-sheet">
           <span className="topic-label">{question.topic_id}</span>
           <h3>{question.prompt}</h3>
@@ -58,19 +58,30 @@ export function PracticeCard({
             {t("submitAnswer")} <ArrowRight size={18} />
           </button>
         </div>
-      )}
+      ) : null}
       {result && status && (
         <div className={`practice-result ${status}`} role="status">
           {status === "mastered" ? <CheckCircle2 size={19} /> : <RotateCcw size={19} />}
           <div>
             <strong>{t(status === "mastered" ? "correct" : status)}</strong>
             <span>{t("score")}: {result.score} / 100 · {t("mastery")}: {Math.round(result.mastery * 100)}%</span>
+            {!result.mastery_updated && <p>{t("masteryNotUpdated")}</p>}
             {result.feedback && <p>{result.feedback}</p>}
             {result.strengths.length > 0 && <section><b>{t("strengths")}</b><ul>{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section>}
             {result.gaps.length > 0 && <section><b>{t("gaps")}</b><ul>{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul></section>}
             {result.misconceptions.length > 0 && <section><b>{t("misconceptions")}</b><ul>{result.misconceptions.map((item) => <li key={item}>{item}</li>)}</ul></section>}
           </div>
         </div>
+      )}
+      {result && (
+        <button
+          data-testid="next-question"
+          className="primary-action wide"
+          onClick={onGetQuestion}
+          disabled={busy}
+        >
+          {t("nextQuestion")} <ArrowRight size={18} />
+        </button>
       )}
     </section>
   );

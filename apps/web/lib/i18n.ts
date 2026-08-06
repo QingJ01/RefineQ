@@ -26,6 +26,7 @@ export const messages = {
     minutes: "分钟",
     practice: "主动练习",
     getQuestion: "抽一道题",
+    nextQuestion: "下一题",
     submitAnswer: "提交作答",
     answerPlaceholder: "用自己的话写下答案……",
     upload: "上传学习资料",
@@ -62,6 +63,9 @@ export const messages = {
     gaps: "还需补充",
     misconceptions: "需要纠正的误区",
     aiGraded: "AI 结构化判分",
+    masteryNotUpdated: "这次回答信息不足，已记录反馈，但没有改变掌握度。",
+    modelRequired: "请先完成模型设置，再向学习 Agent 提问。",
+    settingsSaved: "模型设置已保存",
   },
   en: {
     brandTagline: "Turn every study session into verifiable progress",
@@ -87,6 +91,7 @@ export const messages = {
     minutes: "minutes",
     practice: "Active practice",
     getQuestion: "Draw a question",
+    nextQuestion: "Next question",
     submitAnswer: "Submit answer",
     answerPlaceholder: "Explain it in your own words…",
     upload: "Upload study material",
@@ -123,6 +128,9 @@ export const messages = {
     gaps: "What to add",
     misconceptions: "Misconceptions to correct",
     aiGraded: "Structured AI grading",
+    masteryNotUpdated: "This answer was recorded, but confidence was too low to change mastery.",
+    modelRequired: "Configure a model before asking the learning Agent.",
+    settingsSaved: "Model settings saved",
   },
 } as const;
 

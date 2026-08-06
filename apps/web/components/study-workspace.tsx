@@ -196,6 +196,27 @@ export function StudyWorkspace() {
     }
   }
 
+  async function uploadMaterials(files: File[]): Promise<MaterialRecord[]> {
+    if (!auth || !workspace) return [];
+    setError("");
+    try {
+      const uploaded = await api.uploadWorkspaceMaterials(
+        auth.access_token,
+        workspace.id,
+        files,
+      );
+      setMaterials((current) => {
+        const byId = new Map(current.map((item) => [item.id, item]));
+        uploaded.forEach((item) => byId.set(item.id, item));
+        return Array.from(byId.values());
+      });
+      return uploaded;
+    } catch (caught) {
+      reportError(caught);
+      return [];
+    }
+  }
+
   function logout() {
     clearLearningSession(window.localStorage);
     setAuth(null);
@@ -252,7 +273,7 @@ export function StudyWorkspace() {
       <section className="workspace-main">
         {error && <div className="error-banner"><strong>{t("error")}</strong><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
         {section === "today" && <div className="today-grid"><div className="daily-heading"><span className="kicker">TODAY / FOCUS</span><h2>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date())}</h2></div><PlanTimeline plan={plan} locale={locale} t={t} /><PracticeCard question={question} answer={answer} result={result} busy={busy} onAnswerChange={setAnswer} onGetQuestion={getQuestion} onSubmit={submitAnswer} t={t} /></div>}
-        {section === "materials" && <MaterialDropzone key={workspace.id} t={t} initialMaterials={materials} onUpload={(files) => api.uploadWorkspaceMaterials(auth.access_token, workspace.id, files)} />}
+        {section === "materials" && <MaterialDropzone key={workspace.id} t={t} materials={materials} onUpload={uploadMaterials} />}
         {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
         {section === "coach" && <AgentPanel token={auth.access_token} workspaceId={workspace.id} t={t} />}
       </section>

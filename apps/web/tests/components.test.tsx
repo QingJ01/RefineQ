@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "../components/evidence-ledger";
 import { LearningHome } from "../components/learning-home";
+import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
 import { PracticeCard } from "../components/practice-card";
 import { translator } from "../lib/i18n";
@@ -122,6 +123,7 @@ describe("focused learning components", () => {
           misconceptions: [],
           citations: ["notes#0"],
           grading_mode: "ai",
+          mastery_updated: true,
           replayed: false,
         }}
         busy={false}
@@ -135,5 +137,61 @@ describe("focused learning components", () => {
     expect(html).toContain("核心概念正确");
     expect(html).toContain("说明了趋近");
     expect(html).toContain("缺少形式化定义");
+  });
+
+  it("offers a next question after grading instead of resubmitting the old one", () => {
+    const html = renderToStaticMarkup(
+      <PracticeCard
+        t={t}
+        question={{ id: "question-1", topic_id: "limits", prompt: "Explain a limit" }}
+        answer="A limit is..."
+        result={{
+          attempt_id: "attempt-1",
+          question_id: "question-1",
+          topic_id: "limits",
+          is_correct: false,
+          mastery: 0.2,
+          difficulty_level: 2,
+          evidence_id: "evidence-1",
+          score: 40,
+          feedback: "Add an example.",
+          strengths: [],
+          gaps: ["example"],
+          misconceptions: [],
+          citations: [],
+          grading_mode: "fallback",
+          mastery_updated: false,
+          replayed: false,
+        }}
+        busy={false}
+        onAnswerChange={() => undefined}
+        onGetQuestion={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="next-question"');
+    expect(html).not.toContain('data-testid="submit-answer"');
+  });
+
+  it("renders materials from the controlled workspace snapshot", () => {
+    const html = renderToStaticMarkup(
+      <MaterialDropzone
+        t={t}
+        materials={[{
+          id: "material-1",
+          filename: "limits.txt",
+          content_type: "text/plain",
+          size: 12,
+          status: "indexed",
+          chunk_count: 1,
+          content_sha256: "abc",
+          indexed_at: "2026-08-06T00:00:00Z",
+        }]}
+        onUpload={async () => []}
+      />,
+    );
+
+    expect(html).toContain("limits.txt");
   });
 });

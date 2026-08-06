@@ -69,6 +69,29 @@ describe("authentication and API errors", () => {
       fetchSpy.mockRestore();
     }
   });
+
+  it("aborts a request that exceeds the client timeout", async () => {
+    vi.useFakeTimers();
+    const client = new ApiClient(
+      "/api",
+      async (_input, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      }),
+      25,
+    );
+
+    const pending = client.getProfile("token-1");
+    const rejection = expect(pending).rejects.toMatchObject({
+      status: 408,
+      code: "request_timeout",
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
+    vi.useRealTimers();
+  });
 });
 
 

@@ -87,6 +87,7 @@ export interface AnswerResult {
   misconceptions: string[];
   citations: string[];
   grading_mode: "ai" | "fallback";
+  mastery_updated: boolean;
   replayed: boolean;
 }
 
