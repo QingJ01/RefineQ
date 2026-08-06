@@ -95,7 +95,10 @@ def test_python_dependencies_are_locked_and_reused_by_ci_and_container() -> None
     assert "python-jose==" not in runtime_lock.lower()
     assert "ecdsa==" not in runtime_lock.lower()
     assert "httpx2==" in development_lock
-    assert "pytest==" in development_lock
+    pytest_version = re.search(r"^pytest==(\d+)\.(\d+)\.(\d+)", development_lock, re.MULTILINE)
+    assert pytest_version is not None
+    assert tuple(map(int, pytest_version.groups())) >= (9, 0, 3)
+    assert "pytest-asyncio==1.4.0" in development_lock
     assert "ruff==" in development_lock
     assert "setuptools==83.0.0" in build_lock
     assert "wheel==0.47.0" in build_lock
