@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -10,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
+from refineq.api.routers.projects import ProjectCreateRequest, create_project
 from refineq.config import Settings
 from refineq.identity.service import IdentityService, InvalidTokenError, TokenExpiredError
 from refineq.storage.json_store import RecordNotFoundError
@@ -163,6 +166,39 @@ def test_authenticated_mutation_burst_is_rate_limited(tmp_path: Path) -> None:
 
     assert [response.status_code for response in responses] == [201, 201, 429]
     assert responses[-1].json()["error"]["code"] == "rate_limit_exceeded"
+
+
+def test_concurrent_project_creates_cannot_cross_owner_quota(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", max_projects_per_user=1, _env_file=None))
+    user = app.state.identity.register(
+        email="project-quota@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    original_create = app.state.projects.create
+
+    def slow_create(*args, **kwargs):
+        time.sleep(0.05)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(app.state.projects, "create", slow_create)
+
+    def invoke(index: int) -> int:
+        try:
+            create_project(
+                ProjectCreateRequest(name=f"Project {index}"),
+                type("Request", (), {"app": app})(),
+                user,
+            )
+        except Exception as error:
+            return getattr(error, "status_code", 500)
+        return 201
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = sorted(executor.map(invoke, range(2)))
+
+    assert statuses == [201, 409]
+    assert app.state.projects.count(user.id) == 1
 
 
 def test_password_limits_are_measured_in_utf8_bytes(tmp_path: Path) -> None:

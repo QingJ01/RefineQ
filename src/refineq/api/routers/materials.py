@@ -9,15 +9,15 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Annotated
 
-from anyio import fail_after, to_thread
+from anyio import to_thread
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 
 from refineq.api.dependencies import CurrentUser
+from refineq.knowledge.execution import SubprocessTimeoutError, extract_text_isolated
 from refineq.knowledge.extract import (
     ExtractionLimits,
     MaterialExtractionError,
     MaterialExtractionLimitError,
-    extract_text,
 )
 from refineq.knowledge.index import (
     MaterialDocument,
@@ -107,6 +107,29 @@ def _raise_extraction_error(error: MaterialExtractionError) -> None:
     ) from error
 
 
+def _enforce_owner_quota(
+    request: Request,
+    owner_id: str,
+    descriptors: list[UploadDescriptor],
+) -> None:
+    existing_count, existing_bytes = request.app.state.knowledge.owner_material_usage(
+        owner_id=owner_id
+    )
+    settings = request.app.state.settings
+    if (
+        existing_count + len(descriptors) > settings.material_max_count_per_user
+        or existing_bytes + sum(item.size for item in descriptors)
+        > settings.material_max_bytes_per_user
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "material_quota",
+                "message": "The learner material quota would be exceeded",
+            },
+        )
+
+
 @router.post("", response_model=list[MaterialRecord], status_code=status.HTTP_201_CREATED)
 async def upload_materials(
     project_id: str,
@@ -138,39 +161,23 @@ async def upload_materials(
         except MaterialPolicyError as error:
             raise _material_error(error) from error
 
-        existing_count, existing_bytes = request.app.state.knowledge.owner_material_usage(
-            owner_id=user.id
-        )
-        settings = request.app.state.settings
-        if (
-            existing_count + len(descriptors) > settings.material_max_count_per_user
-            or existing_bytes + sum(item.size for item in descriptors)
-            > settings.material_max_bytes_per_user
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                detail={
-                    "code": "material_quota",
-                    "message": "The learner material quota would be exceeded",
-                },
-            )
+        _enforce_owner_quota(request, user.id, descriptors)
 
         limits = _extraction_limits(request)
         extracted: list[str] = []
         for (_, payload), descriptor in zip(loaded, descriptors, strict=True):
             try:
-                with fail_after(limits.max_processing_seconds + 0.5):
-                    text = await to_thread.run_sync(
-                        partial(
-                            extract_text,
-                            descriptor.filename,
-                            descriptor.content_type,
-                            payload,
-                            limits=limits,
-                        ),
-                        abandon_on_cancel=True,
-                    )
-            except TimeoutError:
+                text = await to_thread.run_sync(
+                    partial(
+                        extract_text_isolated,
+                        descriptor.filename,
+                        descriptor.content_type,
+                        payload,
+                        limits,
+                    ),
+                    abandon_on_cancel=False,
+                )
+            except SubprocessTimeoutError:
                 _raise_extraction_error(
                     MaterialExtractionLimitError("Material extraction exceeded its time budget")
                 )
@@ -205,21 +212,23 @@ async def upload_materials(
                 )
             )
 
-        created_paths: list[Path] = []
-        try:
-            for material_path, payload in material_files:
-                if material_path.exists():
-                    continue
-                _write_material(material_path, payload)
-                created_paths.append(material_path)
-            return request.app.state.knowledge.add_documents(
-                owner_id=user.id,
-                documents=documents,
-            )
-        except Exception:
-            for created_path in created_paths:
-                created_path.unlink(missing_ok=True)
-            raise
+        async with request.app.state.material_quota_locks.get(user.id):
+            _enforce_owner_quota(request, user.id, descriptors)
+            created_paths: list[Path] = []
+            try:
+                for material_path, payload in material_files:
+                    if material_path.exists():
+                        continue
+                    _write_material(material_path, payload)
+                    created_paths.append(material_path)
+                return request.app.state.knowledge.add_documents(
+                    owner_id=user.id,
+                    documents=documents,
+                )
+            except Exception:
+                for created_path in created_paths:
+                    created_path.unlink(missing_ok=True)
+                raise
     finally:
         for upload in files:
             await upload.close()

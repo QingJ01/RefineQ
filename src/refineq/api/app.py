@@ -23,6 +23,7 @@ from refineq.api.limits import (
     RequestLimitMiddleware,
     SlidingWindowRateLimiter,
 )
+from refineq.api.locks import KeyedAsyncLockPool
 from refineq.api.routers.agent import router as agent_router
 from refineq.api.routers.agent import workspace_router as workspace_agent_router
 from refineq.api.routers.auth import router as auth_router
@@ -59,6 +60,7 @@ def create_app(
     app = FastAPI(title="RefineQ", version=__version__)
     app.state.settings = settings or Settings()
     app.state.rate_limiter = SlidingWindowRateLimiter()
+    app.state.material_quota_locks = KeyedAsyncLockPool()
     app.add_middleware(
         RequestLimitMiddleware,
         limiter=app.state.rate_limiter,

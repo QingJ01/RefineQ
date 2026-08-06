@@ -8,6 +8,7 @@ import re
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,12 +86,22 @@ class AtomicJsonStore:
         collection = validate_identifier(collection, field="collection")
         record_id = validate_identifier(record_id, field="record_id")
         owner_root = (self.data_root / "users" / owner_id).resolve()
-        path = (owner_root / collection / f"{record_id}.json").resolve()
+        path = owner_root / collection / f"{record_id}.json"
         try:
             path.relative_to(owner_root)
         except ValueError as error:
             raise InvalidIdentifierError("Record path escaped the owner scope") from error
         return path
+
+    @contextmanager
+    def owner_transaction(self, owner_id: str, scope: str):
+        """Serialize one owner-wide check-and-commit decision in this application process."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        scope = validate_identifier(scope, field="scope")
+        lock_path = self.data_root / "users" / owner_id / ".transactions" / scope
+        with self._lock_for(lock_path):
+            yield
 
     @staticmethod
     def _deserialize(path: Path) -> StoredRecord:
@@ -179,7 +190,7 @@ class AtomicJsonStore:
         owner_id = validate_identifier(owner_id, field="owner_id")
         collection = validate_identifier(collection, field="collection")
         owner_root = (self.data_root / "users" / owner_id).resolve()
-        collection_root = (owner_root / collection).resolve()
+        collection_root = owner_root / collection
         try:
             collection_root.relative_to(owner_root)
         except ValueError as error:

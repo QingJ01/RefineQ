@@ -34,3 +34,6 @@ class ProjectRepository:
 
     def count(self, owner_id: str) -> int:
         return len(self._store.list(owner_id, "projects"))
+
+    def quota_transaction(self, owner_id: str):
+        return self._store.owner_transaction(owner_id, "project-quota")

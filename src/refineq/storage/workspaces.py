@@ -81,3 +81,6 @@ class WorkspaceRepository:
 
         record = self._store.mutate(owner_id, "workspaces", workspace_id, update)
         return LearningWorkspace.model_validate(record.data)
+
+    def quota_transaction(self, owner_id: str):
+        return self._store.owner_transaction(owner_id, "workspace-quota")

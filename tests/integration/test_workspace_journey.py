@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
 
 
 def _register(client: TestClient) -> tuple[str, str]:
@@ -22,6 +25,42 @@ def _register(client: TestClient) -> tuple[str, str]:
     )
     body = response.json()
     return body["access_token"], body["user"]["id"]
+
+
+def test_concurrent_workspace_resolves_cannot_cross_owner_quota(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", max_workspaces_per_user=1, _env_file=None)
+    )
+    owner = app.state.identity.register(
+        email="workspace-quota@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    original_create = app.state.workspaces.create
+
+    def slow_create(*args, **kwargs):
+        time.sleep(0.05)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(app.state.workspaces, "create", slow_create)
+
+    def resolve(intent: str) -> str:
+        try:
+            return app.state.workspace_service.resolve(
+                owner.id,
+                WorkspaceResolveRequest(intent=intent),
+                now=datetime(2026, 8, 6, tzinfo=UTC),
+            ).action
+        except WorkspaceQuotaError:
+            return "quota"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = sorted(executor.map(resolve, ["学习高等数学", "学习英语语法"]))
+
+    assert outcomes == ["created", "quota"]
+    assert len(app.state.workspaces.list(owner.id)) == 1
 
 
 def test_intents_create_reuse_switch_and_restore_learning_spaces(

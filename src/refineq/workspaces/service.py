@@ -103,6 +103,16 @@ class WorkspaceService:
         now: datetime | None = None,
     ) -> WorkspaceRouteResponse:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        with self._workspaces.quota_transaction(owner_id):
+            return self._resolve_locked(owner_id, payload, observed_at=observed_at)
+
+    def _resolve_locked(
+        self,
+        owner_id: str,
+        payload: WorkspaceResolveRequest,
+        *,
+        observed_at: datetime,
+    ) -> WorkspaceRouteResponse:
         workspaces = self._workspaces.list(owner_id)
         decision = (
             self._routing.route(payload.intent, owner_id, workspaces)

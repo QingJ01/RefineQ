@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -167,3 +169,39 @@ def test_per_user_material_quota_is_enforced_before_second_upload(tmp_path: Path
     assert first.status_code == 201
     assert second.status_code == 413
     assert second.json()["error"]["code"] == "material_quota"
+
+
+def test_concurrent_uploads_cannot_cross_owner_material_quota(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            material_max_count_per_user=1,
+            material_max_bytes_per_user=1_000,
+            mutation_rate_limit_requests=100,
+            _env_file=None,
+        )
+    )
+    original_add = app.state.knowledge.add_documents
+
+    def slow_add(*args, **kwargs):
+        time.sleep(0.05)
+        return original_add(*args, **kwargs)
+
+    monkeypatch.setattr(app.state.knowledge, "add_documents", slow_add)
+
+    with TestClient(app) as client:
+        token = _register(client, "concurrent-upload@example.com")
+        project_id = _project(client, token)
+
+        def upload(index: int) -> int:
+            response = client.post(
+                f"/projects/{project_id}/materials",
+                headers=_headers(token),
+                files={"files": (f"notes-{index}.txt", f"Notes {index}".encode(), "text/plain")},
+            )
+            return response.status_code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = sorted(executor.map(upload, range(2)))
+
+    assert statuses == [201, 413]

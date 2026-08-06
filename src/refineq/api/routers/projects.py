@@ -33,14 +33,15 @@ def create_project(
     request: Request,
     user: CurrentUser,
 ) -> ProjectResponse:
-    if (
-        request.app.state.projects.count(user.id)
-        >= request.app.state.settings.max_projects_per_user
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "project_quota", "message": "Project quota reached"},
-        )
-    project_id = uuid4().hex
-    record = request.app.state.projects.create(user.id, project_id, name=payload.name)
+    with request.app.state.projects.quota_transaction(user.id):
+        if (
+            request.app.state.projects.count(user.id)
+            >= request.app.state.settings.max_projects_per_user
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "project_quota", "message": "Project quota reached"},
+            )
+        project_id = uuid4().hex
+        record = request.app.state.projects.create(user.id, project_id, name=payload.name)
     return ProjectResponse.model_validate(record.data)
