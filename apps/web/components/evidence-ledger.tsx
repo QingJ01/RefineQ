@@ -15,7 +15,7 @@ export function EvidenceLedger({
   t: Translator;
 }) {
   return (
-    <section className="paper-card ledger" aria-labelledby="ledger-heading">
+    <section className="content-card ledger" aria-labelledby="ledger-heading">
       <div className="section-heading">
         <div>
           <span className="kicker">EVIDENCE / {String(evidence.length).padStart(2, "0")}</span>
@@ -26,7 +26,7 @@ export function EvidenceLedger({
       {evidence.length === 0 ? (
         <div className="empty-note">{t("noEvidence")}</div>
       ) : (
-        <ol className="ledger-list">
+        <ol className="evidence-timeline">
           {evidence.map((item) => (
             <li key={item.id} data-tone={evidenceTone(item.kind)}>
               <div className="ledger-date">

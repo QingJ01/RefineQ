@@ -18,11 +18,11 @@ test("learner completes and restores a projectless study journey", async ({ page
       .fill("I have a calculus exam in two weeks and want to review limits today");
     await page.getByTestId("start-learning").click();
 
-    await expect(page.locator(".rail-learning h1")).toBeVisible();
+    await expect(page.locator(".workspace-header h1")).toBeVisible();
     await expect(page.locator(".plan-card")).toBeVisible();
   });
 
-  const workspaceTitle = await page.locator(".rail-learning h1").innerText();
+  const workspaceTitle = await page.locator(".workspace-header h1").innerText();
 
   await test.step("upload personal study material", async () => {
     await page.getByTestId("nav-materials").click();
@@ -50,7 +50,7 @@ test("learner completes and restores a projectless study journey", async ({ page
       );
     await page.getByTestId("submit-answer").click();
     await expect(page.getByRole("status")).toContainText(/评分|Score/);
-    await expect(page.locator(".rail-stats")).toContainText("01");
+    await expect(page.locator(".progress-stats")).toContainText("1");
 
     await page.getByTestId("next-question").click();
     await expect(page.getByTestId("practice-answer")).toBeVisible();
@@ -60,15 +60,15 @@ test("learner completes and restores a projectless study journey", async ({ page
         "A limit describes a function's approached value near a point. For example, x approaches two while x squared approaches four.",
       );
     await page.getByTestId("submit-answer").click();
-    await expect(page.locator(".rail-stats")).toContainText("02");
+    await expect(page.locator(".progress-stats")).toContainText("2");
 
     await page.getByTestId("nav-evidence").click();
-    await expect(page.locator(".ledger-list li")).toHaveCount(2);
+    await expect(page.locator(".evidence-timeline li")).toHaveCount(2);
   });
 
   await test.step("restore the same space and material after refresh", async () => {
     await page.reload();
-    await expect(page.locator(".rail-learning h1")).toHaveText(workspaceTitle);
+    await expect(page.locator(".workspace-header h1")).toHaveText(workspaceTitle);
     await page.getByTestId("nav-materials").click();
     await expect(page.getByText("calculus-notes.txt")).toBeVisible();
   });
@@ -76,8 +76,8 @@ test("learner completes and restores a projectless study journey", async ({ page
   await test.step("open the grounded learning Agent", async () => {
     await page.getByTestId("nav-coach").click();
     await expect(page.getByTestId("model-settings")).toBeVisible();
-    await page.locator(".chat-compose textarea").fill("Explain my weakest point");
-    await page.locator(".chat-compose button").click();
+    await page.locator(".chat-composer textarea").fill("Explain my weakest point");
+    await page.locator(".chat-composer button").click();
     await expect(page.locator(".agent-card .error-banner")).toContainText(
       /模型设置|Configure a model/,
     );

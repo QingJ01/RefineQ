@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BrainCircuit, Clock3, Sparkles } from "lucide-react";
+import { ArrowRight, Clock3, History, MessageSquarePlus, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import type { Translator } from "@/lib/i18n";
@@ -29,46 +29,58 @@ export function LearningHome({
   }
 
   return (
-    <main className="learning-home">
-      <section className="learning-home-hero">
-        <span className="kicker">PERSONAL LEARNING AGENT</span>
-        <BrainCircuit size={46} strokeWidth={1.25} />
-        <h1>{t("learningPrompt")}</h1>
-        <p>{t("learningPromptHint")}</p>
-        <form className="intent-compose" onSubmit={submit}>
-          <textarea
-            data-testid="learning-intent"
-            value={intent}
-            onChange={(event) => setIntent(event.target.value)}
-            placeholder={t("learningIntentPlaceholder")}
-            rows={4}
-            autoFocus
-          />
-          <button data-testid="start-learning" className="primary-action" disabled={busy || !intent.trim()}>
-            <Sparkles size={17} /> {busy ? t("loading") : t("startLearning")}
-            <ArrowRight size={18} />
-          </button>
-        </form>
-        <small className="routing-note"><Sparkles size={13} /> {t("autoRouting")}</small>
-      </section>
-      {workspaces.length > 0 && (
-        <section className="recent-learning">
-          <div className="section-heading">
-            <div><span className="kicker">MEMORY / CONTINUE</span><h2>{t("recentLearning")}</h2></div>
-            <Clock3 size={22} />
-          </div>
-          <div className="recent-grid">
-            {workspaces.map((workspace) => (
-              <button key={workspace.id} onClick={() => onOpen(workspace)}>
-                <span>{workspace.subject}</span>
-                <strong>{workspace.title}</strong>
-                <p>{workspace.goal}</p>
-                <ArrowRight size={16} />
+    <main className="home-shell">
+      <aside className="home-sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-mark" aria-hidden="true">R</span>
+          <strong>RefineQ</strong>
+        </div>
+        <div className="home-nav-item active"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></div>
+        <div className="home-nav-item"><History size={19} /><span>{t("recentLearning")}</span></div>
+        <p className="sidebar-footnote">Personal learning, remembered.</p>
+      </aside>
+      <section className="learning-home">
+        <div className="learning-home-hero">
+          <div className="learning-spark" aria-hidden="true"><Sparkles size={24} /></div>
+          <span className="kicker">PERSONAL LEARNING AGENT</span>
+          <h1>{t("learningPrompt")}</h1>
+          <p>{t("learningPromptHint")}</p>
+          <form className="learning-composer" onSubmit={submit}>
+            <textarea
+              data-testid="learning-intent"
+              value={intent}
+              onChange={(event) => setIntent(event.target.value)}
+              placeholder={t("learningIntentPlaceholder")}
+              rows={3}
+              autoFocus
+            />
+            <div className="composer-footer">
+              <small className="routing-note"><Sparkles size={14} /> {t("autoRouting")}</small>
+              <button data-testid="start-learning" className="composer-send" disabled={busy || !intent.trim()} aria-label={t("startLearning")}>
+                {busy ? <span>{t("loading")}</span> : <ArrowRight size={19} />}
               </button>
-            ))}
-          </div>
-        </section>
-      )}
+            </div>
+          </form>
+        </div>
+        {workspaces.length > 0 && (
+          <section className="recent-learning">
+            <div className="section-heading compact">
+              <div><span className="kicker">CONTINUE LEARNING</span><h2>{t("recentLearning")}</h2></div>
+              <Clock3 size={20} />
+            </div>
+            <div className="recent-grid">
+              {workspaces.map((workspace) => (
+                <button key={workspace.id} onClick={() => onOpen(workspace)}>
+                  <span>{workspace.subject}</span>
+                  <strong>{workspace.title}</strong>
+                  <p>{workspace.goal}</p>
+                  <ArrowRight size={16} />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+      </section>
     </main>
   );
 }

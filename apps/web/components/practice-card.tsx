@@ -26,7 +26,7 @@ export function PracticeCard({
 }) {
   const status = result ? practiceStatus(result) : null;
   return (
-    <section className="paper-card practice-card" aria-labelledby="practice-heading">
+    <section className="content-card practice-card" aria-labelledby="practice-heading">
       <div className="section-heading">
         <div>
           <span className="kicker">RETRIEVAL / ACTIVE</span>

@@ -260,29 +260,85 @@ export function StudyWorkspace() {
 
   return (
     <main className="workspace-shell">
-      <header className="topbar">
-        <button className="wordmark wordmark-button" onClick={() => setWorkspace(null)}>
-          <span>R</span><div><strong>RefineQ</strong><small>{t("workspaceEyebrow")}</small></div>
+      <aside className="workspace-sidebar">
+        <button className="sidebar-brand wordmark-button" onClick={() => setWorkspace(null)}>
+          <span className="brand-mark" aria-hidden="true">R</span>
+          <strong>RefineQ</strong>
         </button>
-        <div className="top-actions">
+        <nav className="workspace-nav" aria-label="Study sections">
+          {nav.map(({ id, icon: Icon }) => (
+            <button
+              key={id}
+              data-testid={`nav-${id}`}
+              className={section === id ? "active" : ""}
+              onClick={() => setSection(id)}
+            >
+              <Icon size={19} />
+              <span>{t(id)}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-learning">
+          <span className="kicker">CURRENT LEARNING</span>
+          <strong>{workspace.title}</strong>
+          <p>{workspace.goal}</p>
+          <button className="quiet-button switch-learning" onClick={() => setWorkspace(null)}>
+            <Sparkles size={15} /> {t("recentLearning")}
+          </button>
+        </div>
+        <div className="sidebar-actions">
           <button className="quiet-button" onClick={() => setLocale(locale === "zh" ? "en" : "zh")}><Languages size={16} /> {t("language")}</button>
           <button className="quiet-button" onClick={logout}><LogOut size={16} /> {t("logout")}</button>
         </div>
-      </header>
-      <aside className="dossier-rail">
-        <span className="vertical-label">PERSONAL MEMORY · ACTIVE</span>
-        <div className="rail-learning"><span className="kicker">CURRENT LEARNING</span><h1>{workspace.title}</h1><p>{workspace.goal}</p></div>
-        <div className="mastery-dial" style={{ "--mastery": `${Math.round(averageMastery * 360)}deg` } as React.CSSProperties}><div><strong>{Math.round(averageMastery * 100)}</strong><span>% {t("mastery")}</span></div></div>
-        <dl className="rail-stats"><div><dt>{t("attempts")}</dt><dd>{String(progress?.attempt_count ?? 0).padStart(2, "0")}</dd></div><div><dt>{t("diagnostic")}</dt><dd>{String(progress?.diagnostic_count ?? 0).padStart(2, "0")}</dd></div></dl>
-        <button className="quiet-button switch-learning" onClick={() => setWorkspace(null)}><Sparkles size={15} /> {t("recentLearning")}</button>
       </aside>
-      <nav className="study-nav" aria-label="Study sections">{nav.map(({ id, icon: Icon }, index) => <button key={id} data-testid={`nav-${id}`} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{String(index + 1).padStart(2, "0")}</span><Icon size={18} />{t(id)}</button>)}</nav>
-      <section className="workspace-main">
-        {error && <div className="error-banner"><strong>{t("error")}</strong><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
-        {section === "today" && <div className="today-grid"><div className="daily-heading"><span className="kicker">TODAY / FOCUS</span><h2>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date())}</h2></div><PlanTimeline plan={plan} locale={locale} t={t} /><PracticeCard question={question} answer={answer} result={result} busy={busy} onAnswerChange={setAnswer} onGetQuestion={getQuestion} onSubmit={submitAnswer} t={t} /></div>}
-        {section === "materials" && <MaterialDropzone key={workspace.id} t={t} materials={materials} onUpload={uploadMaterials} />}
-        {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
-        {section === "coach" && <AgentPanel token={auth.access_token} workspaceId={workspace.id} t={t} />}
+      <section className="workspace-stage">
+        <header className="workspace-header">
+          <div>
+            <span className="kicker">{t("workspaceEyebrow")}</span>
+            <h1>{workspace.title}</h1>
+            <p>{workspace.goal}</p>
+          </div>
+          <span className="workspace-date">
+            {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+            }).format(new Date())}
+          </span>
+        </header>
+        <div className="workspace-progress">
+          <div className="progress-copy">
+            <strong>{Math.round(averageMastery * 100)}%</strong>
+            <span>{t("mastery")}</span>
+          </div>
+          <div
+            className="progress-track"
+            role="progressbar"
+            aria-label={t("mastery")}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(averageMastery * 100)}
+          >
+            <span style={{ width: `${Math.round(averageMastery * 100)}%` }} />
+          </div>
+          <dl className="progress-stats">
+            <div><dt>{t("attempts")}</dt><dd>{progress?.attempt_count ?? 0}</dd></div>
+            <div><dt>{t("diagnostic")}</dt><dd>{progress?.diagnostic_count ?? 0}</dd></div>
+          </dl>
+        </div>
+        <section className="workspace-content">
+          {error && <div className="error-banner"><strong>{t("error")}</strong><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
+          {section === "today" && (
+            <div className="today-grid">
+              <div className="daily-heading"><span className="kicker">TODAY&apos;S FOCUS</span><h2>{t("today")}</h2></div>
+              <PlanTimeline plan={plan} locale={locale} t={t} />
+              <PracticeCard question={question} answer={answer} result={result} busy={busy} onAnswerChange={setAnswer} onGetQuestion={getQuestion} onSubmit={submitAnswer} t={t} />
+            </div>
+          )}
+          {section === "materials" && <MaterialDropzone key={workspace.id} t={t} materials={materials} onUpload={uploadMaterials} />}
+          {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
+          {section === "coach" && <AgentPanel token={auth.access_token} workspaceId={workspace.id} t={t} />}
+        </section>
       </section>
     </main>
   );

@@ -128,7 +128,7 @@ export function AgentPanel({
   }
 
   return (
-    <section className="paper-card agent-card">
+    <section className="content-card agent-card">
       <div className="section-heading">
         <div>
           <span className="kicker">GROUNDED / LEARNING MEMORY</span>
@@ -190,7 +190,7 @@ export function AgentPanel({
         )}
         {messages.map((item, index) => (
           <article key={`${item.role}-${index}`} className={`chat-message ${item.role}`}>
-            <span>{item.role === "user" ? "YOU" : "RQ"}</span>
+            <span>{item.role === "user" ? "YOU" : "REFINEQ"}</span>
             <p>{item.content}</p>
             {item.citations?.map((citation) => (
               <em key={citation}>
@@ -200,7 +200,7 @@ export function AgentPanel({
           </article>
         ))}
       </div>
-      <form className="chat-compose" onSubmit={send}>
+      <form className="chat-composer" onSubmit={send}>
         <textarea
           rows={3}
           value={message}

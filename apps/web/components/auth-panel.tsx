@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, LockKeyhole } from "lucide-react";
+import { ArrowRight, BookOpenCheck, LockKeyhole, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { api } from "@/lib/api";
@@ -40,16 +40,29 @@ export function AuthPanel({
 
   return (
     <main className="auth-stage">
-      <div className="auth-orbit" aria-hidden="true"><span>RQ</span></div>
-      <section className="auth-copy">
-        <span className="kicker">PERSONAL LEARNING AGENT / 01</span>
-        <h1>{t("authPrompt")}</h1>
-        <p>{t("authSubline")}</p>
-        <div className="auth-principles">
-          <span>01 / GOAL</span><span>02 / PRACTICE</span><span>03 / EVIDENCE</span>
+      <section className="auth-welcome">
+        <div className="auth-brand">
+          <span className="brand-mark" aria-hidden="true">R</span>
+          <strong>RefineQ</strong>
+        </div>
+        <div className="auth-copy">
+          <span className="kicker">PERSONAL LEARNING AGENT</span>
+          <h1>{t("authPrompt")}</h1>
+          <p>{t("authSubline")}</p>
+          <div className="auth-principles">
+            <span><Sparkles size={16} /> 自动识别学习方向</span>
+            <span><BookOpenCheck size={16} /> 用练习证据持续进步</span>
+          </div>
         </div>
       </section>
       <section className="auth-form-card">
+        <header className="auth-form-heading">
+          <span className="mobile-brand-mark" aria-hidden="true">R</span>
+          <div>
+            <h2>{mode === "login" ? t("login") : t("register")}</h2>
+            <p>{t("authSubline")}</p>
+          </div>
+        </header>
         <div className="auth-tabs">
           <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
             {t("login")}
@@ -66,7 +79,7 @@ export function AuthPanel({
           <label>{t("password")}<input data-testid="password" type="password" minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
           {error && <p className="form-error">{error}</p>}
           <button data-testid="auth-submit" className="primary-action wide" disabled={busy}>
-            <LockKeyhole size={17} /> {busy ? t("loading") : t(mode)} <ArrowUpRight size={18} />
+            <LockKeyhole size={17} /> {busy ? t("loading") : t(mode)} <ArrowRight size={18} />
           </button>
         </form>
       </section>

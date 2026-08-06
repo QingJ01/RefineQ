@@ -17,17 +17,17 @@ export function PlanTimeline({
   }
   const rows = buildPlanRows(plan, locale === "zh" ? "zh-CN" : "en-US");
   return (
-    <section className="paper-card plan-card" aria-labelledby="plan-heading">
+    <section className="content-card plan-card" aria-labelledby="plan-heading">
       <div className="section-heading">
         <div>
           <span className="kicker">PLAN / {String(rows.length).padStart(2, "0")}</span>
           <h2 id="plan-heading">{t("plan")}</h2>
         </div>
-        <span className="minute-stamp">{plan.daily_minutes} {t("minutes")}</span>
+        <span className="minute-badge">{plan.daily_minutes} {t("minutes")}</span>
       </div>
       <ol className="plan-timeline">
         {rows.map((row) => (
-          <li key={row.id}>
+          <li key={row.id} className="plan-session">
             <span className="sequence">{String(row.sequence).padStart(2, "0")}</span>
             <span className="timeline-rule" aria-hidden="true" />
             <div className="plan-topic">

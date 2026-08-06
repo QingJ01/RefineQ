@@ -32,9 +32,9 @@ export function MaterialDropzone({
   }
 
   return (
-    <section className="paper-card materials-card">
+    <section className="content-card materials-card">
       <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><FileStack size={24} strokeWidth={1.4} /></div>
-      <button className="dropzone" onClick={() => inputRef.current?.click()} disabled={busy}>
+      <button className="upload-surface" onClick={() => inputRef.current?.click()} disabled={busy}>
         <Upload size={28} strokeWidth={1.3} /><strong>{busy ? t("loading") : t("chooseFiles")}</strong><span>{t("uploadHint")}</span>
       </button>
       <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => void selected(event.target.files)} />

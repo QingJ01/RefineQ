@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "../components/evidence-ledger";
+import { AuthPanel } from "../components/auth-panel";
+import { AgentPanel } from "../components/agent-panel";
 import { LearningHome } from "../components/learning-home";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
@@ -12,6 +15,29 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("uses a persistent learning sidebar and focused workspace header", () => {
+    const source = readFileSync(
+      new URL("../components/study-workspace.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain('className="workspace-sidebar"');
+    expect(source).toContain('className="workspace-header"');
+    expect(source).toContain('className="workspace-progress"');
+    expect(source).toContain('className="workspace-content"');
+  });
+
+  it("presents authentication as a calm RefineQ welcome card", () => {
+    const html = renderToStaticMarkup(
+      <AuthPanel t={translator("zh")} onAuthenticated={() => undefined} />,
+    );
+
+    expect(html).toContain('class="auth-brand"');
+    expect(html).toContain("RefineQ");
+    expect(html).toContain('class="auth-welcome"');
+    expect(html).not.toContain("auth-orbit");
+  });
+
   it("starts with one personal Agent prompt instead of a project form", () => {
     const html = renderToStaticMarkup(
       <LearningHome
@@ -25,6 +51,10 @@ describe("focused learning components", () => {
 
     expect(html).toContain("今天想学什么");
     expect(html).not.toContain("项目名称");
+    expect(html).toContain('class="home-shell"');
+    expect(html).toContain('class="home-sidebar"');
+    expect(html).toContain('class="learning-composer"');
+    expect(html).toContain("RefineQ");
   });
 
   it("renders plan sessions as a numbered study path", () => {
@@ -52,6 +82,7 @@ describe("focused learning components", () => {
     expect(html).toContain("limits");
     expect(html).toContain("01");
     expect(html).toContain("45 min");
+    expect(html).toContain("content-card plan-card");
   });
 
   it("renders evidence as a dated ledger", () => {
@@ -75,6 +106,7 @@ describe("focused learning components", () => {
     expect(html).toContain("Learning evidence ledger");
     expect(html).toContain("Practice response for limits was correct.");
     expect(html).toContain("data-tone=\"jade\"");
+    expect(html).toContain('class="evidence-timeline"');
   });
 
   it("never renders an expected answer in the practice card", () => {
@@ -93,6 +125,7 @@ describe("focused learning components", () => {
 
     expect(html).toContain("Explain a limit");
     expect(html).not.toContain("expected_answer");
+    expect(html).toContain("content-card practice-card");
   });
 
   it("renders explainable AI grading feedback", () => {
@@ -193,5 +226,15 @@ describe("focused learning components", () => {
     );
 
     expect(html).toContain("limits.txt");
+    expect(html).toContain('class="upload-surface"');
+  });
+
+  it("renders the learning Agent with a focused chat composer", () => {
+    const html = renderToStaticMarkup(
+      <AgentPanel token="token" workspaceId="workspace-1" t={t} />,
+    );
+
+    expect(html).toContain("content-card agent-card");
+    expect(html).toContain('class="chat-composer"');
   });
 });
