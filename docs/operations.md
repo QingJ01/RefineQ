@@ -22,8 +22,13 @@ The archive contains a manifest with a SHA-256 digest for every file. JSON is pa
 accepted, and each SQLite database is copied through the SQLite backup API and integrity-checked.
 Existing archive paths are never overwritten.
 
-Store backups as secrets: they include accounts, model configuration, uploaded material, and all
-learning history.
+Store backups as secrets: they include accounts, encrypted model configuration, uploaded material,
+and all learning history. A locally generated model-encryption key lives under the data root and is
+therefore included too. Public deployments should supply `REFINEQ_MODEL_ENCRYPTION_KEY` from a
+separate secret store and back up that secret independently.
+
+Keep the encryption key stable during restore and upgrade. Replacing it does not corrupt learning
+data, but saved model credentials can no longer be decrypted and must be entered again.
 
 ## Restore
 

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from refineq.config import Settings
 
 
@@ -24,3 +27,10 @@ def test_server_defaults_are_loopback_safe(monkeypatch) -> None:
 
     assert settings.host == "127.0.0.1"
     assert settings.port == 8000
+
+
+def test_model_encryption_key_is_validated_at_startup(monkeypatch) -> None:
+    monkeypatch.setenv("REFINEQ_MODEL_ENCRYPTION_KEY", "not-a-fernet-key")
+
+    with pytest.raises(ValidationError, match="valid Fernet key"):
+        Settings(_env_file=None)

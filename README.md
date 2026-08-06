@@ -29,7 +29,8 @@ RefineQ 是面向高中生、大学生和高级学习者的个人学习 Agent。
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements-dev.lock
+python -m pip install --no-deps -e .
 
 Set-Location apps/web
 npm ci
@@ -57,6 +58,7 @@ npm run dev
 ```powershell
 python -m pytest -q
 python -m ruff check src tests scripts
+python scripts/scan_secrets.py
 
 Set-Location apps/web
 npm test

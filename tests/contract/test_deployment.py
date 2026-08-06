@@ -7,6 +7,8 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INFRASTRUCTURE_FILES = {
+    "requirements.lock",
+    "requirements-dev.lock",
     "infra/Dockerfile.api",
     "infra/Dockerfile.web",
     "infra/compose.yml",
@@ -73,3 +75,45 @@ def test_ci_runs_python_web_browser_and_container_contracts() -> None:
         "docker compose -f infra/compose.yml config",
     ]:
         assert command in workflow
+
+
+def test_python_dependencies_are_locked_and_reused_by_ci_and_container() -> None:
+    runtime_lock = _read("requirements.lock")
+    development_lock = _read("requirements-dev.lock")
+    workflow = _read(".github/workflows/tests.yml")
+    api_image = _read("infra/Dockerfile.api")
+
+    assert "--hash=sha256:" in runtime_lock
+    assert "--hash=sha256:" in development_lock
+    assert "pyjwt==" in runtime_lock.lower()
+    assert "python-jose==" not in runtime_lock.lower()
+    assert "ecdsa==" not in runtime_lock.lower()
+    assert "httpx2==" in development_lock
+    assert "pytest==" in development_lock
+    assert "ruff==" in development_lock
+    assert workflow.count("pip install --require-hashes -r requirements-dev.lock") >= 2
+    assert "cache-dependency-path: requirements-dev.lock" in workflow
+    assert "pip install --require-hashes -r requirements.lock" in api_image
+    assert "pip install --no-deps ." in api_image
+
+
+def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
+    example = _read(".env.example")
+    compose = _read("infra/compose.yml")
+
+    required_names = {
+        "REFINEQ_MODEL_ENCRYPTION_KEY",
+        "REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS",
+        "REFINEQ_MATERIAL_MAX_COUNT_PER_USER",
+        "REFINEQ_MATERIAL_MAX_BYTES_PER_USER",
+        "REFINEQ_MAX_WORKSPACES_PER_USER",
+        "REFINEQ_MAX_PROJECTS_PER_USER",
+        "REFINEQ_MAX_AGENT_SESSIONS_PER_USER",
+        "REFINEQ_AUTH_RATE_LIMIT_REQUESTS",
+        "REFINEQ_MUTATION_RATE_LIMIT_REQUESTS",
+        "REFINEQ_RATE_LIMIT_WINDOW_SECONDS",
+    }
+
+    for name in required_names:
+        assert name in example
+        assert name in compose

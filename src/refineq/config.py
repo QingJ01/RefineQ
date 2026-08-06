@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -50,6 +51,19 @@ class Settings(BaseSettings):
         """Make every storage operation use one unambiguous absolute root."""
 
         return value.expanduser().resolve()
+
+    @field_validator("model_encryption_key", mode="after")
+    @classmethod
+    def validate_model_encryption_key(cls, value: SecretStr | None) -> SecretStr | None:
+        """Reject invalid configured keys during startup instead of during a learner request."""
+
+        if value is None or not value.get_secret_value():
+            return value
+        try:
+            Fernet(value.get_secret_value().encode("ascii"))
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("model encryption key must be a valid Fernet key") from exc
+        return value
 
     @property
     def allowed_model_hosts(self) -> set[str]:

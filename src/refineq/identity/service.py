@@ -14,7 +14,8 @@ from threading import Lock, RLock
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError as JWTInvalidTokenError
 
 from refineq.identity.models import User
 
@@ -202,13 +203,24 @@ class IdentityService:
                     token,
                     document["signing_secret"],
                     algorithms=["HS256"],
-                    options={"verify_exp": False},
+                    options={"verify_exp": False, "verify_iat": False},
                 )
-            except JWTError as error:
+            except JWTInvalidTokenError as error:
                 raise InvalidTokenError("Invalid access token") from error
 
+            issued_at = payload.get("iat")
+            if (
+                not isinstance(issued_at, int)
+                or isinstance(issued_at, bool)
+                or issued_at > int(now.timestamp())
+            ):
+                raise InvalidTokenError("Invalid access token")
             expires_at = payload.get("exp")
-            if not isinstance(expires_at, int) or expires_at <= int(now.timestamp()):
+            if (
+                not isinstance(expires_at, int)
+                or isinstance(expires_at, bool)
+                or expires_at <= int(now.timestamp())
+            ):
                 raise TokenExpiredError("Access token has expired")
             email = payload.get("email")
             subject = payload.get("sub")

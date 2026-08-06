@@ -12,10 +12,11 @@ RUN addgroup --system refineq \
     && mkdir -p /data \
     && chown refineq:refineq /data
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml requirements.lock README.md LICENSE ./
 COPY src ./src
 
-RUN python -m pip install .
+RUN python -m pip install --require-hashes -r requirements.lock \
+    && python -m pip install --no-deps .
 
 USER refineq
 

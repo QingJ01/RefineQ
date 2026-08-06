@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
 from refineq.config import Settings
-from refineq.identity.service import IdentityService, TokenExpiredError
+from refineq.identity.service import IdentityService, InvalidTokenError, TokenExpiredError
 from refineq.storage.json_store import RecordNotFoundError
 
 
@@ -90,6 +90,20 @@ def test_expired_token_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(TokenExpiredError):
         identity.verify_token(token, now=issued_at + timedelta(minutes=6))
+
+
+def test_tampered_token_is_rejected(tmp_path: Path) -> None:
+    identity = IdentityService(tmp_path / "data")
+    user = identity.register(
+        email="learner@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    token = identity.issue_token(user)
+    replacement = "a" if token[-1] != "a" else "b"
+
+    with pytest.raises(InvalidTokenError):
+        identity.verify_token(f"{token[:-1]}{replacement}")
 
 
 def test_two_users_cannot_read_the_same_project_id(tmp_path: Path) -> None:
