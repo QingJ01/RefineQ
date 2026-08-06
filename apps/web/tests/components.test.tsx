@@ -30,6 +30,12 @@ describe("focused learning components", () => {
     expect(html).toContain('translate="no"');
     expect(html).not.toContain('<span aria-hidden="true">Q</span>');
     expect(html).not.toContain(">R</span>");
+    expect(html).toContain('class="auth-memory-track"');
+    expect(html.match(/class="auth-memory-step"/g)).toHaveLength(4);
+    expect(html).toContain("目标");
+    expect(html).toContain("资料");
+    expect(html).toContain("练习");
+    expect(html).toContain("进步");
   });
 
   it("starts with one personal Agent prompt instead of a project form", () => {

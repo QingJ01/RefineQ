@@ -188,6 +188,18 @@ describe("projectless product surface", () => {
     expect(styles).toContain(".wordmark-button:active:not(:disabled)");
     expect(styles).toContain(".upload-surface:active:not(:disabled)");
   });
+
+  it("keeps authentication supporting copy readable", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toContain("--auth-supporting-size: 19px");
+    expect(styles).toContain("--auth-card-supporting-size: 14px");
+    expect(styles).toMatch(/\.auth-copy > p\s*\{[^}]*font-size: var\(--auth-supporting-size\)/s);
+    expect(styles).toMatch(/\.auth-form-heading p\s*\{[^}]*font-size: var\(--auth-card-supporting-size\)/s);
+  });
 });
 
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpenCheck, LockKeyhole, Sparkles } from "lucide-react";
+import { ArrowRight, FileText, LockKeyhole, PencilLine, Target, TrendingUp } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
@@ -50,9 +50,11 @@ export function AuthPanel({
           <span className="kicker">PERSONAL LEARNING AGENT</span>
           <h1>{t("authPrompt")}</h1>
           <p>{t("authSubline")}</p>
-          <div className="auth-principles">
-            <span><Sparkles size={16} /> 自动识别学习方向</span>
-            <span><BookOpenCheck size={16} /> 用练习证据持续进步</span>
+          <div className="auth-memory-track" aria-label={t("learningMemoryPath")}>
+            <span className="auth-memory-step"><span className="auth-memory-icon"><Target size={17} /></span><strong>{t("learningGoal")}</strong></span>
+            <span className="auth-memory-step"><span className="auth-memory-icon"><FileText size={17} /></span><strong>{t("materials")}</strong></span>
+            <span className="auth-memory-step"><span className="auth-memory-icon"><PencilLine size={17} /></span><strong>{t("practice")}</strong></span>
+            <span className="auth-memory-step"><span className="auth-memory-icon"><TrendingUp size={17} /></span><strong>{t("learningProgress")}</strong></span>
           </div>
         </div>
       </section>
