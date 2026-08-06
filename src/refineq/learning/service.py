@@ -11,6 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from refineq.learning.bkt import DEFAULT_BKT, update_bkt
 from refineq.learning.difficulty import update_difficulty
 from refineq.learning.evidence import create_evidence, stable_id
+from refineq.learning.intelligence import (
+    GeneratedQuestion,
+    LearningIntelligenceService,
+    fallback_grade,
+    fallback_question,
+)
 from refineq.learning.models import (
     BKTState,
     DifficultyState,
@@ -80,6 +86,9 @@ class QuestionResponse(BaseModel):
     id: str
     topic_id: str
     prompt: str
+    difficulty_level: int = Field(default=2, ge=1, le=5)
+    citations: list[str] = Field(default_factory=list)
+    mode: str = "fallback"
 
 
 class AnswerRequest(BaseModel):
@@ -100,6 +109,13 @@ class AnswerResponse(BaseModel):
     mastery: float = Field(ge=0.0, le=1.0)
     difficulty_level: int = Field(ge=1, le=5)
     evidence_id: str
+    score: int = Field(default=0, ge=0, le=100)
+    feedback: str = ""
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    misconceptions: list[str] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
+    grading_mode: str = "fallback"
     replayed: bool = False
 
 
@@ -119,9 +135,11 @@ class LearningService:
         self,
         projects: ProjectRepository,
         learning: LearningRepository,
+        intelligence: LearningIntelligenceService | None = None,
     ) -> None:
         self._projects = projects
         self._learning = learning
+        self._intelligence = intelligence
 
     def _require_project(self, owner_id: str, project_id: str) -> None:
         try:
@@ -265,42 +283,71 @@ class LearningService:
             id=question["id"],
             topic_id=question["topic_id"],
             prompt=question["prompt"],
+            difficulty_level=question.get("difficulty_level", 2),
+            citations=question.get("citations", []),
+            mode=question.get("mode", "fallback"),
         )
 
     def next_question(self, owner_id: str, project_id: str) -> QuestionResponse:
         self._require_project(owner_id, project_id)
+        current = self._learning.get(owner_id, project_id)
+        progress = self._progress(current.data)
+        if progress.get("pending_question"):
+            return self._public_question(progress["pending_question"])
+        topic_id = min(
+            progress["topics"],
+            key=lambda candidate: (
+                BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
+                candidate,
+            ),
+        )
+        topic = progress["topics"][topic_id]
+        mastery = BKTState.model_validate(progress["bkt_states"][topic_id]).p_mastery
+        difficulty_level = DifficultyState.model_validate(
+            progress["difficulty_states"][topic_id]
+        ).level
+        if self._intelligence is not None:
+            generated = self._intelligence.generate_question(
+                owner_id=owner_id,
+                workspace_id=project_id,
+                topic_id=topic_id,
+                topic_name=topic["name"],
+                mastery=mastery,
+                difficulty_level=difficulty_level,
+            )
+        else:
+            generated = fallback_question(
+                topic_id=topic_id,
+                topic_name=topic["name"],
+                difficulty_level=difficulty_level,
+                sources=[],
+            )
+        question_id = stable_id(
+            "question",
+            project_id,
+            topic_id,
+            str(len(current.data["attempts"])),
+        )
+        proposed = {
+            "id": question_id,
+            "topic_id": topic_id,
+            "prompt": generated.prompt,
+            "expected_answer": generated.expected_answer,
+            "difficulty_level": generated.difficulty_level,
+            "citations": generated.citations,
+            "mode": generated.mode,
+            "grading": generated.model_dump(mode="json"),
+        }
         selected: dict[str, Any] | None = None
 
-        def ensure_question(data: dict[str, Any]) -> dict[str, Any]:
+        def store_once(data: dict[str, Any]) -> dict[str, Any]:
             nonlocal selected
-            progress = self._progress(data)
-            if progress.get("pending_question"):
-                selected = progress["pending_question"]
-                return data
-            topic_id = min(
-                progress["topics"],
-                key=lambda candidate: (
-                    BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
-                    candidate,
-                ),
-            )
-            topic = progress["topics"][topic_id]
-            question_id = stable_id(
-                "question",
-                project_id,
-                topic_id,
-                str(len(data["attempts"])),
-            )
-            selected = {
-                "id": question_id,
-                "topic_id": topic_id,
-                "prompt": f"Define or explain: {topic['name']}",
-                "expected_answer": topic["name"],
-            }
-            progress["pending_question"] = selected
+            inner_progress = self._progress(data)
+            selected = inner_progress.get("pending_question") or proposed
+            inner_progress["pending_question"] = selected
             return data
 
-        self._learning.mutate(owner_id, project_id, ensure_question)
+        self._learning.mutate(owner_id, project_id, store_once)
         if selected is None:
             raise LearningServiceError("Question generation failed")
         return self._public_question(selected)
@@ -312,6 +359,38 @@ class LearningService:
         payload: AnswerRequest,
     ) -> AnswerResponse:
         self._require_project(owner_id, project_id)
+        current = self._learning.get(owner_id, project_id)
+        if payload.attempt_id in current.data["attempts"]:
+            return AnswerResponse.model_validate(
+                {**current.data["attempts"][payload.attempt_id], "replayed": True}
+            )
+        current_progress = self._progress(current.data)
+        current_question = current_progress.get("pending_question")
+        if current_question is None or current_question["id"] != payload.question_id:
+            raise LearningConflictError("Question is not pending")
+        if "grading" in current_question:
+            generated = GeneratedQuestion.model_validate(current_question["grading"])
+            grade = (
+                self._intelligence.grade_answer(
+                    owner_id=owner_id,
+                    question=generated,
+                    answer=payload.answer,
+                )
+                if self._intelligence is not None
+                else fallback_grade(generated, payload.answer)
+            )
+        else:
+            expected = current_question["expected_answer"].strip().casefold()
+            matched = expected in payload.answer.strip().casefold()
+            generated = fallback_question(
+                topic_id=current_question["topic_id"],
+                topic_name=current_question["expected_answer"],
+                difficulty_level=2,
+                sources=[],
+            )
+            grade = fallback_grade(generated, payload.answer)
+            if matched and not grade.passed:
+                grade = grade.model_copy(update={"score": 100, "passed": True})
         result: dict[str, Any] | None = None
         replayed = False
 
@@ -326,8 +405,7 @@ class LearningService:
             if question is None or question["id"] != payload.question_id:
                 raise LearningConflictError("Question is not pending")
 
-            expected = question["expected_answer"].strip().casefold()
-            is_correct = expected in payload.answer.strip().casefold()
+            is_correct = grade.passed
             topic_id = question["topic_id"]
             bkt_state = update_bkt(
                 BKTState.model_validate(progress["bkt_states"][topic_id]),
@@ -350,6 +428,13 @@ class LearningService:
                     "topic_id": topic_id,
                     "question_id": payload.question_id,
                     "is_correct": is_correct,
+                    "score": grade.score,
+                    "feedback": grade.feedback,
+                    "strengths": grade.strengths,
+                    "gaps": grade.gaps,
+                    "misconceptions": grade.misconceptions,
+                    "citations": grade.citations,
+                    "grading_mode": grade.mode,
                 },
             )
             result = {
@@ -360,6 +445,13 @@ class LearningService:
                 "mastery": bkt_state.p_mastery,
                 "difficulty_level": difficulty.level,
                 "evidence_id": evidence.id,
+                "score": grade.score,
+                "feedback": grade.feedback,
+                "strengths": grade.strengths,
+                "gaps": grade.gaps,
+                "misconceptions": grade.misconceptions,
+                "citations": grade.citations,
+                "grading_mode": grade.mode,
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")

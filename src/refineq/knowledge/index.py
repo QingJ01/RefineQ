@@ -209,6 +209,17 @@ class KnowledgeIndex:
                 """,
                 (match_query, project_id, max(1, min(limit, 50))),
             ).fetchall()
+            if not rows and re.search(r"[\u4e00-\u9fff]", query):
+                rows = connection.execute(
+                    """
+                    SELECT material_id, filename, chunk_index, content, 0.0 AS rank
+                    FROM material_chunks
+                    WHERE project_id = ? AND content LIKE ?
+                    ORDER BY material_id, CAST(chunk_index AS INTEGER)
+                    LIMIT ?
+                    """,
+                    (project_id, f"%{query.strip()}%", max(1, min(limit, 50))),
+                ).fetchall()
         return [
             SearchResult(
                 citation_id=f"{row['material_id']}#{row['chunk_index']}",

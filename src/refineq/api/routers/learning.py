@@ -20,6 +20,10 @@ from refineq.learning.service import (
 )
 
 router = APIRouter(prefix="/projects/{project_id}/learning", tags=["learning"])
+workspace_router = APIRouter(
+    prefix="/workspaces/{workspace_id}/learning",
+    tags=["learning"],
+)
 
 
 def _raise_api_error(error: LearningServiceError) -> None:
@@ -77,6 +81,21 @@ def question(project_id: str, request: Request, user: CurrentUser) -> QuestionRe
         _raise_api_error(error)
 
 
+@workspace_router.get("/question", response_model=QuestionResponse)
+def workspace_question(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> QuestionResponse:
+    try:
+        return request.app.state.workspace_learning_service.next_question(
+            user.id,
+            workspace_id,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
 @router.post("/answer", response_model=AnswerResponse)
 def answer(
     project_id: str,
@@ -88,6 +107,23 @@ def answer(
         return request.app.state.learning_service.submit_answer(
             user.id,
             project_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.post("/answer", response_model=AnswerResponse)
+def workspace_answer(
+    workspace_id: str,
+    payload: AnswerRequest,
+    request: Request,
+    user: CurrentUser,
+) -> AnswerResponse:
+    try:
+        return request.app.state.workspace_learning_service.submit_answer(
+            user.id,
+            workspace_id,
             payload,
         )
     except LearningServiceError as error:
