@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     data_root: Path = Field(default_factory=lambda: Path("data").resolve())
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    forwarded_allow_ips: str = "127.0.0.1"
     model_endpoint_allowed_hosts: str = "api.openai.com"
     model_encryption_key: SecretStr | None = None
     material_max_count_per_user: int = Field(default=500, ge=1, le=100_000)
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
         default=2 * 1024 * 1024 * 1024,
         ge=1,
     )
+    material_max_request_bytes: int = Field(default=52 * 1024 * 1024, ge=1)
     material_max_pdf_pages: int = Field(default=500, ge=1, le=10_000)
     material_max_docx_entries: int = Field(default=2_000, ge=1, le=100_000)
     material_max_docx_expanded_bytes: int = Field(

@@ -32,6 +32,8 @@ def test_deployment_has_one_explicit_entrypoint() -> None:
     caddy_block = compose.split("\n  caddy:", maxsplit=1)[1]
     assert "\n    ports:" in caddy_block
     assert "handle_path /api/*" in _read("infra/Caddyfile")
+    assert "request_body" in _read("infra/Caddyfile")
+    assert "max_size {$REFINEQ_MATERIAL_MAX_REQUEST_BYTES" in _read("infra/Caddyfile")
 
 
 def test_containers_are_unprivileged_and_runtime_state_is_mounted() -> None:
@@ -106,6 +108,7 @@ def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
         "REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS",
         "REFINEQ_MATERIAL_MAX_COUNT_PER_USER",
         "REFINEQ_MATERIAL_MAX_BYTES_PER_USER",
+        "REFINEQ_MATERIAL_MAX_REQUEST_BYTES",
         "REFINEQ_MATERIAL_MAX_PDF_PAGES",
         "REFINEQ_MATERIAL_MAX_DOCX_ENTRIES",
         "REFINEQ_MATERIAL_MAX_DOCX_EXPANDED_BYTES",
@@ -118,6 +121,7 @@ def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
         "REFINEQ_AUTH_RATE_LIMIT_REQUESTS",
         "REFINEQ_MUTATION_RATE_LIMIT_REQUESTS",
         "REFINEQ_RATE_LIMIT_WINDOW_SECONDS",
+        "REFINEQ_FORWARDED_ALLOW_IPS",
     }
 
     for name in required_names:

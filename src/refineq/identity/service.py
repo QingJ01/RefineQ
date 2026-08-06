@@ -134,7 +134,7 @@ class IdentityService:
         password_bytes = password.encode("utf-8")
         if not display_name:
             raise ValueError("display_name must not be blank")
-        if len(password) < 12 or len(password_bytes) > 72:
+        if len(password_bytes) < 12 or len(password_bytes) > 72:
             raise ValueError("password must contain 12 to 72 bytes")
 
         with self._lock_for(self._path):

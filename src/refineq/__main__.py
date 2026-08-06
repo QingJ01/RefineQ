@@ -13,6 +13,8 @@ def main() -> None:
         "refineq.api.app:app",
         host=settings.host,
         port=settings.port,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
     )
 
 

@@ -18,7 +18,11 @@ from refineq.api.errors import (
     invalid_identifier_exception_handler,
     request_validation_exception_handler,
 )
-from refineq.api.limits import RequestLimitMiddleware, SlidingWindowRateLimiter
+from refineq.api.limits import (
+    RequestBodyLimitMiddleware,
+    RequestLimitMiddleware,
+    SlidingWindowRateLimiter,
+)
 from refineq.api.routers.agent import router as agent_router
 from refineq.api.routers.agent import workspace_router as workspace_agent_router
 from refineq.api.routers.auth import router as auth_router
@@ -61,6 +65,10 @@ def create_app(
         auth_limit=app.state.settings.auth_rate_limit_requests,
         mutation_limit=app.state.settings.mutation_rate_limit_requests,
         window_seconds=app.state.settings.rate_limit_window_seconds,
+    )
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=app.state.settings.material_max_request_bytes,
     )
     app.state.store = AtomicJsonStore(app.state.settings.data_root)
     app.state.projects = ProjectRepository(app.state.store)

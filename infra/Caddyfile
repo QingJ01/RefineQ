@@ -6,6 +6,9 @@
     encode zstd gzip
 
     handle_path /api/* {
+        request_body {
+            max_size {$REFINEQ_MATERIAL_MAX_REQUEST_BYTES:54525952}
+        }
         reverse_proxy api:8000
     }
 

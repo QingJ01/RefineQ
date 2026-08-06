@@ -39,7 +39,9 @@ endpoint; learner-provided URLs cannot extend the allowlist.
 The remaining values in `.env.example` set per-user material, workspace, project, Agent-session,
 and request-rate boundaries. The extraction budget separately caps PDF pages, DOCX archive entry
 count, expanded DOCX bytes and compression ratio, extracted characters, and wall-clock extraction
-time. Tune them for host capacity, but keep finite limits in public deployments.
+time. `REFINEQ_MATERIAL_MAX_REQUEST_BYTES` is enforced by both Caddy and the ASGI receive boundary
+before multipart parsing. Tune these values for host capacity, but keep finite limits in public
+deployments.
 
 ## Enable public HTTPS
 
@@ -53,6 +55,11 @@ REFINEQ_HTTPS_PORT=443
 
 Caddy will request and renew certificates after DNS and firewall access are correct. Do not expose
 ports 8000 or 3000; they are internal service ports.
+
+The Compose profile sets `REFINEQ_FORWARDED_ALLOW_IPS=*` because the API is reachable only through
+the private Compose network. This lets Uvicorn use Caddy's forwarded client address so rate limits
+remain per client. If port 8000 is ever exposed, replace `*` with the exact trusted proxy IPs or
+CIDR ranges before starting the API.
 
 ## Verify health
 

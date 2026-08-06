@@ -182,6 +182,20 @@ def test_password_limits_are_measured_in_utf8_bytes(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
+def test_multibyte_password_at_twelve_bytes_is_accepted(tmp_path: Path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        response = client.post(
+            "/auth/register",
+            json={
+                "email": "unicode-minimum@example.com",
+                "password": "密碼安全",
+                "display_name": "Learner",
+            },
+        )
+
+    assert response.status_code == 201
+
+
 def test_blank_display_name_is_a_validation_error_not_a_server_error(tmp_path: Path) -> None:
     with TestClient(_app(tmp_path), raise_server_exceptions=False) as client:
         response = client.post(
