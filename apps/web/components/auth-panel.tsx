@@ -3,6 +3,7 @@
 import { ArrowRight, BookOpenCheck, LockKeyhole, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
+import { BrandMark, BrandName } from "@/components/brand";
 import { api } from "@/lib/api";
 import type { Translator } from "@/lib/i18n";
 import type { AuthResponse } from "@/lib/types";
@@ -42,8 +43,8 @@ export function AuthPanel({
     <main className="auth-stage">
       <section className="auth-welcome">
         <div className="auth-brand">
-          <span className="brand-mark" aria-hidden="true">R</span>
-          <strong>RefineQ</strong>
+          <BrandMark className="brand-mark" size={36} />
+          <BrandName />
         </div>
         <div className="auth-copy">
           <span className="kicker">PERSONAL LEARNING AGENT</span>
@@ -57,7 +58,7 @@ export function AuthPanel({
       </section>
       <section className="auth-form-card">
         <header className="auth-form-heading">
-          <span className="mobile-brand-mark" aria-hidden="true">R</span>
+          <BrandMark className="mobile-brand-mark" size={36} />
           <div>
             <h2>{mode === "login" ? t("login") : t("register")}</h2>
             <p>{t("authSubline")}</p>

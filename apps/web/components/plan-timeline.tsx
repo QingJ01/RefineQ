@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { Translator } from "@/lib/i18n";
 import type { Locale, StudyPlan } from "@/lib/types";
 import { buildPlanRows } from "@/lib/view-models";
@@ -12,10 +15,13 @@ export function PlanTimeline({
   locale: Locale;
   t: Translator;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (!plan) {
     return <div className="empty-note">{t("noPlan")}</div>;
   }
   const rows = buildPlanRows(plan, locale === "zh" ? "zh-CN" : "en-US");
+  const visibleRows = expanded ? rows : rows.slice(0, 7);
   return (
     <section className="content-card plan-card" aria-labelledby="plan-heading">
       <div className="section-heading">
@@ -25,8 +31,8 @@ export function PlanTimeline({
         </div>
         <span className="minute-badge">{plan.daily_minutes} {t("minutes")}</span>
       </div>
-      <ol className="plan-timeline">
-        {rows.map((row) => (
+      <ol className="plan-timeline" id="study-plan-sessions">
+        {visibleRows.map((row) => (
           <li key={row.id} className="plan-session">
             <span className="sequence">{String(row.sequence).padStart(2, "0")}</span>
             <span className="timeline-rule" aria-hidden="true" />
@@ -38,6 +44,20 @@ export function PlanTimeline({
           </li>
         ))}
       </ol>
+      {rows.length > 7 ? (
+        <button
+          type="button"
+          className="plan-toggle"
+          data-testid="toggle-plan-sessions"
+          aria-expanded={expanded}
+          aria-controls="study-plan-sessions"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded
+            ? t("collapsePlan")
+            : `${t("showAll")} ${rows.length} ${t("sessions")}`}
+        </button>
+      ) : null}
     </section>
   );
 }

@@ -23,6 +23,13 @@ describe("focused learning components", () => {
     expect(html).toContain("RefineQ");
     expect(html).toContain('class="auth-welcome"');
     expect(html).not.toContain("auth-orbit");
+    expect(html).toContain('data-brand-mark="refineq-q-page"');
+    expect(html).toContain('data-brand-fold="true"');
+    expect(html).toContain('data-brand-progress="true"');
+    expect(html).toContain('data-brand-name="RefineQ"');
+    expect(html).toContain('translate="no"');
+    expect(html).not.toContain('<span aria-hidden="true">Q</span>');
+    expect(html).not.toContain(">R</span>");
   });
 
   it("starts with one personal Agent prompt instead of a project form", () => {
@@ -70,6 +77,33 @@ describe("focused learning components", () => {
     expect(html).toContain("01");
     expect(html).toContain("45 min");
     expect(html).toContain("content-card plan-card");
+  });
+
+  it("keeps long study paths focused until the learner expands them", () => {
+    const html = renderToStaticMarkup(
+      <PlanTimeline
+        locale="en"
+        t={t}
+        plan={{
+          id: "plan-long",
+          goal: "Prepare for finals",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: Array.from({ length: 10 }, (_, index) => ({
+            id: `session-${index + 1}`,
+            topic_id: `topic-${index + 1}`,
+            planned_at: `2026-08-${String(index + 6).padStart(2, "0")}T08:00:00Z`,
+            minutes: 45,
+          })),
+        }}
+      />,
+    );
+
+    expect(html.match(/class="plan-session"/g)).toHaveLength(7);
+    expect(html).toContain('id="study-plan-sessions"');
+    expect(html).toContain('aria-controls="study-plan-sessions"');
+    expect(html).toContain('data-testid="toggle-plan-sessions"');
+    expect(html).toContain("Show all 10 sessions");
   });
 
   it("renders evidence as a dated ledger", () => {

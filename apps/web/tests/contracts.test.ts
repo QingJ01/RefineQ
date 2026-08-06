@@ -174,6 +174,20 @@ describe("projectless product surface", () => {
     expect(apiSource).not.toContain("/projects/");
     expect(apiSource).not.toContain("createProject");
   });
+
+  it("gives every clickable surface pressed-state feedback", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toContain(".quiet-button:active:not(:disabled)");
+    expect(styles).toContain(".auth-tabs button:active:not(:disabled)");
+    expect(styles).toContain(".recent-grid button:active:not(:disabled)");
+    expect(styles).toContain(".workspace-nav button:active:not(:disabled)");
+    expect(styles).toContain(".wordmark-button:active:not(:disabled)");
+    expect(styles).toContain(".upload-surface:active:not(:disabled)");
+  });
 });
 
 

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AgentPanel } from "@/components/agent-panel";
 import { AuthPanel } from "@/components/auth-panel";
+import { BrandMark, BrandName } from "@/components/brand";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
 import { MaterialDropzone } from "@/components/material-dropzone";
@@ -231,7 +232,7 @@ export function StudyWorkspace() {
     setWorkspaces([]);
   }
 
-  if (restoring) return <main className="loading-stage">{t("loading")}</main>;
+  if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
   if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
   if (!workspace) {
     return (
@@ -262,8 +263,8 @@ export function StudyWorkspace() {
     <main className="workspace-shell">
       <aside className="workspace-sidebar">
         <button className="sidebar-brand wordmark-button" onClick={() => setWorkspace(null)} aria-label="RefineQ">
-          <span className="brand-mark" aria-hidden="true">R</span>
-          <strong>RefineQ</strong>
+          <BrandMark className="brand-mark" size={36} />
+          <BrandName />
         </button>
         <nav className="workspace-nav" aria-label="Study sections">
           {nav.map(({ id, icon: Icon }) => (

@@ -20,6 +20,14 @@ test("learner completes and restores a projectless study journey", async ({ page
 
     await expect(page.locator(".workspace-header h1")).toBeVisible();
     await expect(page.locator(".plan-card")).toBeVisible();
+    await expect(page.locator(".plan-session")).toHaveCount(7);
+    const planToggle = page.getByTestId("toggle-plan-sessions");
+    const totalSessions = Number((await planToggle.innerText()).match(/\d+/)?.[0]);
+    expect(totalSessions).toBeGreaterThan(7);
+    await planToggle.click();
+    await expect(page.locator(".plan-session")).toHaveCount(totalSessions);
+    await planToggle.click();
+    await expect(page.locator(".plan-session")).toHaveCount(7);
   });
 
   const workspaceTitle = await page.locator(".workspace-header h1").innerText();

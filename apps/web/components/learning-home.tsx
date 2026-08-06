@@ -3,6 +3,7 @@
 import { ArrowRight, Clock3, History, MessageSquarePlus, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
+import { BrandMark, BrandName } from "@/components/brand";
 import type { Translator } from "@/lib/i18n";
 import type { LearningWorkspace } from "@/lib/types";
 
@@ -32,8 +33,8 @@ export function LearningHome({
     <main className="home-shell">
       <aside className="home-sidebar">
         <div className="sidebar-brand">
-          <span className="brand-mark" aria-hidden="true">R</span>
-          <strong>RefineQ</strong>
+          <BrandMark className="brand-mark" size={36} />
+          <BrandName />
         </div>
         <div className="home-nav-item active"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></div>
         <div className="home-nav-item"><History size={19} /><span>{t("recentLearning")}</span></div>
@@ -41,7 +42,7 @@ export function LearningHome({
       </aside>
       <section className="learning-home">
         <div className="learning-home-hero">
-          <div className="learning-spark" aria-hidden="true"><Sparkles size={24} /></div>
+          <div className="learning-brand-hero" aria-hidden="true"><BrandMark size={58} /></div>
           <span className="kicker">PERSONAL LEARNING AGENT</span>
           <h1>{t("learningPrompt")}</h1>
           <p>{t("learningPromptHint")}</p>
