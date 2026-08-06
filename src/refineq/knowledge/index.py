@@ -251,3 +251,39 @@ class KnowledgeIndex:
             content_sha256=row["content_sha256"],
             indexed_at=datetime.fromisoformat(row["indexed_at"]),
         )
+
+    def list_materials(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+    ) -> list[MaterialRecord]:
+        """List indexed material metadata without exposing another workspace."""
+
+        project_id = validate_identifier(project_id, field="project_id")
+        path = self._database_path(owner_id)
+        if not path.exists():
+            return []
+        with self._lock_for(path), self._connect(path) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM materials
+                WHERE project_id = ?
+                ORDER BY indexed_at DESC, material_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return [
+            MaterialRecord(
+                id=row["material_id"],
+                project_id=row["project_id"],
+                filename=row["filename"],
+                content_type=row["content_type"],
+                size=row["size"],
+                status=row["status"],
+                chunk_count=row["chunk_count"],
+                content_sha256=row["content_sha256"],
+                indexed_at=datetime.fromisoformat(row["indexed_at"]),
+            )
+            for row in rows
+        ]

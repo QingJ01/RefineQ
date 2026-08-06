@@ -17,6 +17,7 @@ from refineq.api.routers.learning import router as learning_router
 from refineq.api.routers.materials import router as materials_router
 from refineq.api.routers.projects import router as projects_router
 from refineq.api.routers.settings import router as settings_router
+from refineq.api.routers.workspaces import router as workspaces_router
 from refineq.config import Settings
 from refineq.identity.service import IdentityService
 from refineq.knowledge.index import KnowledgeIndex
@@ -25,6 +26,8 @@ from refineq.storage.json_store import AtomicJsonStore
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
+from refineq.storage.workspaces import WorkspaceRepository
+from refineq.workspaces.service import WorkspaceService
 
 
 def create_app(
@@ -38,9 +41,20 @@ def create_app(
     app.state.settings = settings or Settings()
     app.state.store = AtomicJsonStore(app.state.settings.data_root)
     app.state.projects = ProjectRepository(app.state.store)
+    app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
     app.state.learning_service = LearningService(app.state.projects, app.state.learning)
+    app.state.workspace_learning_service = LearningService(
+        app.state.workspaces,
+        app.state.learning,
+    )
     app.state.knowledge = KnowledgeIndex(app.state.settings.data_root)
+    app.state.workspace_service = WorkspaceService(
+        workspaces=app.state.workspaces,
+        learning=app.state.learning,
+        learning_service=app.state.workspace_learning_service,
+        knowledge=app.state.knowledge,
+    )
     app.state.sessions = SessionRepository(app.state.store)
     app.state.model_settings = ModelSettingsRepository(app.state.settings.data_root)
     app.state.agent = AgentService(
@@ -61,6 +75,7 @@ def create_app(
     app.include_router(materials_router)
     app.include_router(agent_router)
     app.include_router(settings_router)
+    app.include_router(workspaces_router)
     return app
 
 
