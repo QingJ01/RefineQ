@@ -23,6 +23,20 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     model_endpoint_allowed_hosts: str = "api.openai.com"
     model_encryption_key: SecretStr | None = None
+    material_max_count_per_user: int = Field(default=500, ge=1, le=100_000)
+    material_max_bytes_per_user: int = Field(
+        default=2 * 1024 * 1024 * 1024,
+        ge=1,
+    )
+    material_max_pdf_pages: int = Field(default=500, ge=1, le=10_000)
+    material_max_docx_entries: int = Field(default=2_000, ge=1, le=100_000)
+    material_max_docx_expanded_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        ge=1,
+    )
+    material_max_docx_compression_ratio: float = Field(default=100.0, gt=1.0)
+    material_max_extracted_chars: int = Field(default=2_000_000, ge=1)
+    material_extraction_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
 
     @field_validator("data_root", mode="after")
     @classmethod

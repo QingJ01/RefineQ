@@ -96,3 +96,71 @@ def test_mime_mismatch_has_a_stable_error(tmp_path: Path) -> None:
 
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "unsupported_material"
+
+
+def test_mixed_valid_and_invalid_batch_is_all_or_nothing(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "atomic-upload@example.com")
+        project_id = _project(client, token)
+        response = client.post(
+            f"/projects/{project_id}/materials",
+            headers=_headers(token),
+            files=[
+                ("files", ("valid.txt", b"Useful calculus notes.", "text/plain")),
+                ("files", ("broken.pdf", b"not a pdf", "application/pdf")),
+            ],
+        )
+
+    assert response.status_code == 422
+    assert app.state.knowledge.list_materials(
+        owner_id=app.state.identity.authenticate(
+            email="atomic-upload@example.com",
+            password="correct-horse-battery-staple",
+        ).id,
+        project_id=project_id,
+    ) == []
+    material_dir = (
+        tmp_path
+        / "data"
+        / "users"
+        / app.state.identity.authenticate(
+            email="atomic-upload@example.com",
+            password="correct-horse-battery-staple",
+        ).id
+        / "knowledge"
+        / "projects"
+        / project_id
+        / "materials"
+    )
+    assert not material_dir.exists() or list(material_dir.iterdir()) == []
+
+
+def test_per_user_material_quota_is_enforced_before_second_upload(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            material_max_count_per_user=1,
+            material_max_bytes_per_user=1_000,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        token = _register(client, "quota-upload@example.com")
+        project_id = _project(client, token)
+        first = client.post(
+            f"/projects/{project_id}/materials",
+            headers=_headers(token),
+            files={"files": ("one.txt", b"First notes", "text/plain")},
+        )
+        second = client.post(
+            f"/projects/{project_id}/materials",
+            headers=_headers(token),
+            files={"files": ("two.txt", b"Second notes", "text/plain")},
+        )
+
+    assert first.status_code == 201
+    assert second.status_code == 413
+    assert second.json()["error"]["code"] == "material_quota"

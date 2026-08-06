@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from refineq.knowledge import index as index_module
 from refineq.knowledge.index import KnowledgeIndex
 
 
@@ -56,3 +59,41 @@ def test_reindexing_one_material_replaces_its_old_chunks(tmp_path: Path) -> None
     search_scope = {"owner_id": "owner", "project_id": "project"}
     assert index.search(**search_scope, query="limits") == []
     assert len(index.search(**search_scope, query="derivatives")) == 1
+
+
+def test_batch_index_validates_every_document_before_replacing_any_rows(
+    tmp_path: Path,
+) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="project",
+        material_id="existing",
+        filename="existing.txt",
+        text="Original limits notes.",
+    )
+
+    with pytest.raises(ValueError, match="blank"):
+        index.add_documents(
+            owner_id="owner",
+            documents=[
+                index_module.MaterialDocument(
+                    project_id="project",
+                    material_id="replacement",
+                    filename="replacement.txt",
+                    text="Replacement derivatives notes.",
+                ),
+                index_module.MaterialDocument(
+                    project_id="project",
+                    material_id="broken",
+                    filename="broken.txt",
+                    text="",
+                ),
+            ],
+        )
+
+    assert [
+        result.material_id
+        for result in index.search(owner_id="owner", project_id="project", query="limits")
+    ] == ["existing"]
+    assert index.search(owner_id="owner", project_id="project", query="derivatives") == []

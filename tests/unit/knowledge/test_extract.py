@@ -5,9 +5,11 @@ from __future__ import annotations
 from io import BytesIO
 
 import fitz
+import pytest
 from docx import Document
 
-from refineq.knowledge.extract import extract_text
+from refineq.knowledge import extract as extraction
+from refineq.knowledge.extract import MaterialExtractionError, extract_text
 
 
 def test_extracts_utf8_text_and_markdown() -> None:
@@ -46,3 +48,51 @@ def test_extracts_docx_paragraphs() -> None:
     )
 
     assert extracted == "Calculus\nThe chain rule composes derivatives."
+
+
+def test_pdf_page_budget_is_enforced_before_page_text_extraction() -> None:
+    document = fitz.open()
+    document.new_page()
+    document.new_page()
+    payload = document.tobytes()
+    document.close()
+
+    with pytest.raises(MaterialExtractionError, match="page"):
+        extract_text(
+            "large.pdf",
+            "application/pdf",
+            payload,
+            limits=extraction.ExtractionLimits(max_pdf_pages=1),
+        )
+
+
+def test_docx_expanded_byte_and_compression_ratio_budgets_are_enforced() -> None:
+    document = Document()
+    document.add_paragraph("Repeated study note. " * 500)
+    buffer = BytesIO()
+    document.save(buffer)
+
+    with pytest.raises(MaterialExtractionError, match="expanded"):
+        extract_text(
+            "large.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            buffer.getvalue(),
+            limits=extraction.ExtractionLimits(max_docx_expanded_bytes=100),
+        )
+    with pytest.raises(MaterialExtractionError, match="compression"):
+        extract_text(
+            "large.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            buffer.getvalue(),
+            limits=extraction.ExtractionLimits(max_docx_compression_ratio=1.0),
+        )
+
+
+def test_extracted_character_budget_applies_to_plain_text() -> None:
+    with pytest.raises(MaterialExtractionError, match="character"):
+        extract_text(
+            "large.txt",
+            "text/plain",
+            b"01234567890",
+            limits=extraction.ExtractionLimits(max_extracted_chars=10),
+        )

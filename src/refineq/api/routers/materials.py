@@ -4,15 +4,27 @@ from __future__ import annotations
 
 import os
 import tempfile
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated
 
+from anyio import fail_after, to_thread
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 
 from refineq.api.dependencies import CurrentUser
-from refineq.knowledge.extract import MaterialExtractionError, extract_text
-from refineq.knowledge.index import MaterialNotFoundError, MaterialRecord, SearchResult
+from refineq.knowledge.extract import (
+    ExtractionLimits,
+    MaterialExtractionError,
+    MaterialExtractionLimitError,
+    extract_text,
+)
+from refineq.knowledge.index import (
+    MaterialDocument,
+    MaterialNotFoundError,
+    MaterialRecord,
+    SearchResult,
+)
 from refineq.knowledge.policy import MaterialPolicy, MaterialPolicyError, UploadDescriptor
 from refineq.storage.json_store import RecordNotFoundError
 
@@ -70,6 +82,33 @@ def _write_material(path: Path, payload: bytes) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def _extraction_limits(request: Request) -> ExtractionLimits:
+    settings = request.app.state.settings
+    return ExtractionLimits(
+        max_pdf_pages=settings.material_max_pdf_pages,
+        max_docx_entries=settings.material_max_docx_entries,
+        max_docx_expanded_bytes=settings.material_max_docx_expanded_bytes,
+        max_docx_compression_ratio=settings.material_max_docx_compression_ratio,
+        max_extracted_chars=settings.material_max_extracted_chars,
+        max_processing_seconds=settings.material_extraction_timeout_seconds,
+    )
+
+
+def _raise_extraction_error(error: MaterialExtractionError) -> None:
+    limited = isinstance(error, MaterialExtractionLimitError)
+    raise HTTPException(
+        status_code=(
+            status.HTTP_413_CONTENT_TOO_LARGE
+            if limited
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        ),
+        detail={
+            "code": "material_extraction_limit" if limited else "material_extraction_failed",
+            "message": str(error),
+        },
+    ) from error
+
+
 @router.post("", response_model=list[MaterialRecord], status_code=status.HTTP_201_CREATED)
 async def upload_materials(
     project_id: str,
@@ -84,60 +123,114 @@ async def upload_materials(
         )
 
     loaded: list[tuple[UploadFile, bytes]] = []
-    for upload in files:
-        payload = await upload.read(_policy.max_file_bytes + 1)
-        loaded.append((upload, payload))
-    descriptors = [
-        UploadDescriptor(
-            filename=upload.filename or "",
-            content_type=upload.content_type or "application/octet-stream",
-            size=len(payload),
-        )
-        for upload, payload in loaded
-    ]
     try:
-        _policy.validate_batch(descriptors)
-    except MaterialPolicyError as error:
-        raise _material_error(error) from error
-
-    records = []
-    for (upload, payload), descriptor in zip(loaded, descriptors, strict=True):
-        try:
-            text = extract_text(descriptor.filename, descriptor.content_type, payload)
-        except MaterialExtractionError as error:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "code": "material_extraction_failed",
-                    "message": str(error),
-                },
-            ) from error
-        material_id = f"material_{sha256(project_id.encode() + payload).hexdigest()[:20]}"
-        extension = Path(descriptor.filename).suffix.lower()
-        material_path = (
-            request.app.state.settings.data_root
-            / "users"
-            / user.id
-            / "knowledge"
-            / "projects"
-            / project_id
-            / "materials"
-            / f"{material_id}{extension}"
-        )
-        _write_material(material_path, payload)
-        records.append(
-            request.app.state.knowledge.add_document(
-                owner_id=user.id,
-                project_id=project_id,
-                material_id=material_id,
-                filename=descriptor.filename,
-                content_type=descriptor.content_type,
+        for upload in files:
+            payload = await upload.read(_policy.max_file_bytes + 1)
+            loaded.append((upload, payload))
+        descriptors = [
+            UploadDescriptor(
+                filename=upload.filename or "",
+                content_type=upload.content_type or "application/octet-stream",
                 size=len(payload),
-                text=text,
             )
+            for upload, payload in loaded
+        ]
+        try:
+            _policy.validate_batch(descriptors)
+        except MaterialPolicyError as error:
+            raise _material_error(error) from error
+
+        existing_count, existing_bytes = request.app.state.knowledge.owner_material_usage(
+            owner_id=user.id
         )
-        await upload.close()
-    return records
+        settings = request.app.state.settings
+        if (
+            existing_count + len(descriptors) > settings.material_max_count_per_user
+            or existing_bytes + sum(item.size for item in descriptors)
+            > settings.material_max_bytes_per_user
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail={
+                    "code": "material_quota",
+                    "message": "The learner material quota would be exceeded",
+                },
+            )
+
+        limits = _extraction_limits(request)
+        extracted: list[str] = []
+        for (_, payload), descriptor in zip(loaded, descriptors, strict=True):
+            try:
+                with fail_after(limits.max_processing_seconds + 0.5):
+                    text = await to_thread.run_sync(
+                        partial(
+                            extract_text,
+                            descriptor.filename,
+                            descriptor.content_type,
+                            payload,
+                            limits=limits,
+                        ),
+                        abandon_on_cancel=True,
+                    )
+            except TimeoutError:
+                _raise_extraction_error(
+                    MaterialExtractionLimitError(
+                        "Material extraction exceeded its time budget"
+                    )
+                )
+            except MaterialExtractionError as error:
+                _raise_extraction_error(error)
+            extracted.append(text)
+
+        documents: list[MaterialDocument] = []
+        material_files: list[tuple[Path, bytes]] = []
+        for (_, payload), descriptor, text in zip(
+            loaded, descriptors, extracted, strict=True
+        ):
+            material_id = (
+                f"material_{sha256(project_id.encode() + payload).hexdigest()[:20]}"
+            )
+            extension = Path(descriptor.filename).suffix.lower()
+            material_path = (
+                request.app.state.settings.data_root
+                / "users"
+                / user.id
+                / "knowledge"
+                / "projects"
+                / project_id
+                / "materials"
+                / f"{material_id}{extension}"
+            )
+            material_files.append((material_path, payload))
+            documents.append(
+                MaterialDocument(
+                    project_id=project_id,
+                    material_id=material_id,
+                    filename=descriptor.filename,
+                    content_type=descriptor.content_type,
+                    size=len(payload),
+                    text=text,
+                )
+            )
+
+        created_paths: list[Path] = []
+        try:
+            for material_path, payload in material_files:
+                if material_path.exists():
+                    continue
+                _write_material(material_path, payload)
+                created_paths.append(material_path)
+            return request.app.state.knowledge.add_documents(
+                owner_id=user.id,
+                documents=documents,
+            )
+        except Exception:
+            for created_path in created_paths:
+                created_path.unlink(missing_ok=True)
+            raise
+    finally:
+        for upload in files:
+            await upload.close()
 
 
 @workspace_router.post(

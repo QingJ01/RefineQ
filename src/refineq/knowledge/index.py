@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -42,6 +43,16 @@ class SearchResult(BaseModel):
 
 class MaterialNotFoundError(LookupError):
     """Raised when an indexed material is outside the requested scope."""
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialDocument:
+    project_id: str
+    material_id: str
+    filename: str
+    text: str
+    content_type: str = "text/plain"
+    size: int | None = None
 
 
 class KnowledgeIndex:
@@ -125,58 +136,112 @@ class KnowledgeIndex:
         content_type: str = "text/plain",
         size: int | None = None,
     ) -> MaterialRecord:
-        project_id = validate_identifier(project_id, field="project_id")
-        material_id = validate_identifier(material_id, field="material_id")
-        chunks = self._chunks(text)
-        if not chunks:
-            raise ValueError("Indexed text must not be blank")
+        return self.add_documents(
+            owner_id=owner_id,
+            documents=[
+                MaterialDocument(
+                    project_id=project_id,
+                    material_id=material_id,
+                    filename=filename,
+                    text=text,
+                    content_type=content_type,
+                    size=size,
+                )
+            ],
+        )[0]
+
+    def add_documents(
+        self,
+        *,
+        owner_id: str,
+        documents: list[MaterialDocument],
+    ) -> list[MaterialRecord]:
+        """Validate and replace a material batch in one SQLite transaction."""
+
+        if not documents:
+            raise ValueError("At least one indexed document is required")
+        prepared: list[tuple[MaterialRecord, list[str]]] = []
+        seen: set[tuple[str, str]] = set()
         indexed_at = datetime.now(UTC)
-        encoded = text.encode("utf-8")
-        record = MaterialRecord(
-            id=material_id,
-            project_id=project_id,
-            filename=filename,
-            content_type=content_type,
-            size=len(encoded) if size is None else size,
-            status="indexed",
-            chunk_count=len(chunks),
-            content_sha256=sha256(encoded).hexdigest(),
-            indexed_at=indexed_at,
-        )
+        for document in documents:
+            project_id = validate_identifier(document.project_id, field="project_id")
+            material_id = validate_identifier(document.material_id, field="material_id")
+            identity = (project_id, material_id)
+            if identity in seen:
+                raise ValueError("Material IDs must be unique within a batch")
+            seen.add(identity)
+            chunks = self._chunks(document.text)
+            if not chunks:
+                raise ValueError("Indexed text must not be blank")
+            encoded = document.text.encode("utf-8")
+            prepared.append(
+                (
+                    MaterialRecord(
+                        id=material_id,
+                        project_id=project_id,
+                        filename=document.filename,
+                        content_type=document.content_type,
+                        size=len(encoded) if document.size is None else document.size,
+                        status="indexed",
+                        chunk_count=len(chunks),
+                        content_sha256=sha256(encoded).hexdigest(),
+                        indexed_at=indexed_at,
+                    ),
+                    chunks,
+                )
+            )
+
         path = self._database_path(owner_id)
         with self._lock_for(path), self._connect(path) as connection:
-            connection.execute(
-                "DELETE FROM material_chunks WHERE project_id = ? AND material_id = ?",
-                (project_id, material_id),
-            )
-            connection.execute(
-                "DELETE FROM materials WHERE project_id = ? AND material_id = ?",
-                (project_id, material_id),
-            )
-            connection.execute(
-                """
-                INSERT INTO materials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    project_id,
-                    material_id,
-                    filename,
-                    content_type,
-                    record.size,
-                    record.status,
-                    record.chunk_count,
-                    record.content_sha256,
-                    indexed_at.isoformat(),
-                ),
-            )
-            connection.executemany(
-                "INSERT INTO material_chunks VALUES (?, ?, ?, ?, ?)",
-                [
-                    (project_id, material_id, filename, index, chunk)
-                    for index, chunk in enumerate(chunks)
-                ],
-            )
-        return record
+            for record, chunks in prepared:
+                connection.execute(
+                    "DELETE FROM material_chunks WHERE project_id = ? AND material_id = ?",
+                    (record.project_id, record.id),
+                )
+                connection.execute(
+                    "DELETE FROM materials WHERE project_id = ? AND material_id = ?",
+                    (record.project_id, record.id),
+                )
+                connection.execute(
+                    "INSERT INTO materials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record.project_id,
+                        record.id,
+                        record.filename,
+                        record.content_type,
+                        record.size,
+                        record.status,
+                        record.chunk_count,
+                        record.content_sha256,
+                        record.indexed_at.isoformat(),
+                    ),
+                )
+                connection.executemany(
+                    "INSERT INTO material_chunks VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (
+                            record.project_id,
+                            record.id,
+                            record.filename,
+                            index,
+                            chunk,
+                        )
+                        for index, chunk in enumerate(chunks)
+                    ],
+                )
+        return [record for record, _ in prepared]
+
+    def owner_material_usage(self, *, owner_id: str) -> tuple[int, int]:
+        """Return indexed material count and stored upload bytes for one owner."""
+
+        path = self._database_path(owner_id)
+        if not path.exists():
+            return 0, 0
+        with self._lock_for(path), self._connect(path) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM materials"
+            ).fetchone()
+        return int(row["count"]), int(row["bytes"])
 
     @staticmethod
     def _match_query(query: str) -> str:
