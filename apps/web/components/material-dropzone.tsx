@@ -10,12 +10,14 @@ import type { MaterialRecord } from "@/lib/types";
 export function MaterialDropzone({
   t,
   onUpload,
+  initialMaterials = [],
 }: {
   t: Translator;
   onUpload: (files: File[]) => Promise<MaterialRecord[]>;
+  initialMaterials?: MaterialRecord[];
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [materials, setMaterials] = useState<MaterialRecord[]>([]);
+  const [materials, setMaterials] = useState<MaterialRecord[]>(initialMaterials);
   const [busy, setBusy] = useState(false);
 
   async function selected(files: FileList | null) {

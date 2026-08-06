@@ -169,3 +169,46 @@ def test_agent_without_model_settings_returns_a_stable_error(tmp_path: Path) -> 
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "model_not_configured"
+
+
+def test_agent_chat_works_through_an_implicit_workspace(tmp_path: Path) -> None:
+    transport = FakeModelTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "workspace-agent@example.com")
+        headers = _headers(user["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习高数导数"},
+        ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=user["user_id"],
+            project_id=workspace_id,
+            material_id="material-1",
+            filename="notes.txt",
+            text="A derivative gives the local rate of change of a function.",
+        )
+        client.put(
+            "/settings/model",
+            headers=headers,
+            json={
+                "base_url": "https://models.example.test/v1",
+                "model": "exam-tutor",
+                "api_key": "sk-secret-value-1234",
+            },
+        )
+
+        response = client.post(
+            f"/workspaces/{workspace_id}/agent/chat",
+            headers=headers,
+            json={"message": "What is a derivative?"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["citations"] == ["material-1#0"]
+    assert transport.calls

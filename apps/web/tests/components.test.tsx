@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "../components/evidence-ledger";
+import { LearningHome } from "../components/learning-home";
 import { PlanTimeline } from "../components/plan-timeline";
 import { PracticeCard } from "../components/practice-card";
 import { translator } from "../lib/i18n";
@@ -10,6 +11,21 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("starts with one personal Agent prompt instead of a project form", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("zh")}
+        busy={false}
+        workspaces={[]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("今天想学什么");
+    expect(html).not.toContain("项目名称");
+  });
+
   it("renders plan sessions as a numbered study path", () => {
     const html = renderToStaticMarkup(
       <PlanTimeline
@@ -76,5 +92,48 @@ describe("focused learning components", () => {
 
     expect(html).toContain("Explain a limit");
     expect(html).not.toContain("expected_answer");
+  });
+
+  it("renders explainable AI grading feedback", () => {
+    const html = renderToStaticMarkup(
+      <PracticeCard
+        t={translator("zh")}
+        question={{
+          id: "question-1",
+          topic_id: "limits",
+          prompt: "解释函数极限",
+          difficulty_level: 3,
+          citations: ["notes#0"],
+          mode: "ai",
+        }}
+        answer="函数值趋近的目标"
+        result={{
+          attempt_id: "attempt-1",
+          question_id: "question-1",
+          topic_id: "limits",
+          is_correct: true,
+          mastery: 0.6,
+          difficulty_level: 3,
+          evidence_id: "evidence-1",
+          score: 88,
+          feedback: "核心概念正确，可以补充形式化定义。",
+          strengths: ["说明了趋近"],
+          gaps: ["缺少形式化定义"],
+          misconceptions: [],
+          citations: ["notes#0"],
+          grading_mode: "ai",
+          replayed: false,
+        }}
+        busy={false}
+        onAnswerChange={() => undefined}
+        onGetQuestion={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("88");
+    expect(html).toContain("核心概念正确");
+    expect(html).toContain("说明了趋近");
+    expect(html).toContain("缺少形式化定义");
   });
 });

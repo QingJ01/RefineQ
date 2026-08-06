@@ -9,7 +9,7 @@ import type { Translator } from "@/lib/i18n";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; citations?: string[] }
 
-export function AgentPanel({ token, projectId, t }: { token: string; projectId: string; t: Translator }) {
+export function AgentPanel({ token, workspaceId, t }: { token: string; workspaceId: string; t: Translator }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
   const [sessionId, setSessionId] = useState<string>();
@@ -27,7 +27,7 @@ export function AgentPanel({ token, projectId, t }: { token: string; projectId: 
     setMessages((current) => [...current, { role: "user", content: sent }]);
     setBusy(true);
     try {
-      const reply = await api.chat(token, projectId, sent, sessionId);
+      const reply = await api.chatWorkspace(token, workspaceId, sent, sessionId);
       setSessionId(reply.session_id);
       setMessages((current) => [...current, { role: "assistant", content: reply.message, citations: reply.citations }]);
     } finally {

@@ -59,13 +59,21 @@ def test_intents_create_reuse_switch_and_restore_learning_spaces(
         assert english.json()["action"] == "created"
         assert english.json()["workspace"]["id"] != math_id
 
-        app.state.knowledge.add_document(
-            owner_id=owner_id,
-            project_id=math_id,
-            material_id="limits-notes",
-            filename="limits.md",
-            text="A limit is the value approached by a function.",
+        upload = client.post(
+            f"/workspaces/{math_id}/materials",
+            headers=headers,
+            files=[
+                (
+                    "files",
+                    (
+                        "limits.md",
+                        b"A limit is the value approached by a function.",
+                        "text/markdown",
+                    ),
+                )
+            ],
         )
+        assert upload.status_code == 201
 
         spaces = client.get("/workspaces", headers=headers)
         assert spaces.status_code == 200
@@ -108,4 +116,3 @@ def test_workspace_snapshot_is_owner_scoped(tmp_path: Path) -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "workspace_not_found"
-

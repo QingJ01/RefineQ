@@ -19,6 +19,33 @@ export interface Project {
   created_at: string;
 }
 
+export interface LearningWorkspace {
+  id: string;
+  title: string;
+  subject: string;
+  goal: string;
+  topics: string[];
+  keywords: string[];
+  routing_summary: string;
+  created_at: string;
+  last_active_at: string;
+}
+
+export interface WorkspaceRoute {
+  action: "created" | "switched" | "reused";
+  confidence: number;
+  reason: string;
+  workspace: LearningWorkspace;
+}
+
+export interface WorkspaceSnapshot {
+  workspace: LearningWorkspace;
+  progress: Progress;
+  plan: StudyPlan | null;
+  evidence: LearningEvidence[];
+  materials: MaterialRecord[];
+}
+
 export type KnowledgeType = "memory" | "concept" | "procedure" | "design";
 
 export interface TopicSeed {
@@ -55,6 +82,9 @@ export interface PracticeQuestion {
   id: string;
   topic_id: string;
   prompt: string;
+  difficulty_level?: number;
+  citations?: string[];
+  mode?: "ai" | "fallback";
 }
 
 export interface AnswerResult {
@@ -65,6 +95,13 @@ export interface AnswerResult {
   mastery: number;
   difficulty_level: number;
   evidence_id: string;
+  score: number;
+  feedback: string;
+  strengths: string[];
+  gaps: string[];
+  misconceptions: string[];
+  citations: string[];
+  grading_mode: "ai" | "fallback";
   replayed: boolean;
 }
 

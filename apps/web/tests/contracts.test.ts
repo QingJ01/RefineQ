@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
 import { messages } from "../lib/i18n";
+import { clearLearningSession, loadLearningSession, saveLearningSession } from "../lib/session";
 import {
   buildPlanRows,
   evidenceTone,
@@ -64,6 +65,85 @@ describe("authentication and API errors", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+
+describe("persistent personal learning session", () => {
+  function memoryStorage(): Storage {
+    const values = new Map<string, string>();
+    return {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: (key) => values.get(key) ?? null,
+      key: (index) => Array.from(values.keys())[index] ?? null,
+      removeItem: (key) => { values.delete(key); },
+      setItem: (key, value) => { values.set(key, value); },
+    };
+  }
+
+  it("restores and clears the token plus last learning workspace", () => {
+    const storage = memoryStorage();
+    saveLearningSession(storage, { token: "token-1", workspaceId: "math-space" });
+
+    expect(loadLearningSession(storage)).toEqual({
+      token: "token-1",
+      workspaceId: "math-space",
+    });
+
+    clearLearningSession(storage);
+    expect(loadLearningSession(storage)).toBeNull();
+  });
+
+  it("rejects malformed persisted session data", () => {
+    const storage = memoryStorage();
+    storage.setItem("refineq.learning-session", "not-json");
+
+    expect(loadLearningSession(storage)).toBeNull();
+  });
+});
+
+
+describe("implicit workspace API", () => {
+  it("resolves an intent and restores a workspace snapshot", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      const path = String(input);
+      requests.push({ path, method: init?.method ?? "GET" });
+      if (path.endsWith("/workspaces/resolve")) {
+        return new Response(JSON.stringify({
+          action: "created",
+          confidence: 0.92,
+          reason: "新学习方向",
+          workspace: {
+            id: "math-space",
+            title: "高等数学",
+            subject: "mathematics",
+            goal: "复习高数",
+            topics: ["极限"],
+            keywords: ["高数", "极限"],
+            routing_summary: "数学学习",
+            created_at: "2026-08-06T00:00:00Z",
+            last_active_at: "2026-08-06T00:00:00Z",
+          },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        workspace: { id: "math-space" },
+        progress: null,
+        plan: null,
+        evidence: [],
+        materials: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const route = await client.resolveWorkspace("token-1", "复习高数");
+    await client.getWorkspaceSnapshot("token-1", route.workspace.id);
+
+    expect(requests).toEqual([
+      { path: "/api/workspaces/resolve", method: "POST" },
+      { path: "/api/workspaces/math-space/snapshot", method: "GET" },
+    ]);
   });
 });
 

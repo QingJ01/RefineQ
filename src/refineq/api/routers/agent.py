@@ -16,6 +16,10 @@ from refineq.agent.settings import ModelNotConfiguredError
 from refineq.api.dependencies import CurrentUser
 
 router = APIRouter(prefix="/projects/{project_id}/agent", tags=["agent"])
+workspace_router = APIRouter(
+    prefix="/workspaces/{workspace_id}/agent",
+    tags=["agent"],
+)
 
 
 def _raise_agent_error(error: Exception, *, status_code: int, code: str) -> None:
@@ -46,6 +50,33 @@ def chat(
             status_code=status.HTTP_409_CONFLICT,
             code=error.code,
         )
+    except ModelNotConfiguredError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_409_CONFLICT,
+            code="model_not_configured",
+        )
+    except AgentServiceError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code=error.code,
+        )
+
+
+@workspace_router.post("/chat", response_model=AgentChatResponse)
+def workspace_chat(
+    workspace_id: str,
+    payload: AgentChatRequest,
+    request: Request,
+    user: CurrentUser,
+) -> AgentChatResponse:
+    try:
+        return request.app.state.workspace_agent.chat(user.id, workspace_id, payload)
+    except AgentProjectNotFoundError as error:
+        _raise_agent_error(error, status_code=status.HTTP_404_NOT_FOUND, code="workspace_not_found")
+    except (AgentLearningStateError, AgentSessionConflictError) as error:
+        _raise_agent_error(error, status_code=status.HTTP_409_CONFLICT, code=error.code)
     except ModelNotConfiguredError as error:
         _raise_agent_error(
             error,

@@ -62,7 +62,11 @@ export function PracticeCard({
           {status === "mastered" ? <CheckCircle2 size={19} /> : <RotateCcw size={19} />}
           <div>
             <strong>{t(status === "mastered" ? "correct" : status)}</strong>
-            <span>{t("mastery")}: {Math.round(result.mastery * 100)}%</span>
+            <span>{t("score")}: {result.score} / 100 · {t("mastery")}: {Math.round(result.mastery * 100)}%</span>
+            {result.feedback && <p>{result.feedback}</p>}
+            {result.strengths.length > 0 && <section><b>{t("strengths")}</b><ul>{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section>}
+            {result.gaps.length > 0 && <section><b>{t("gaps")}</b><ul>{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul></section>}
+            {result.misconceptions.length > 0 && <section><b>{t("misconceptions")}</b><ul>{result.misconceptions.map((item) => <li key={item}>{item}</li>)}</ul></section>}
           </div>
         </div>
       )}

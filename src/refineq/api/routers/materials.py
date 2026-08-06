@@ -17,6 +17,10 @@ from refineq.knowledge.policy import MaterialPolicy, MaterialPolicyError, Upload
 from refineq.storage.json_store import RecordNotFoundError
 
 router = APIRouter(prefix="/projects/{project_id}/materials", tags=["materials"])
+workspace_router = APIRouter(
+    prefix="/workspaces/{workspace_id}/materials",
+    tags=["materials"],
+)
 _policy = MaterialPolicy()
 
 
@@ -24,10 +28,16 @@ def _require_project(request: Request, owner_id: str, project_id: str) -> None:
     try:
         request.app.state.projects.get(owner_id, project_id)
     except RecordNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "project_not_found", "message": "Project not found"},
-        ) from error
+        try:
+            request.app.state.workspaces.get(owner_id, project_id)
+        except RecordNotFoundError:
+            workspace_route = request.url.path.startswith("/workspaces/")
+            code = "workspace_not_found" if workspace_route else "project_not_found"
+            message = "Learning space not found" if workspace_route else "Project not found"
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": code, "message": message},
+            ) from error
 
 
 def _material_error(error: MaterialPolicyError) -> HTTPException:
@@ -130,6 +140,20 @@ async def upload_materials(
     return records
 
 
+@workspace_router.post(
+    "",
+    response_model=list[MaterialRecord],
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_workspace_materials(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+    files: Annotated[list[UploadFile], File()],
+) -> list[MaterialRecord]:
+    return await upload_materials(workspace_id, request, user, files)
+
+
 @router.get("/search", response_model=list[SearchResult])
 def search_materials(
     project_id: str,
@@ -145,6 +169,17 @@ def search_materials(
         query=q,
         limit=limit,
     )
+
+
+@workspace_router.get("/search", response_model=list[SearchResult])
+def search_workspace_materials(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+    q: str = Query(min_length=1, max_length=500),
+    limit: int = Query(default=8, ge=1, le=50),
+) -> list[SearchResult]:
+    return search_materials(workspace_id, request, user, q, limit)
 
 
 @router.get("/{material_id}", response_model=MaterialRecord)
@@ -166,3 +201,13 @@ def material_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "material_not_found", "message": "Material not found"},
         ) from error
+
+
+@workspace_router.get("/{material_id}", response_model=MaterialRecord)
+def workspace_material_status(
+    workspace_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialRecord:
+    return material_status(workspace_id, material_id, request, user)

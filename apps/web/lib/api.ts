@@ -3,6 +3,7 @@ import type {
   AnswerResult,
   AuthResponse,
   LearningEvidence,
+  LearningWorkspace,
   MaterialRecord,
   PracticeQuestion,
   Progress,
@@ -11,6 +12,8 @@ import type {
   StudyPlan,
   TopicSeed,
   User,
+  WorkspaceRoute,
+  WorkspaceSnapshot,
 } from "./types";
 
 
@@ -92,6 +95,22 @@ export class ApiClient {
     );
   }
 
+  listWorkspaces(token: string): Promise<LearningWorkspace[]> {
+    return this.request("/workspaces", {}, token);
+  }
+
+  resolveWorkspace(token: string, intent: string): Promise<WorkspaceRoute> {
+    return this.request(
+      "/workspaces/resolve",
+      { method: "POST", body: JSON.stringify({ intent }) },
+      token,
+    );
+  }
+
+  getWorkspaceSnapshot(token: string, workspaceId: string): Promise<WorkspaceSnapshot> {
+    return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
+  }
+
   seedProject(
     token: string,
     projectId: string,
@@ -145,6 +164,30 @@ export class ApiClient {
     );
   }
 
+  getWorkspaceQuestion(token: string, workspaceId: string): Promise<PracticeQuestion> {
+    return this.request(`/workspaces/${workspaceId}/learning/question`, {}, token);
+  }
+
+  submitWorkspaceAnswer(
+    token: string,
+    workspaceId: string,
+    questionId: string,
+    answer: string,
+  ): Promise<AnswerResult> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/answer`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          attempt_id: crypto.randomUUID().replaceAll("-", ""),
+          question_id: questionId,
+          answer,
+        }),
+      },
+      token,
+    );
+  }
+
   getEvidence(token: string, projectId: string): Promise<LearningEvidence[]> {
     return this.request(`/projects/${projectId}/learning/evidence`, {}, token);
   }
@@ -163,6 +206,20 @@ export class ApiClient {
     );
   }
 
+  uploadWorkspaceMaterials(
+    token: string,
+    workspaceId: string,
+    files: File[],
+  ): Promise<MaterialRecord[]> {
+    const body = new FormData();
+    files.forEach((file) => body.append("files", file));
+    return this.request(
+      `/workspaces/${workspaceId}/materials`,
+      { method: "POST", body },
+      token,
+    );
+  }
+
   chat(
     token: string,
     projectId: string,
@@ -171,6 +228,22 @@ export class ApiClient {
   ): Promise<AgentReply> {
     return this.request(
       `/projects/${projectId}/agent/chat`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message, session_id: sessionId }),
+      },
+      token,
+    );
+  }
+
+  chatWorkspace(
+    token: string,
+    workspaceId: string,
+    message: string,
+    sessionId?: string,
+  ): Promise<AgentReply> {
+    return this.request(
+      `/workspaces/${workspaceId}/agent/chat`,
       {
         method: "POST",
         body: JSON.stringify({ message, session_id: sessionId }),
