@@ -80,6 +80,95 @@ async def test_chunked_material_body_is_stopped_at_the_same_limit() -> None:
     assert json.loads(outgoing[1]["body"])["error"]["code"] == "request_body_too_large"
 
 
+@pytest.mark.asyncio
+async def test_idle_chunked_upload_timeout_overrides_a_downstream_400() -> None:
+    outgoing: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        await asyncio.sleep(0.1)
+        return {"type": "http.request", "body": b"x", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        outgoing.append(message)
+
+    async def swallow_timeout(scope, receive, send) -> None:
+        try:
+            await receive()
+        except RuntimeError:
+            response = {"type": "http.response.start", "status": 400, "headers": []}
+            await send(response)
+            await send({"type": "http.response.body", "body": b"bad multipart"})
+
+    controller = UploadAdmissionController(max_global=1, max_per_owner=1)
+    middleware = RequestBodyLimitMiddleware(
+        swallow_timeout,
+        max_bytes=100,
+        body_idle_timeout_seconds=0.01,
+        body_total_timeout_seconds=1.0,
+        admission=controller,
+    )
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/projects/project/materials",
+        "headers": [(b"transfer-encoding", b"chunked")],
+    }
+    await middleware(scope, receive, send)
+
+    assert outgoing[0]["status"] == 408
+    assert json.loads(outgoing[1]["body"])["error"]["code"] == "upload_body_timeout"
+
+    after_release: list[dict[str, Any]] = []
+
+    async def send_after_release(message: dict[str, Any]) -> None:
+        after_release.append(message)
+
+    await middleware(scope, receive, send_after_release)
+    assert after_release[0]["status"] == 408
+
+
+@pytest.mark.asyncio
+async def test_total_chunked_upload_timeout_is_independent_of_chunk_activity() -> None:
+    incoming = iter(
+        [
+            {"type": "http.request", "body": b"x", "more_body": True},
+            {"type": "http.request", "body": b"y", "more_body": False},
+        ]
+    )
+    outgoing: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        await asyncio.sleep(0.03)
+        return next(incoming)
+
+    async def send(message: dict[str, Any]) -> None:
+        outgoing.append(message)
+
+    async def consume(scope, receive, send) -> None:
+        while (await receive()).get("more_body"):
+            pass
+
+    middleware = RequestBodyLimitMiddleware(
+        consume,
+        max_bytes=100,
+        body_idle_timeout_seconds=0.2,
+        body_total_timeout_seconds=0.05,
+    )
+    await middleware(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/projects/project/materials",
+            "headers": [(b"transfer-encoding", b"chunked")],
+        },
+        receive,
+        send,
+    )
+
+    assert outgoing[0]["status"] == 408
+    assert json.loads(outgoing[1]["body"])["error"]["code"] == "upload_body_timeout"
+
+
 def test_real_chunked_multipart_returns_the_stable_413_contract(tmp_path: Path) -> None:
     boundary = "refineq-boundary"
     body = (

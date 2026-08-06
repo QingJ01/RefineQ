@@ -177,6 +177,8 @@ def test_concurrent_uploads_cannot_cross_owner_material_quota(tmp_path: Path, mo
             data_root=tmp_path / "data",
             material_max_count_per_user=1,
             material_max_bytes_per_user=1_000,
+            material_upload_max_concurrent_global=2,
+            material_upload_max_concurrent_per_user=2,
             mutation_rate_limit_requests=100,
             _env_file=None,
         )

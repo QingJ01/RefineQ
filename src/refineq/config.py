@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     material_max_request_bytes: int = Field(default=52 * 1024 * 1024, ge=1)
     material_upload_max_concurrent_global: int = Field(default=2, ge=1, le=1_000)
     material_upload_max_concurrent_per_user: int = Field(default=1, ge=1, le=1_000)
+    material_upload_body_idle_timeout_seconds: float = Field(default=10.0, gt=0.0, le=120.0)
+    material_upload_body_total_timeout_seconds: float = Field(default=60.0, gt=0.0, le=600.0)
     material_max_pdf_pages: int = Field(default=500, ge=1, le=10_000)
     material_max_docx_entries: int = Field(default=2_000, ge=1, le=100_000)
     material_max_docx_expanded_bytes: int = Field(

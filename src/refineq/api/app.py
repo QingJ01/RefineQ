@@ -76,6 +76,8 @@ def create_app(
     app.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=app.state.settings.material_max_request_bytes,
+        body_idle_timeout_seconds=app.state.settings.material_upload_body_idle_timeout_seconds,
+        body_total_timeout_seconds=app.state.settings.material_upload_body_total_timeout_seconds,
         admission=app.state.upload_admission,
     )
     app.state.store = AtomicJsonStore(app.state.settings.data_root)

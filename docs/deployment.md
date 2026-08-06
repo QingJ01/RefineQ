@@ -42,8 +42,10 @@ count, expanded DOCX bytes and compression ratio, extracted characters, and wall
 time. `REFINEQ_MATERIAL_MAX_REQUEST_BYTES` is enforced by both Caddy and the ASGI receive boundary
 before multipart parsing. `REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_GLOBAL` and
 `REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_PER_USER` reject excess uploads before their multipart
-bodies are parsed, preventing queued requests from multiplying the memory budget. Tune these
-values for host capacity, but keep finite limits in public deployments.
+bodies are parsed, preventing queued requests from multiplying the memory budget. The matching
+idle and total body timeout settings release those admission slots when a client sends a chunked
+body too slowly; extraction time is budgeted separately. Tune these values for host capacity, but
+keep finite limits in public deployments.
 
 ## Enable public HTTPS
 

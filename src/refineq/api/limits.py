@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import timeout as async_timeout
 from collections import deque
 from hashlib import sha256
 from math import ceil
@@ -19,6 +20,10 @@ from refineq.identity.service import InvalidTokenError
 
 class RequestBodyTooLargeError(RuntimeError):
     """Internal signal raised before multipart parsing can exceed its byte budget."""
+
+
+class RequestBodyTimeoutError(RuntimeError):
+    """Internal signal raised when an upload body is sent too slowly."""
 
 
 class UploadAdmissionController:
@@ -68,10 +73,16 @@ class RequestBodyLimitMiddleware:
         app: Any,
         *,
         max_bytes: int,
+        body_idle_timeout_seconds: float = 10.0,
+        body_total_timeout_seconds: float = 60.0,
         admission: UploadAdmissionController | None = None,
     ) -> None:
+        if body_idle_timeout_seconds <= 0 or body_total_timeout_seconds <= 0:
+            raise ValueError("upload body timeouts must be positive")
         self.app = app
         self._max_bytes = max_bytes
+        self._body_idle_timeout_seconds = body_idle_timeout_seconds
+        self._body_total_timeout_seconds = body_total_timeout_seconds
         self._admission = admission
 
     @staticmethod
@@ -94,6 +105,19 @@ class RequestBodyLimitMiddleware:
                 "error": {
                     "code": "request_body_too_large",
                     "message": "Request body exceeds the material upload limit",
+                }
+            },
+        )
+        await response(scope, receive, send)
+
+    @staticmethod
+    async def _reject_timeout(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        response = JSONResponse(
+            status_code=408,
+            content={
+                "error": {
+                    "code": "upload_body_timeout",
+                    "message": "Material upload body was not received within the time limit",
                 }
             },
         )
@@ -182,11 +206,25 @@ class RequestBodyLimitMiddleware:
 
             received = 0
             exceeded = False
+            timed_out = False
+            body_started_at: float | None = None
             downstream_messages: list[dict[str, Any]] = []
 
             async def limited_receive() -> dict[str, Any]:
-                nonlocal exceeded, received
-                message = await receive()
+                nonlocal body_started_at, exceeded, received, timed_out
+                if body_started_at is None:
+                    body_started_at = monotonic()
+                remaining_total = self._body_total_timeout_seconds - (monotonic() - body_started_at)
+                receive_budget = min(self._body_idle_timeout_seconds, remaining_total)
+                if receive_budget <= 0:
+                    timed_out = True
+                    raise RequestBodyTimeoutError
+                try:
+                    async with async_timeout(receive_budget):
+                        message = await receive()
+                except TimeoutError as error:
+                    timed_out = True
+                    raise RequestBodyTimeoutError from error
                 if message.get("type") == "http.request":
                     received += len(message.get("body", b""))
                     if received > self._max_bytes:
@@ -201,7 +239,12 @@ class RequestBodyLimitMiddleware:
                 await self.app(scope, limited_receive, buffered_send)
             except RequestBodyTooLargeError:
                 exceeded = True
+            except RequestBodyTimeoutError:
+                timed_out = True
 
+            if timed_out:
+                await self._reject_timeout(scope, receive, send)
+                return
             if exceeded:
                 await self._reject(scope, receive, send)
                 return

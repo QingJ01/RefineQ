@@ -21,7 +21,7 @@ interface LongRequestTimeouts {
 
 const DEFAULT_LONG_REQUEST_TIMEOUTS: LongRequestTimeouts = {
   model: 120_000,
-  upload: 180_000,
+  upload: 240_000,
 };
 
 export class ApiError extends Error {
