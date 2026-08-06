@@ -234,3 +234,41 @@ def test_unexpected_provisioning_failure_rolls_back_workspace_and_learning_state
     assert workspaces.json() == []
     learning_dir = tmp_path / "data" / "users" / owner_id / "learning"
     assert not learning_dir.exists() or list(learning_dir.glob("*.json")) == []
+
+
+def test_workspace_count_quota_rejects_a_new_subject_without_mutation(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", max_workspaces_per_user=1, _env_file=None)
+    )
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        first = client.post(
+            "/workspaces/resolve", headers=headers, json={"intent": "Learn calculus"}
+        )
+        second = client.post(
+            "/workspaces/resolve", headers=headers, json={"intent": "Learn Rust ownership"}
+        )
+        workspaces = client.get("/workspaces", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "workspace_quota"
+    assert len(workspaces.json()) == 1
+
+
+def test_unsafe_workspace_identifier_returns_validation_error(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token, _ = _register(client)
+        response = client.get(
+            "/workspaces/bad%20identifier/snapshot",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_identifier"

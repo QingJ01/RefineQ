@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from refineq.api.dependencies import CurrentUser
@@ -33,6 +33,14 @@ def create_project(
     request: Request,
     user: CurrentUser,
 ) -> ProjectResponse:
+    if (
+        request.app.state.projects.count(user.id)
+        >= request.app.state.settings.max_projects_per_user
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "project_quota", "message": "Project quota reached"},
+        )
     project_id = uuid4().hex
     record = request.app.state.projects.create(user.id, project_id, name=payload.name)
     return ProjectResponse.model_validate(record.data)

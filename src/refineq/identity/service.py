@@ -161,11 +161,15 @@ class IdentityService:
         except ValueError as error:
             raise InvalidCredentialsError("Invalid email or password") from error
 
+        password_bytes = password.encode("utf-8")
+        if not 1 <= len(password_bytes) <= 72:
+            raise InvalidCredentialsError("Invalid email or password")
+
         with self._lock_for(self._path):
             document = self._load_unlocked()
             record = document["users"].get(email)
             valid = record is not None and bcrypt.checkpw(
-                password.encode("utf-8"),
+                password_bytes,
                 record["password_hash"].encode("ascii"),
             )
             if not valid:

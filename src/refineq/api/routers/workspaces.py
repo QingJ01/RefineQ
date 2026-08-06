@@ -10,6 +10,7 @@ from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.service import (
     WorkspaceConstraintError,
     WorkspaceNotFoundError,
+    WorkspaceQuotaError,
     WorkspaceResolveRequest,
     WorkspaceRouteResponse,
     WorkspaceServiceError,
@@ -45,6 +46,8 @@ def resolve_workspace(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             error.code,
         )
+    except WorkspaceQuotaError as error:
+        _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
     except LearningServiceError as error:
         _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
     except WorkspaceServiceError as error:

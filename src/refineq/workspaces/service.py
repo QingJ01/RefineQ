@@ -33,6 +33,10 @@ class WorkspaceConstraintError(WorkspaceServiceError):
     code = "invalid_learning_constraints"
 
 
+class WorkspaceQuotaError(WorkspaceServiceError):
+    code = "workspace_quota"
+
+
 class WorkspaceResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -82,12 +86,14 @@ class WorkspaceService:
         learning_service: LearningService,
         knowledge: KnowledgeIndex,
         routing: WorkspaceRoutingIntelligence | None = None,
+        max_workspaces: int = 100,
     ) -> None:
         self._workspaces = workspaces
         self._learning = learning
         self._learning_service = learning_service
         self._knowledge = knowledge
         self._routing = routing
+        self._max_workspaces = max_workspaces
 
     def resolve(
         self,
@@ -110,6 +116,8 @@ class WorkspaceService:
                 now=observed_at,
             )
         else:
+            if len(workspaces) >= self._max_workspaces:
+                raise WorkspaceQuotaError("Learning workspace quota reached")
             workspace_id = uuid4().hex
             inferred = infer_intent_constraints(payload.intent, now=observed_at)
             exam_at = payload.exam_at or inferred.exam_at or observed_at + timedelta(days=30)

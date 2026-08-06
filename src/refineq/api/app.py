@@ -13,7 +13,12 @@ from refineq.agent.structured import (
     OpenAICompatibleStructuredTransport,
     StructuredModelTransport,
 )
-from refineq.api.errors import http_exception_handler, request_validation_exception_handler
+from refineq.api.errors import (
+    http_exception_handler,
+    invalid_identifier_exception_handler,
+    request_validation_exception_handler,
+)
+from refineq.api.limits import RequestLimitMiddleware, SlidingWindowRateLimiter
 from refineq.api.routers.agent import router as agent_router
 from refineq.api.routers.agent import workspace_router as workspace_agent_router
 from refineq.api.routers.auth import router as auth_router
@@ -30,7 +35,7 @@ from refineq.identity.service import IdentityService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.service import LearningService
-from refineq.storage.json_store import AtomicJsonStore
+from refineq.storage.json_store import AtomicJsonStore, InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
@@ -49,6 +54,14 @@ def create_app(
 
     app = FastAPI(title="RefineQ", version=__version__)
     app.state.settings = settings or Settings()
+    app.state.rate_limiter = SlidingWindowRateLimiter()
+    app.add_middleware(
+        RequestLimitMiddleware,
+        limiter=app.state.rate_limiter,
+        auth_limit=app.state.settings.auth_rate_limit_requests,
+        mutation_limit=app.state.settings.mutation_rate_limit_requests,
+        window_seconds=app.state.settings.rate_limit_window_seconds,
+    )
     app.state.store = AtomicJsonStore(app.state.settings.data_root)
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
@@ -83,6 +96,7 @@ def create_app(
             app.state.model_settings,
             learning_model_transport or OpenAICompatibleStructuredTransport(),
         ),
+        max_workspaces=app.state.settings.max_workspaces_per_user,
     )
     app.state.sessions = SessionRepository(app.state.store)
     app.state.agent = AgentService(
@@ -92,6 +106,7 @@ def create_app(
         sessions=app.state.sessions,
         model_settings=app.state.model_settings,
         transport=model_transport or OpenAICompatibleTransport(),
+        max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
     app.state.workspace_agent = AgentService(
         projects=app.state.workspaces,
@@ -100,10 +115,12 @@ def create_app(
         sessions=app.state.sessions,
         model_settings=app.state.model_settings,
         transport=model_transport or OpenAICompatibleTransport(),
+        max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
     app.state.identity = IdentityService(app.state.settings.data_root)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+    app.add_exception_handler(InvalidIdentifierError, invalid_identifier_exception_handler)
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(projects_router)

@@ -9,6 +9,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
+from refineq.storage.json_store import InvalidIdentifierError
+
 _ERROR_CODES = {
     401: "unauthorized",
     404: "not_found",
@@ -50,6 +52,23 @@ async def request_validation_exception_handler(
             "error": {
                 "code": "validation_error",
                 "message": "Request validation failed",
+            }
+        },
+    )
+
+
+async def invalid_identifier_exception_handler(
+    _request: Request,
+    _exception: InvalidIdentifierError,
+) -> JSONResponse:
+    """Reject unsafe path identifiers without exposing filesystem details."""
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "invalid_identifier",
+                "message": "Request identifier is invalid",
             }
         },
     )

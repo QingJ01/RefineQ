@@ -11,6 +11,7 @@ from refineq.agent.service import (
     AgentProjectNotFoundError,
     AgentServiceError,
     AgentSessionConflictError,
+    AgentSessionLimitError,
 )
 from refineq.agent.settings import ModelNotConfiguredError
 from refineq.api.dependencies import CurrentUser
@@ -44,7 +45,11 @@ def chat(
             status_code=status.HTTP_404_NOT_FOUND,
             code=error.code,
         )
-    except (AgentLearningStateError, AgentSessionConflictError) as error:
+    except (
+        AgentLearningStateError,
+        AgentSessionConflictError,
+        AgentSessionLimitError,
+    ) as error:
         _raise_agent_error(
             error,
             status_code=status.HTTP_409_CONFLICT,
@@ -75,7 +80,11 @@ def workspace_chat(
         return request.app.state.workspace_agent.chat(user.id, workspace_id, payload)
     except AgentProjectNotFoundError as error:
         _raise_agent_error(error, status_code=status.HTTP_404_NOT_FOUND, code="workspace_not_found")
-    except (AgentLearningStateError, AgentSessionConflictError) as error:
+    except (
+        AgentLearningStateError,
+        AgentSessionConflictError,
+        AgentSessionLimitError,
+    ) as error:
         _raise_agent_error(error, status_code=status.HTTP_409_CONFLICT, code=error.code)
     except ModelNotConfiguredError as error:
         _raise_agent_error(

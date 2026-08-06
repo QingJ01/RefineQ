@@ -41,6 +41,10 @@ class AgentSessionConflictError(AgentServiceError):
     code = "agent_session_conflict"
 
 
+class AgentSessionLimitError(AgentServiceError):
+    code = "agent_session_limit"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelReply:
     text: str
@@ -138,6 +142,7 @@ class AgentService:
         sessions: SessionRepository,
         model_settings: ModelSettingsRepository,
         transport: ModelTransport,
+        max_sessions: int = 200,
     ) -> None:
         self._projects = projects
         self._learning = learning
@@ -145,6 +150,7 @@ class AgentService:
         self._sessions = sessions
         self._model_settings = model_settings
         self._transport = transport
+        self._max_sessions = max_sessions
 
     def _require_project(self, owner_id: str, project_id: str) -> None:
         try:
@@ -197,7 +203,9 @@ class AgentService:
             )
             if session_workspace_id != project_id:
                 raise AgentSessionConflictError("Session belongs to another learning space")
-        except RecordNotFoundError:
+        except RecordNotFoundError as error:
+            if self._sessions.count(owner_id) >= self._max_sessions:
+                raise AgentSessionLimitError("Agent session quota reached") from error
             session = self._sessions.create(
                 owner_id,
                 session_id,

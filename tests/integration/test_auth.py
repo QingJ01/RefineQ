@@ -103,3 +103,81 @@ def test_two_users_cannot_read_the_same_project_id(tmp_path: Path) -> None:
 
     with pytest.raises(RecordNotFoundError):
         app.state.projects.get(bob["user"]["id"], "shared")
+
+
+def test_authentication_burst_is_rate_limited_by_client(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            auth_rate_limit_requests=2,
+            mutation_rate_limit_requests=100,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        responses = [
+            client.post(
+                "/auth/login",
+                json={"email": "missing@example.com", "password": "wrong-password"},
+            )
+            for _ in range(3)
+        ]
+
+    assert [response.status_code for response in responses] == [401, 401, 429]
+    assert responses[-1].json()["error"]["code"] == "rate_limit_exceeded"
+    assert int(responses[-1].headers["Retry-After"]) >= 1
+
+
+def test_authenticated_mutation_burst_is_rate_limited(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            auth_rate_limit_requests=10,
+            mutation_rate_limit_requests=2,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        registered = _register(client, "limited@example.com")
+        headers = {"Authorization": f"Bearer {registered['access_token']}"}
+        responses = [
+            client.post("/projects", headers=headers, json={"name": f"Project {index}"})
+            for index in range(3)
+        ]
+
+    assert [response.status_code for response in responses] == [201, 201, 429]
+    assert responses[-1].json()["error"]["code"] == "rate_limit_exceeded"
+
+
+def test_password_limits_are_measured_in_utf8_bytes(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/auth/register",
+            json={
+                "email": "unicode-password@example.com",
+                "password": "密" * 30,
+                "display_name": "Learner",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_blank_display_name_is_a_validation_error_not_a_server_error(tmp_path: Path) -> None:
+    with TestClient(_app(tmp_path), raise_server_exceptions=False) as client:
+        response = client.post(
+            "/auth/register",
+            json={
+                "email": "blank-name@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "   ",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"

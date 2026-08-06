@@ -316,3 +316,55 @@ def test_agent_bounds_history_and_removes_unavailable_citation_markers(
     assert sum(len(message["content"]) for message in sent_history) <= 40_000
     persisted = app.state.sessions.get(user["user_id"], session_id)
     assert len(persisted.data["messages"]) <= 20
+
+
+def test_agent_session_count_quota_prevents_unbounded_session_files(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            max_agent_sessions_per_user=1,
+            _env_file=None,
+        ),
+        model_transport=FakeModelTransport(),
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "session-quota@example.com")
+        headers = _headers(user["token"])
+        project_id = client.post(
+            "/projects", headers=headers, json={"name": "Calculus"}
+        ).json()["id"]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Pass calculus",
+                "exam_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+                "daily_minutes": 45,
+                "topics": [{"id": "limits", "name": "Limits"}],
+            },
+        )
+        client.put(
+            "/settings/model",
+            headers=headers,
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "model": "exam-tutor",
+                "api_key": "secret",
+            },
+        )
+
+        first = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json={"message": "First session"},
+        )
+        second = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json={"message": "Second session"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "agent_session_limit"

@@ -31,3 +31,6 @@ class ProjectRepository:
 
     def get(self, owner_id: str, project_id: str) -> StoredRecord:
         return self._store.read(owner_id, "projects", project_id)
+
+    def count(self, owner_id: str) -> int:
+        return len(self._store.list(owner_id, "projects"))

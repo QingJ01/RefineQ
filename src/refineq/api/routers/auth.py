@@ -28,6 +28,11 @@ def register(payload: RegisterRequest, request: Request) -> AuthResponse:
         )
     except AccountExistsError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "validation_error", "message": "Request validation failed"},
+        ) from error
     return _auth_response(request, user)
 
 
