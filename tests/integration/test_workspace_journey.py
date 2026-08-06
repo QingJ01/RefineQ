@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -118,3 +119,118 @@ def test_workspace_snapshot_is_owner_scoped(tmp_path: Path) -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "workspace_not_found"
+
+
+def test_natural_language_exam_and_daily_time_shape_the_created_plan(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Calculus exam in two weeks, study 20 minutes daily"},
+        )
+        workspace_id = created.json()["workspace"]["id"]
+        snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
+
+    assert created.status_code == 200
+    assert snapshot.status_code == 200
+    plan = snapshot.json()["plan"]
+    assert plan["daily_minutes"] == 20
+    assert 13 <= len(plan["sessions"]) <= 14
+
+
+def test_explicit_plan_constraints_override_values_in_intent(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    exam_at = datetime.now(UTC) + timedelta(days=4)
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": "Calculus exam in two weeks, study 20 minutes daily",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 30,
+            },
+        )
+        workspace_id = created.json()["workspace"]["id"]
+        plan = client.get(
+            f"/workspaces/{workspace_id}/snapshot", headers=headers
+        ).json()["plan"]
+
+    assert plan["daily_minutes"] == 30
+    assert 3 <= len(plan["sessions"]) <= 4
+
+
+def test_invalid_plan_constraints_do_not_persist_an_orphan_workspace(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": "Prepare calculus",
+                "exam_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_learning_constraints"
+    assert workspaces.json() == []
+
+
+def test_extreme_plan_horizon_is_rejected_before_persistence(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Prepare calculus", "exam_at": "9999-01-01T00:00:00Z"},
+        )
+        workspaces = client.get("/workspaces", headers=headers)
+
+    assert response.status_code == 422
+    assert workspaces.json() == []
+
+
+def test_unexpected_provisioning_failure_rolls_back_workspace_and_learning_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    def fail_seed(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("simulated storage failure")
+
+    monkeypatch.setattr(app.state.workspace_service._learning_service, "seed", fail_seed)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Prepare calculus"},
+        )
+        workspaces = client.get("/workspaces", headers=headers)
+
+    assert response.status_code == 500
+    assert workspaces.json() == []
+    learning_dir = tmp_path / "data" / "users" / owner_id / "learning"
+    assert not learning_dir.exists() or list(learning_dir.glob("*.json")) == []

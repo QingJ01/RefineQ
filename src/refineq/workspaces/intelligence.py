@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 
+from openai import OpenAIError
+from pydantic import ValidationError
+
 from refineq.agent.settings import ModelNotConfiguredError, ModelSettingsRepository
-from refineq.agent.structured import StructuredModelTransport
+from refineq.agent.structured import StructuredModelResponseError, StructuredModelTransport
 from refineq.workspaces.models import LearningWorkspace, WorkspaceRoutingDecision
 from refineq.workspaces.routing import route_workspace
 
@@ -57,7 +60,12 @@ class WorkspaceRoutingIntelligence:
                     },
                 ],
             )
-        except (ModelNotConfiguredError, Exception):
+        except (
+            ModelNotConfiguredError,
+            StructuredModelResponseError,
+            OpenAIError,
+            ValidationError,
+        ):
             return fallback
 
         valid_ids = {item.id for item in workspaces}

@@ -8,6 +8,7 @@ from refineq.api.dependencies import CurrentUser
 from refineq.learning.service import LearningServiceError
 from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.service import (
+    WorkspaceConstraintError,
     WorkspaceNotFoundError,
     WorkspaceResolveRequest,
     WorkspaceRouteResponse,
@@ -38,6 +39,12 @@ def resolve_workspace(
 ) -> WorkspaceRouteResponse:
     try:
         return request.app.state.workspace_service.resolve(user.id, payload)
+    except WorkspaceConstraintError as error:
+        _raise_workspace_error(
+            error,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            error.code,
+        )
     except LearningServiceError as error:
         _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
     except WorkspaceServiceError as error:
@@ -54,4 +61,3 @@ def workspace_snapshot(
         return request.app.state.workspace_service.snapshot(user.id, workspace_id)
     except WorkspaceNotFoundError as error:
         _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
-

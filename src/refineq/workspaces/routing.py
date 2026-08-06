@@ -154,12 +154,19 @@ def route_workspace(
     intent_terms = set(keywords)
     for candidate in workspaces:
         candidate_terms = {item.casefold() for item in candidate.keywords}
-        overlap = len(intent_terms & candidate_terms) / max(1, len(intent_terms))
-        score = overlap * 0.45
+        candidate_terms.update(
+            _keywords(" ".join([candidate.title, candidate.goal, *candidate.topics]))
+        )
+        matching_terms = intent_terms & candidate_terms
+        overlap = len(matching_terms) / max(1, len(intent_terms))
+        title_match = candidate.title.casefold() in normalized
+        score = overlap * 0.7
         if subject != "general" and subject == candidate.subject:
-            score += 0.65
-        if candidate.title.casefold() in normalized:
+            score += 0.25
+        if title_match:
             score += 0.2
+        if not matching_terms and not title_match:
+            score = 0.0
         if score > best_score:
             best, best_score = candidate, score
 

@@ -47,6 +47,9 @@ class LearningRepository:
     def get(self, owner_id: str, project_id: str) -> StoredRecord:
         return self._store.read(owner_id, "learning", project_id)
 
+    def delete(self, owner_id: str, project_id: str) -> None:
+        self._store.delete(owner_id, "learning", project_id)
+
     def mutate(
         self,
         owner_id: str,

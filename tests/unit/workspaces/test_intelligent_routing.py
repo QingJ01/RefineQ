@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from refineq.agent.settings import ModelSettings, ModelSettingsRepository
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.models import LearningWorkspace
@@ -95,3 +97,18 @@ def test_unconfigured_model_uses_fallback_without_transport_call(tmp_path: Path)
     assert decision.action == "created"
     assert decision.subject == "programming"
     assert transport.calls == 0
+
+
+def test_unexpected_transport_bug_is_not_silently_masked(tmp_path: Path) -> None:
+    class BrokenTransport:
+        @staticmethod
+        def complete(**kwargs):
+            del kwargs
+            raise RuntimeError("programming bug")
+
+    router = WorkspaceRoutingIntelligence(
+        _settings(tmp_path, configured=True), BrokenTransport()
+    )
+
+    with pytest.raises(RuntimeError, match="programming bug"):
+        router.route("Learn calculus limits", "owner", [])

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -82,6 +82,17 @@ def test_study_plan_rejects_naive_exam_time() -> None:
             goal="Pass the calculus final",
             topic_ids=["limits"],
             exam_at=datetime(2026, 8, 10, 8, 0),
+            daily_minutes=45,
+            start_at=START,
+        )
+
+
+def test_study_plan_rejects_horizons_over_one_year() -> None:
+    with pytest.raises(ValueError, match="365"):
+        build_study_plan(
+            goal="Pass the calculus final",
+            topic_ids=["limits"],
+            exam_at=START + timedelta(days=366),
             daily_minutes=45,
             start_at=START,
         )

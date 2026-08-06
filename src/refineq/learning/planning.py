@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from refineq.learning.evidence import stable_id
 from refineq.learning.models import StudyPlan, StudySession
 
+MAX_PLAN_DAYS = 365
+
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -36,6 +38,8 @@ def build_study_plan(
     available_days = (exam_at.date() - start_at.date()).days
     if available_days < 1:
         raise ValueError("the plan requires at least one pre-exam study day")
+    if available_days > MAX_PLAN_DAYS:
+        raise ValueError(f"the plan horizon must not exceed {MAX_PLAN_DAYS} days")
 
     plan_id = stable_id(
         "plan",

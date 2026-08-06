@@ -252,7 +252,13 @@ class LearningService:
         record = self._learning.mutate(owner_id, project_id, apply_diagnostic)
         return self._progress_response(record.data)
 
-    def create_plan(self, owner_id: str, project_id: str) -> StudyPlan:
+    def create_plan(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        start_at: datetime | None = None,
+    ) -> StudyPlan:
         self._require_project(owner_id, project_id)
         generated: StudyPlan | None = None
 
@@ -267,7 +273,7 @@ class LearningService:
                 topic_ids=list(progress["topics"]),
                 exam_at=datetime.fromisoformat(progress["exam_at"]),
                 daily_minutes=progress["daily_minutes"],
-                start_at=datetime.now(UTC),
+                start_at=start_at or datetime.now(UTC),
             )
             progress["plan"] = generated.model_dump(mode="json")
             return data

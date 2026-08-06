@@ -12,6 +12,7 @@ from refineq.storage import json_store
 from refineq.storage.json_store import (
     AtomicJsonStore,
     InvalidIdentifierError,
+    RecordNotFoundError,
     StaleVersionError,
 )
 
@@ -95,6 +96,18 @@ def test_every_record_has_an_explicit_schema_version(tmp_path: Path) -> None:
     )
 
     assert record.schema_version == 3
+
+
+def test_delete_removes_only_the_exact_owner_scoped_record(tmp_path: Path) -> None:
+    store = AtomicJsonStore(tmp_path)
+    store.create("alice", "workspaces", "target", {"name": "Alice"})
+    store.create("bob", "workspaces", "target", {"name": "Bob"})
+
+    store.delete("alice", "workspaces", "target")
+
+    with pytest.raises(RecordNotFoundError):
+        store.read("alice", "workspaces", "target")
+    assert store.read("bob", "workspaces", "target").data["name"] == "Bob"
 
 
 def test_transient_windows_replace_denial_is_retried(

@@ -166,6 +166,13 @@ class AtomicJsonStore:
         with self._lock_for(path):
             return self._deserialize(path)
 
+    def delete(self, owner_id: str, collection: str, record_id: str) -> None:
+        """Remove one exact owner-scoped record without affecting peer records."""
+
+        path = self._record_path(owner_id, collection, record_id)
+        with self._lock_for(path):
+            path.unlink(missing_ok=True)
+
     def list(self, owner_id: str, collection: str) -> list[StoredRecord]:
         """Return every valid record in one owner-scoped collection."""
 

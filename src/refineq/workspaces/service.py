@@ -10,10 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
+from refineq.learning.planning import build_study_plan
 from refineq.learning.service import LearningService, ProgressResponse, SeedRequest, TopicSeed
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.workspaces import WorkspaceRepository
+from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.routing import route_workspace
@@ -27,12 +29,16 @@ class WorkspaceNotFoundError(WorkspaceServiceError):
     code = "workspace_not_found"
 
 
+class WorkspaceConstraintError(WorkspaceServiceError):
+    code = "invalid_learning_constraints"
+
+
 class WorkspaceResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     intent: str = Field(min_length=1, max_length=2_000)
     exam_at: datetime | None = None
-    daily_minutes: int = Field(default=45, ge=5, le=480)
+    daily_minutes: int | None = Field(default=None, ge=5, le=480)
 
     @field_validator("exam_at", mode="after")
     @classmethod
@@ -105,32 +111,52 @@ class WorkspaceService:
             )
         else:
             workspace_id = uuid4().hex
-            workspace = self._workspaces.create(
-                owner_id,
-                workspace_id,
-                title=decision.title,
-                subject=decision.subject,
-                goal=payload.intent.strip(),
-                topics=decision.topics,
-                keywords=decision.keywords,
-                routing_summary=decision.reason,
-                now=observed_at,
-            )
-            exam_at = payload.exam_at or observed_at + timedelta(days=30)
-            self._learning_service.seed(
-                owner_id,
-                workspace.id,
-                SeedRequest(
-                    goal=workspace.goal,
+            inferred = infer_intent_constraints(payload.intent, now=observed_at)
+            exam_at = payload.exam_at or inferred.exam_at or observed_at + timedelta(days=30)
+            daily_minutes = payload.daily_minutes or inferred.daily_minutes or 45
+            topic_seeds = [
+                TopicSeed(id=_topic_id(name), name=name) for name in decision.topics
+            ]
+            try:
+                build_study_plan(
+                    goal=payload.intent.strip(),
+                    topic_ids=[topic.id for topic in topic_seeds],
                     exam_at=exam_at,
-                    daily_minutes=payload.daily_minutes,
-                    topics=[
-                        TopicSeed(id=_topic_id(name), name=name)
-                        for name in workspace.topics
-                    ],
-                ),
-            )
-            self._learning_service.create_plan(owner_id, workspace.id)
+                    daily_minutes=daily_minutes,
+                    start_at=observed_at,
+                )
+            except ValueError as error:
+                raise WorkspaceConstraintError(str(error)) from error
+
+            try:
+                workspace = self._workspaces.create(
+                    owner_id,
+                    workspace_id,
+                    title=decision.title,
+                    subject=decision.subject,
+                    goal=payload.intent.strip(),
+                    topics=decision.topics,
+                    keywords=decision.keywords,
+                    routing_summary=decision.reason,
+                    now=observed_at,
+                )
+                self._learning_service.seed(
+                    owner_id,
+                    workspace.id,
+                    SeedRequest(
+                        goal=workspace.goal,
+                        exam_at=exam_at,
+                        daily_minutes=daily_minutes,
+                        topics=topic_seeds,
+                    ),
+                )
+                self._learning_service.create_plan(
+                    owner_id, workspace.id, start_at=observed_at
+                )
+            except Exception:
+                self._learning.delete(owner_id, workspace_id)
+                self._workspaces.delete(owner_id, workspace_id)
+                raise
         return WorkspaceRouteResponse(
             action=decision.action,
             confidence=decision.confidence,

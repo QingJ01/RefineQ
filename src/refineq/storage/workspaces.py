@@ -52,6 +52,9 @@ class WorkspaceRepository:
         record = self._store.read(owner_id, "workspaces", workspace_id)
         return LearningWorkspace.model_validate(record.data)
 
+    def delete(self, owner_id: str, workspace_id: str) -> None:
+        self._store.delete(owner_id, "workspaces", workspace_id)
+
     def list(self, owner_id: str) -> list[LearningWorkspace]:
         workspaces = [
             LearningWorkspace.model_validate(record.data)
@@ -78,4 +81,3 @@ class WorkspaceRepository:
 
         record = self._store.mutate(owner_id, "workspaces", workspace_id, update)
         return LearningWorkspace.model_validate(record.data)
-

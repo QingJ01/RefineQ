@@ -99,3 +99,20 @@ def test_low_information_intent_reuses_the_latest_workspace() -> None:
     assert decision.workspace_id == "english"
     assert decision.confidence < 0.7
 
+
+def test_broad_programming_subject_does_not_merge_different_languages() -> None:
+    spaces = [
+        _workspace(
+            "python",
+            title="Python learning",
+            subject="programming",
+            keywords=["python", "functions", "typing"],
+            minutes_ago=3,
+        )
+    ]
+
+    decision = route_workspace("Learn Rust ownership and borrowing", spaces)
+
+    assert decision.action == "created"
+    assert decision.workspace_id is None
+    assert decision.title.startswith("Rust")
