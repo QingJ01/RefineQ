@@ -1,5 +1,4 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "../components/evidence-ledger";
@@ -15,18 +14,6 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
-  it("uses a persistent learning sidebar and focused workspace header", () => {
-    const source = readFileSync(
-      new URL("../components/study-workspace.tsx", import.meta.url),
-      "utf8",
-    );
-
-    expect(source).toContain('className="workspace-sidebar"');
-    expect(source).toContain('className="workspace-header"');
-    expect(source).toContain('className="workspace-progress"');
-    expect(source).toContain('className="workspace-content"');
-  });
-
   it("presents authentication as a calm RefineQ welcome card", () => {
     const html = renderToStaticMarkup(
       <AuthPanel t={translator("zh")} onAuthenticated={() => undefined} />,

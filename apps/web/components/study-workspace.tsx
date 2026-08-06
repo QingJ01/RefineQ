@@ -261,7 +261,7 @@ export function StudyWorkspace() {
   return (
     <main className="workspace-shell">
       <aside className="workspace-sidebar">
-        <button className="sidebar-brand wordmark-button" onClick={() => setWorkspace(null)}>
+        <button className="sidebar-brand wordmark-button" onClick={() => setWorkspace(null)} aria-label="RefineQ">
           <span className="brand-mark" aria-hidden="true">R</span>
           <strong>RefineQ</strong>
         </button>
@@ -272,6 +272,7 @@ export function StudyWorkspace() {
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
               onClick={() => setSection(id)}
+              aria-label={t(id)}
             >
               <Icon size={19} />
               <span>{t(id)}</span>

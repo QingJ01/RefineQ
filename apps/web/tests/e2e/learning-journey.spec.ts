@@ -24,6 +24,16 @@ test("learner completes and restores a projectless study journey", async ({ page
 
   const workspaceTitle = await page.locator(".workspace-header h1").innerText();
 
+  await test.step("keep mobile navigation accessible when labels are visually hidden", async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator(".workspace-sidebar .sidebar-brand")).toHaveAccessibleName("RefineQ");
+    await expect(page.getByTestId("nav-today")).toHaveAccessibleName(/今日|Today/);
+    await expect(page.getByTestId("nav-materials")).toHaveAccessibleName(/资料|Materials/);
+    await expect(page.getByTestId("nav-evidence")).toHaveAccessibleName(/证据|Evidence/);
+    await expect(page.getByTestId("nav-coach")).toHaveAccessibleName(/Agent/);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  });
+
   await test.step("upload personal study material", async () => {
     await page.getByTestId("nav-materials").click();
     await page.locator('input[type="file"]').setInputFiles({
