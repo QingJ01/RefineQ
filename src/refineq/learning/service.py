@@ -116,6 +116,7 @@ class AnswerResponse(BaseModel):
     misconceptions: list[str] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
     grading_mode: str = "fallback"
+    mastery_updated: bool = True
     replayed: bool = False
 
 
@@ -386,8 +387,6 @@ class LearningService:
                 else fallback_grade(generated, payload.answer)
             )
         else:
-            expected = current_question["expected_answer"].strip().casefold()
-            matched = expected in payload.answer.strip().casefold()
             generated = fallback_question(
                 topic_id=current_question["topic_id"],
                 topic_name=current_question["expected_answer"],
@@ -395,8 +394,6 @@ class LearningService:
                 sources=[],
             )
             grade = fallback_grade(generated, payload.answer)
-            if matched and not grade.passed:
-                grade = grade.model_copy(update={"score": 100, "passed": True})
         result: dict[str, Any] | None = None
         replayed = False
 
@@ -413,14 +410,23 @@ class LearningService:
 
             is_correct = grade.passed
             topic_id = question["topic_id"]
-            bkt_state = update_bkt(
-                BKTState.model_validate(progress["bkt_states"][topic_id]),
-                is_correct=is_correct,
+            current_bkt = BKTState.model_validate(progress["bkt_states"][topic_id])
+            current_difficulty = DifficultyState.model_validate(
+                progress["difficulty_states"][topic_id]
             )
-            difficulty = update_difficulty(
-                DifficultyState.model_validate(progress["difficulty_states"][topic_id]),
-                is_correct=is_correct,
-                question_id=payload.question_id,
+            bkt_state = (
+                update_bkt(current_bkt, is_correct=is_correct)
+                if grade.mastery_evidence
+                else current_bkt
+            )
+            difficulty = (
+                update_difficulty(
+                    current_difficulty,
+                    is_correct=is_correct,
+                    question_id=payload.question_id,
+                )
+                if grade.mastery_evidence
+                else current_difficulty
             )
             evidence = create_evidence(
                 kind="attempt",
@@ -441,6 +447,7 @@ class LearningService:
                     "misconceptions": grade.misconceptions,
                     "citations": grade.citations,
                     "grading_mode": grade.mode,
+                    "mastery_updated": grade.mastery_evidence,
                 },
             )
             result = {
@@ -458,6 +465,7 @@ class LearningService:
                 "misconceptions": grade.misconceptions,
                 "citations": grade.citations,
                 "grading_mode": grade.mode,
+                "mastery_updated": grade.mastery_evidence,
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")

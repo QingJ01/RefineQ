@@ -123,3 +123,46 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
     assert replay.json()["replayed"] is True
     assert replay.json()["score"] == 88
     assert model.calls == ["QuestionModelOutput", "GradingModelOutput"]
+
+
+def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "fallback-learner@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Fallback Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Learn calculus limits"},
+        ).json()["workspace"]["id"]
+        before = client.get(
+            f"/workspaces/{workspace_id}/snapshot", headers=headers
+        ).json()["progress"]["mastery"]
+        question = client.get(
+            f"/workspaces/{workspace_id}/learning/question", headers=headers
+        ).json()
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "topic-echo",
+                "question_id": question["id"],
+                "answer": "limits",
+            },
+        )
+        after = client.get(
+            f"/workspaces/{workspace_id}/snapshot", headers=headers
+        ).json()["progress"]["mastery"]
+
+    assert answer.status_code == 200
+    assert answer.json()["is_correct"] is False
+    assert answer.json()["mastery_updated"] is False
+    assert after == before

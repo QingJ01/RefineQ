@@ -109,7 +109,8 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
             json=answer_payload,
         )
         assert answer.status_code == 200
-        assert answer.json()["is_correct"] is True
+        assert answer.json()["is_correct"] is False
+        assert answer.json()["mastery_updated"] is False
         assert answer.json()["replayed"] is False
 
         replay = client.post(
@@ -118,7 +119,7 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
             json={**answer_payload, "answer": "a deliberately different answer"},
         )
         assert replay.status_code == 200
-        assert replay.json()["is_correct"] is True
+        assert replay.json()["is_correct"] is False
         assert replay.json()["replayed"] is True
 
         progress = client.get(

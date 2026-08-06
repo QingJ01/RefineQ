@@ -8,10 +8,7 @@ from typing import Literal
 from openai import OpenAIError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from refineq.agent.settings import (
-    ModelNotConfiguredError,
-    ModelSettingsRepository,
-)
+from refineq.agent.settings import ModelNotConfiguredError, ModelSettingsRepository
 from refineq.agent.structured import (
     StructuredModelResponseError,
     StructuredModelTransport,
@@ -80,6 +77,7 @@ class GradingResult(BaseModel):
     feedback: str
     citations: list[str]
     mode: Literal["ai", "fallback"]
+    mastery_evidence: bool = False
 
 
 def _source_block(sources: list[SearchResult]) -> str:
@@ -120,35 +118,60 @@ def fallback_question(
     )
 
 
+def _concept_terms(text: str) -> set[str]:
+    english = {
+        word.rstrip("s")
+        for word in re.findall(r"[a-z0-9+#.-]{3,}", text.casefold())
+        if word not in {"the", "and", "that", "this", "with", "from", "into"}
+    }
+    chinese: set[str] = set()
+    for phrase in re.findall(r"[\u4e00-\u9fff]{2,}", text):
+        chinese.update(phrase[index : index + 2] for index in range(len(phrase) - 1))
+    return english | chinese
+
+
 def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
     normalized_answer = answer.strip().casefold()
-    topic = question.topic_name.casefold()
-    terms = re.findall(
-        r"[A-Za-z0-9+#.-]{2,}|[\u4e00-\u9fff]{2,}",
-        question.expected_answer,
+    english_words = re.findall(r"[a-z0-9+#.-]{3,}", normalized_answer)
+    chinese_characters = re.findall(r"[\u4e00-\u9fff]", normalized_answer)
+    compact_length = len(re.sub(r"\s+", "", normalized_answer))
+    substantive = (compact_length >= 40 and len(english_words) >= 8) or (
+        compact_length >= 20 and len(chinese_characters) >= 20
     )
-    expected_terms = {
-        token.casefold()
-        for token in terms
-    }
-    matched_terms = [term for term in expected_terms if term in normalized_answer]
-    concept_present = topic in normalized_answer or bool(matched_terms)
-    example_present = len(normalized_answer) >= max(20, len(topic) * 3)
-    score = (70 if concept_present else 20) + (30 if example_present else 0)
-    score = min(100, score)
-    strengths = ["回答包含核心概念。"] if concept_present else []
+
+    topic_terms = _concept_terms(question.topic_name)
+    expected_terms = _concept_terms(question.expected_answer) - topic_terms
+    answer_terms = _concept_terms(normalized_answer)
+    matched_terms = expected_terms & answer_terms
+    required_matches = min(2, len(expected_terms))
+    concept_present = bool(required_matches) and len(matched_terms) >= required_matches
+    example_present = bool(
+        re.search(
+            r"\b(?:for example|e\.g\.|such as|consider)\b|例如|比如|举例|应用",
+            normalized_answer,
+        )
+    )
+    mastery_evidence = substantive and concept_present
+    score = (25 if substantive else 0) + (45 if concept_present else 0)
+    score += 30 if example_present else 0
+    strengths = ["回答包含可核对的核心概念。"] if concept_present else []
+    if substantive:
+        strengths.append("回答具备足够的解释细节。")
     gaps = [] if example_present else ["还需要补充一个具体例子或应用。"]
     if not concept_present:
-        gaps.insert(0, f"需要更准确地解释“{question.topic_name}”。")
+        gaps.insert(0, f"需要解释“{question.topic_name}”的关键含义，不能只复述题目。")
+    if not substantive:
+        gaps.append("回答信息不足，请用完整句子说明原理。")
     return GradingResult(
         score=score,
-        passed=score >= question.pass_score,
+        passed=score >= question.pass_score and mastery_evidence and example_present,
         strengths=strengths,
         gaps=gaps,
         misconceptions=[],
         feedback="；".join(strengths + gaps) or "回答已达到当前要求。",
         citations=question.citations,
         mode="fallback",
+        mastery_evidence=mastery_evidence,
     )
 
 
@@ -286,4 +309,5 @@ class LearningIntelligenceService:
             feedback=output.feedback,
             citations=_valid_citations(output.citations, question.sources),
             mode="ai",
+            mastery_evidence=True,
         )

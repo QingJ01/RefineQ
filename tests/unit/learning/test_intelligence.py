@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from refineq.agent.settings import ModelSettings, ModelSettingsRepository
-from refineq.knowledge.index import KnowledgeIndex
+from refineq.knowledge.index import KnowledgeIndex, SearchResult
 from refineq.learning.intelligence import (
     GeneratedQuestion,
     GradingResult,
     LearningIntelligenceService,
+    fallback_grade,
+    fallback_question,
 )
 
 
@@ -136,3 +138,52 @@ def test_ai_grading_returns_explainable_feedback_and_valid_citations(
     assert result.strengths == ["说明了趋近"]
     assert result.citations == ["limits-notes#0"]
     assert transport.calls == ["QuestionModelOutput", "GradingModelOutput"]
+
+
+def test_fallback_grading_rejects_topic_echo_and_generic_filler() -> None:
+    question = fallback_question(
+        topic_id="limits",
+        topic_name="Limits",
+        difficulty_level=2,
+        sources=[],
+    )
+
+    echo = fallback_grade(question, "Limits")
+    filler = fallback_grade(
+        question,
+        "For example this topic is very important and I think it has many useful applications.",
+    )
+
+    assert echo.passed is False
+    assert echo.score < question.pass_score
+    assert echo.mastery_evidence is False
+    assert filler.passed is False
+    assert filler.mastery_evidence is False
+
+
+def test_fallback_grading_can_pass_substantive_grounded_explanation() -> None:
+    question = fallback_question(
+        topic_id="limits",
+        topic_name="Limits",
+        difficulty_level=2,
+        sources=[
+            SearchResult(
+                citation_id="notes#0",
+                material_id="notes",
+                filename="notes.txt",
+                chunk_index=0,
+                text="A limit describes the value a function approaches near a point.",
+                score=1.0,
+            )
+        ],
+    )
+
+    result = fallback_grade(
+        question,
+        "A limit describes the value a function approaches near a point. "
+        "For example, as x approaches zero, x squared approaches zero.",
+    )
+
+    assert result.passed is True
+    assert result.score >= question.pass_score
+    assert result.mastery_evidence is True
