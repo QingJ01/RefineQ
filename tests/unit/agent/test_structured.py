@@ -7,7 +7,12 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from refineq.agent.structured import StructuredModelResponseError, parse_structured_reply
+from refineq.agent.settings import ModelSettings
+from refineq.agent.structured import (
+    OpenAICompatibleStructuredTransport,
+    StructuredModelResponseError,
+    parse_structured_reply,
+)
 
 
 class RoutingAnswer(BaseModel):
@@ -44,3 +49,38 @@ def test_structured_reply_rejects_invalid_or_schema_escaping_output(text: str) -
     with pytest.raises(StructuredModelResponseError):
         parse_structured_reply(text, RoutingAnswer)
 
+
+def test_structured_transport_uses_finite_timeout_retry_and_output_budget(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            captured["request"] = kwargs
+            message = type("Message", (), {"content": '{"action":"create","reason":"new"}'})
+            choice = type("Choice", (), {"message": message})
+            return type("Response", (), {"choices": [choice]})
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured["client"] = kwargs
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})
+
+    monkeypatch.setattr("refineq.agent.structured.OpenAI", FakeOpenAI)
+
+    result = OpenAICompatibleStructuredTransport().complete(
+        settings=ModelSettings(
+            base_url="https://api.openai.com/v1",
+            model="exam-tutor",
+            api_key="secret",
+        ),
+        messages=[{"role": "user", "content": "route this"}],
+        response_model=RoutingAnswer,
+    )
+
+    assert result.action == "create"
+    assert captured["client"]["timeout"] <= 30
+    assert captured["client"]["max_retries"] <= 2
+    assert captured["request"]["max_tokens"] <= 4_000

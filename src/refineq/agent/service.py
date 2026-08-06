@@ -19,6 +19,11 @@ from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
 
+MAX_SESSION_MESSAGES = 20
+MAX_HISTORY_CHARACTERS = 40_000
+MAX_MODEL_REPLY_CHARACTERS = 20_000
+_CITATION_MARKER = re.compile(r"\[([A-Za-z0-9_-]+#\d+)\]")
+
 
 class AgentServiceError(RuntimeError):
     code = "agent_error"
@@ -61,15 +66,47 @@ class OpenAICompatibleTransport:
         client = OpenAI(
             api_key=settings.api_key.get_secret_value(),
             base_url=str(settings.base_url),
+            timeout=30.0,
+            max_retries=2,
         )
         response = client.chat.completions.create(
             model=settings.model,
             messages=messages,
             temperature=settings.temperature,
+            max_tokens=4_000,
         )
         text = response.choices[0].message.content or ""
         citations = list(dict.fromkeys(re.findall(r"\[([A-Za-z0-9_-]+#\d+)\]", text)))
         return ModelReply(text=text, citations=citations)
+
+
+def _bounded_history(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep the newest messages inside both count and character budgets."""
+
+    selected: list[dict[str, str]] = []
+    remaining = MAX_HISTORY_CHARACTERS
+    for item in reversed(messages[-MAX_SESSION_MESSAGES:]):
+        content = str(item.get("content", ""))
+        if not content:
+            continue
+        if len(content) > remaining:
+            if selected or remaining <= 0:
+                break
+            content = content[-remaining:]
+        selected.append({"role": str(item.get("role", "user")), "content": content})
+        remaining -= len(content)
+        if remaining <= 0:
+            break
+    return list(reversed(selected))
+
+
+def _sanitize_reply(text: str, available: set[str]) -> str:
+    bounded = text[:MAX_MODEL_REPLY_CHARACTERS]
+    cleaned = _CITATION_MARKER.sub(
+        lambda match: match.group(0) if match.group(1) in available else "",
+        bounded,
+    )
+    return re.sub(r"[ \t]+([,.;:!?，。；：！？])", r"\1", cleaned).strip()
 
 
 class AgentChatRequest(BaseModel):
@@ -167,10 +204,10 @@ class AgentService:
                 {"workspace_id": project_id, "messages": []},
             )
 
-        history = [
+        history = _bounded_history([
             {"role": item["role"], "content": item["content"]}
             for item in session.data["messages"]
-        ]
+        ])
         messages = [
             {"role": "system", "content": context},
             *history,
@@ -183,6 +220,7 @@ class AgentService:
             for citation in dict.fromkeys(reply.citations)
             if citation in available
         ]
+        reply_text = _sanitize_reply(reply.text, set(available))
 
         def append_messages(data):
             data["messages"].extend(
@@ -190,17 +228,18 @@ class AgentService:
                     {"role": "user", "content": payload.message.strip()},
                     {
                         "role": "assistant",
-                        "content": reply.text,
+                        "content": reply_text,
                         "citations": citations,
                     },
                 ]
             )
+            data["messages"] = _bounded_history(data["messages"])
             return data
 
         self._sessions.mutate(owner_id, session_id, append_messages)
         return AgentChatResponse(
             session_id=session_id,
-            message=reply.text,
+            message=reply_text,
             citations=citations,
             sources=[available[citation] for citation in citations],
         )

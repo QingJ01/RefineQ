@@ -59,7 +59,7 @@ def _service(tmp_path: Path, *, configured: bool = True):
         settings.save(
             "owner",
             ModelSettings(
-                base_url="https://models.example.test/v1",
+            base_url="https://api.openai.com/v1",
                 model="study-model",
                 api_key="secret-key-1234",
             ),
@@ -136,4 +136,3 @@ def test_ai_grading_returns_explainable_feedback_and_valid_citations(
     assert result.strengths == ["说明了趋近"]
     assert result.citations == ["limits-notes#0"]
     assert transport.calls == ["QuestionModelOutput", "GradingModelOutput"]
-

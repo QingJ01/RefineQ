@@ -61,15 +61,17 @@ class OpenAICompatibleStructuredTransport:
         client = OpenAI(
             api_key=settings.api_key.get_secret_value(),
             base_url=str(settings.base_url),
+            timeout=30.0,
+            max_retries=2,
         )
         response = client.chat.completions.create(
             model=settings.model,
             messages=messages,
             temperature=settings.temperature,
             response_format={"type": "json_object"},
+            max_tokens=4_000,
         )
         return parse_structured_reply(
             response.choices[0].message.content or "",
             response_model,
         )
-

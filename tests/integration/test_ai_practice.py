@@ -76,7 +76,7 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
             "/settings/model",
             headers=headers,
             json={
-                "base_url": "https://models.example.test/v1",
+                "base_url": "https://api.openai.com/v1",
                 "model": "study-model",
                 "api_key": "secret-key-1234",
                 "temperature": 0.2,
@@ -123,4 +123,3 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
     assert replay.json()["replayed"] is True
     assert replay.json()["score"] == 88
     assert model.calls == ["QuestionModelOutput", "GradingModelOutput"]
-

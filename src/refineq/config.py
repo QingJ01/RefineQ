@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     data_root: Path = Field(default_factory=lambda: Path("data").resolve())
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    model_endpoint_allowed_hosts: str = "api.openai.com"
+    model_encryption_key: SecretStr | None = None
 
     @field_validator("data_root", mode="after")
     @classmethod
@@ -28,3 +30,13 @@ class Settings(BaseSettings):
         """Make every storage operation use one unambiguous absolute root."""
 
         return value.expanduser().resolve()
+
+    @property
+    def allowed_model_hosts(self) -> set[str]:
+        """Return normalized hostnames controlled by the server operator."""
+
+        return {
+            host.strip().lower().rstrip(".")
+            for host in self.model_endpoint_allowed_hosts.split(",")
+            if host.strip()
+        }

@@ -54,7 +54,7 @@ def _settings(tmp_path: Path, *, configured: bool) -> ModelSettingsRepository:
         repository.save(
             "owner",
             ModelSettings(
-                base_url="https://models.example.test/v1",
+                base_url="https://api.openai.com/v1",
                 model="routing-model",
                 api_key="secret-key",
             ),

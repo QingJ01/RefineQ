@@ -54,7 +54,11 @@ def create_app(
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
     app.state.knowledge = KnowledgeIndex(app.state.settings.data_root)
-    app.state.model_settings = ModelSettingsRepository(app.state.settings.data_root)
+    app.state.model_settings = ModelSettingsRepository(
+        app.state.settings.data_root,
+        allowed_hosts=app.state.settings.allowed_model_hosts,
+        encryption_key=app.state.settings.model_encryption_key,
+    )
     app.state.learning_intelligence = LearningIntelligenceService(
         app.state.knowledge,
         app.state.model_settings,

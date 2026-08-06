@@ -13,15 +13,22 @@ from refineq.config import Settings
 
 
 class FakeModelTransport:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        text: str = "A derivative is a local rate of change [material-1#0].",
+        citations: list[str] | None = None,
+    ) -> None:
         self.calls: list[list[dict[str, str]]] = []
+        self.text = text
+        self.citations = citations or ["material-1#0"]
 
     def complete(self, *, settings, messages):
         del settings
         self.calls.append(messages)
         return ModelReply(
-            text="A derivative is a local rate of change [material-1#0].",
-            citations=["material-1#0"],
+            text=self.text,
+            citations=self.citations,
         )
 
 
@@ -94,7 +101,7 @@ def test_agent_uses_grounded_context_citations_and_persistent_session(
             "/settings/model",
             headers=headers,
             json={
-                "base_url": "https://models.example.test/v1",
+                "base_url": "https://api.openai.com/v1",
                 "model": "exam-tutor",
                 "api_key": "sk-secret-value-1234",
             },
@@ -171,6 +178,25 @@ def test_agent_without_model_settings_returns_a_stable_error(tmp_path: Path) -> 
     assert response.json()["error"]["code"] == "model_not_configured"
 
 
+def test_model_settings_reject_endpoint_outside_server_allowlist(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        user = _register(client, "endpoint-policy@example.com")
+        response = client.put(
+            "/settings/model",
+            headers=_headers(user["token"]),
+            json={
+                "base_url": "https://models.example.com/v1",
+                "model": "exam-tutor",
+                "api_key": "secret",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "model_endpoint_not_allowed"
+
+
 def test_agent_chat_works_through_an_implicit_workspace(tmp_path: Path) -> None:
     transport = FakeModelTransport()
     app = create_app(
@@ -197,7 +223,7 @@ def test_agent_chat_works_through_an_implicit_workspace(tmp_path: Path) -> None:
             "/settings/model",
             headers=headers,
             json={
-                "base_url": "https://models.example.test/v1",
+                "base_url": "https://api.openai.com/v1",
                 "model": "exam-tutor",
                 "api_key": "sk-secret-value-1234",
             },
@@ -215,3 +241,78 @@ def test_agent_chat_works_through_an_implicit_workspace(tmp_path: Path) -> None:
     session = app.state.sessions.get(user["user_id"], response.json()["session_id"])
     assert session.data["workspace_id"] == workspace_id
     assert "project_id" not in session.data
+
+
+def test_agent_bounds_history_and_removes_unavailable_citation_markers(
+    tmp_path: Path,
+) -> None:
+    transport = FakeModelTransport(
+        text="Grounded [material-1#0], invented [missing#99].",
+        citations=["material-1#0", "missing#99"],
+    )
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "bounded-agent@example.com")
+        headers = _headers(user["token"])
+        project_id = client.post(
+            "/projects", headers=headers, json={"name": "Calculus"}
+        ).json()["id"]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Pass calculus",
+                "exam_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+                "daily_minutes": 45,
+                "topics": [{"id": "limits", "name": "Limits"}],
+            },
+        )
+        app.state.knowledge.add_document(
+            owner_id=user["user_id"],
+            project_id=project_id,
+            material_id="material-1",
+            filename="notes.txt",
+            text="Limits describe function behavior near an input.",
+        )
+        client.put(
+            "/settings/model",
+            headers=headers,
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "model": "exam-tutor",
+                "api_key": "secret",
+            },
+        )
+        first = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json={"message": "Explain limits"},
+        )
+        session_id = first.json()["session_id"]
+
+        def add_oversized_history(data):
+            data["messages"] = [
+                {"role": "user" if index % 2 == 0 else "assistant", "content": "x" * 5_000}
+                for index in range(30)
+            ]
+            return data
+
+        app.state.sessions.mutate(user["user_id"], session_id, add_oversized_history)
+        response = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json={"session_id": session_id, "message": "Explain limits again"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["citations"] == ["material-1#0"]
+    assert "[missing#99]" not in response.json()["message"]
+    sent_history = transport.calls[-1][1:-1]
+    assert len(sent_history) <= 20
+    assert sum(len(message["content"]) for message in sent_history) <= 40_000
+    persisted = app.state.sessions.get(user["user_id"], session_id)
+    assert len(persisted.data["messages"]) <= 20
