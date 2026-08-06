@@ -12,6 +12,7 @@ import { PlanTimeline } from "@/components/plan-timeline";
 import { PracticeCard } from "@/components/practice-card";
 import { api, ApiError } from "@/lib/api";
 import { translator } from "@/lib/i18n";
+import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
   loadLearningSession,
@@ -163,10 +164,16 @@ export function StudyWorkspace() {
   async function getQuestion() {
     if (!auth || !workspace) return;
     setBusy(true);
-    setResult(null);
-    setAnswer("");
+    setError("");
     try {
-      setQuestion(await api.getWorkspaceQuestion(auth.access_token, workspace.id));
+      await loadNextQuestion(
+        () => api.getWorkspaceQuestion(auth.access_token, workspace.id),
+        (nextQuestion) => {
+          setQuestion(nextQuestion);
+          setResult(null);
+          setAnswer("");
+        },
+      );
     } catch (caught) {
       reportError(caught);
     } finally {

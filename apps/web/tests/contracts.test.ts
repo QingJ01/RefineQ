@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
 import { messages } from "../lib/i18n";
+import { loadNextQuestion } from "../lib/practice-flow";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "../lib/session";
+import { clearSelectedFiles } from "../lib/upload-flow";
 import {
   buildPlanRows,
   evidenceTone,
@@ -91,6 +93,71 @@ describe("authentication and API errors", () => {
 
     await rejection;
     vi.useRealTimers();
+  });
+
+  it("uses the model timeout and stable turn identifiers for Agent chat", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | null | undefined;
+    let body = "";
+    const client = new ApiClient(
+      "/api",
+      async (_input, init) => {
+        signal = init?.signal;
+        body = String(init?.body);
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        });
+      },
+      25,
+      { model: 75, upload: 100 },
+    );
+
+    const pending = client.chatWorkspace(
+      "token-1",
+      "workspace-1",
+      "Explain limits",
+      "session-1",
+      "turn-1",
+    );
+    const rejection = expect(pending).rejects.toMatchObject({
+      status: 408,
+      code: "request_timeout",
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+
+    await rejection;
+    expect(JSON.parse(body)).toMatchObject({
+      session_id: "session-1",
+      turn_id: "turn-1",
+    });
+    vi.useRealTimers();
+  });
+});
+
+
+describe("recoverable client workflows", () => {
+  it("keeps the graded question intact when loading the next question fails", async () => {
+    const previous = { id: "question-1", answer: "A limit is...", score: 80 };
+    let state = previous;
+
+    await expect(loadNextQuestion(
+      async () => { throw new Error("model unavailable"); },
+      (question) => { state = { id: question.id, answer: "", score: 0 }; },
+    )).rejects.toThrow("model unavailable");
+
+    expect(state).toBe(previous);
+  });
+
+  it("clears a file input so the same material can be selected again", () => {
+    const input = { value: "C:\\fakepath\\notes.pdf" };
+
+    clearSelectedFiles(input);
+
+    expect(input.value).toBe("");
   });
 });
 

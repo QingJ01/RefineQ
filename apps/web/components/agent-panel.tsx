@@ -13,6 +13,12 @@ interface ChatMessage {
   citations?: string[];
 }
 
+interface AgentTurn {
+  message: string;
+  sessionId: string;
+  turnId: string;
+}
+
 function errorMessage(caught: unknown, t: Translator): string {
   if (caught instanceof ApiError && caught.code === "model_not_configured") {
     return t("modelRequired");
@@ -40,6 +46,7 @@ export function AgentPanel({
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -54,22 +61,36 @@ export function AgentPanel({
     return () => { active = false; };
   }, [token, workspaceId, t]);
 
-  async function sendMessage(sent: string) {
+  async function sendMessage(sent: string, retry?: AgentTurn) {
     if (!sent || busy) return;
+    const turn = retry ?? {
+      message: sent,
+      sessionId: sessionId ?? crypto.randomUUID().replaceAll("-", ""),
+      turnId: crypto.randomUUID().replaceAll("-", ""),
+    };
+    setSessionId(turn.sessionId);
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const reply = await api.chatWorkspace(token, workspaceId, sent, sessionId);
+      const reply = await api.chatWorkspace(
+        token,
+        workspaceId,
+        turn.message,
+        turn.sessionId,
+        turn.turnId,
+      );
       setSessionId(reply.session_id);
+      setFailedTurn(null);
       setMessages((current) => [
         ...current,
-        { role: "user", content: sent },
+        { role: "user", content: turn.message },
         { role: "assistant", content: reply.message, citations: reply.citations },
       ]);
       setMessage("");
     } catch (caught) {
-      setMessage(sent);
+      setFailedTurn(turn);
+      setMessage(turn.message);
       setError(errorMessage(caught, t));
       if (caught instanceof ApiError && caught.code === "model_not_configured") {
         setShowSettings(true);
@@ -125,11 +146,11 @@ export function AgentPanel({
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
-          {message.trim() && (
+          {failedTurn && (
             <button
               data-testid="agent-retry"
               type="button"
-              onClick={() => void sendMessage(message.trim())}
+              onClick={() => void sendMessage(failedTurn.message, failedTurn)}
               disabled={busy}
             >
               <RotateCcw size={14} /> {t("retry")}

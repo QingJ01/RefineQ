@@ -14,6 +14,16 @@ import type {
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+interface LongRequestTimeouts {
+  model: number;
+  upload: number;
+}
+
+const DEFAULT_LONG_REQUEST_TIMEOUTS: LongRequestTimeouts = {
+  model: 120_000,
+  upload: 180_000,
+};
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -31,19 +41,26 @@ export function authHeaders(token: string | null): Record<string, string> {
 
 export class ApiClient {
   private readonly fetcher: Fetcher;
+  private readonly longRequestTimeouts: LongRequestTimeouts;
 
   constructor(
     private readonly baseUrl = "/api",
     fetcher: Fetcher = globalThis.fetch.bind(globalThis),
     private readonly timeoutMs = 30_000,
+    longRequestTimeouts: Partial<LongRequestTimeouts> = {},
   ) {
     this.fetcher = fetcher;
+    this.longRequestTimeouts = {
+      ...DEFAULT_LONG_REQUEST_TIMEOUTS,
+      ...longRequestTimeouts,
+    };
   }
 
   private async request<T>(
     path: string,
     options: RequestInit = {},
     token: string | null = null,
+    timeoutMs = this.timeoutMs,
   ): Promise<T> {
     const controller = new AbortController();
     const externalSignal = options.signal;
@@ -54,7 +71,7 @@ export class ApiClient {
     const timeout = setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, this.timeoutMs);
+    }, timeoutMs);
     try {
       const isForm = options.body instanceof FormData;
       const response = await this.fetcher(`${this.baseUrl}${path}`, {
@@ -113,6 +130,7 @@ export class ApiClient {
       "/workspaces/resolve",
       { method: "POST", body: JSON.stringify({ intent }) },
       token,
+      this.longRequestTimeouts.model,
     );
   }
 
@@ -121,7 +139,12 @@ export class ApiClient {
   }
 
   getWorkspaceQuestion(token: string, workspaceId: string): Promise<PracticeQuestion> {
-    return this.request(`/workspaces/${workspaceId}/learning/question`, {}, token);
+    return this.request(
+      `/workspaces/${workspaceId}/learning/question`,
+      {},
+      token,
+      this.longRequestTimeouts.model,
+    );
   }
 
   submitWorkspaceAnswer(
@@ -141,6 +164,7 @@ export class ApiClient {
         }),
       },
       token,
+      this.longRequestTimeouts.model,
     );
   }
 
@@ -155,6 +179,7 @@ export class ApiClient {
       `/workspaces/${workspaceId}/materials`,
       { method: "POST", body },
       token,
+      this.longRequestTimeouts.upload,
     );
   }
 
@@ -163,14 +188,16 @@ export class ApiClient {
     workspaceId: string,
     message: string,
     sessionId?: string,
+    turnId?: string,
   ): Promise<AgentReply> {
     return this.request(
       `/workspaces/${workspaceId}/agent/chat`,
       {
         method: "POST",
-        body: JSON.stringify({ message, session_id: sessionId }),
+        body: JSON.stringify({ message, session_id: sessionId, turn_id: turnId }),
       },
       token,
+      this.longRequestTimeouts.model,
     );
   }
 

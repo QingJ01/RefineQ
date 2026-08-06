@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 import type { Translator } from "@/lib/i18n";
 import type { MaterialRecord } from "@/lib/types";
+import { clearSelectedFiles } from "@/lib/upload-flow";
 
 
 export function MaterialDropzone({
@@ -25,6 +26,7 @@ export function MaterialDropzone({
     try {
       await onUpload(Array.from(files));
     } finally {
+      clearSelectedFiles(inputRef.current);
       setBusy(false);
     }
   }
@@ -35,7 +37,7 @@ export function MaterialDropzone({
       <button className="dropzone" onClick={() => inputRef.current?.click()} disabled={busy}>
         <Upload size={28} strokeWidth={1.3} /><strong>{busy ? t("loading") : t("chooseFiles")}</strong><span>{t("uploadHint")}</span>
       </button>
-      <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md" onChange={(e) => selected(e.target.files)} />
+      <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => void selected(event.target.files)} />
       <ul className="material-list">
         {materials.map((material) => <li key={material.id}><span>{material.filename}</span><em>{material.chunk_count} chunks · {t("uploaded")}</em></li>)}
       </ul>
