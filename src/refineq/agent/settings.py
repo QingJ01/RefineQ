@@ -10,6 +10,8 @@ from threading import RLock
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr
 
+from refineq.storage.json_store import validate_identifier
+
 MODEL_SETTINGS_SCHEMA_VERSION = 1
 
 
@@ -38,10 +40,14 @@ class PublicModelSettings(BaseModel):
 
 class ModelSettingsRepository:
     def __init__(self, data_root: Path) -> None:
-        self._path = data_root.expanduser().resolve() / "system" / "model.json"
+        self._data_root = data_root.expanduser().resolve()
         self._lock = RLock()
 
-    def save(self, settings: ModelSettings) -> ModelSettings:
+    def _path(self, owner_id: str) -> Path:
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        return self._data_root / "users" / owner_id / "settings" / "model.json"
+
+    def save(self, owner_id: str, settings: ModelSettings) -> ModelSettings:
         document = {
             "schema_version": MODEL_SETTINGS_SCHEMA_VERSION,
             "base_url": str(settings.base_url),
@@ -50,12 +56,13 @@ class ModelSettingsRepository:
             "temperature": settings.temperature,
         }
         payload = json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True).encode()
+        path = self._path(owner_id)
         with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
             descriptor, temporary_name = tempfile.mkstemp(
                 prefix=".model-",
                 suffix=".tmp",
-                dir=self._path.parent,
+                dir=path.parent,
             )
             temporary_path = Path(temporary_name)
             try:
@@ -63,26 +70,27 @@ class ModelSettingsRepository:
                     temporary_file.write(payload)
                     temporary_file.flush()
                     os.fsync(temporary_file.fileno())
-                os.replace(temporary_path, self._path)
+                os.replace(temporary_path, path)
             finally:
                 temporary_path.unlink(missing_ok=True)
         return settings
 
-    def load(self) -> ModelSettings:
+    def load(self, owner_id: str) -> ModelSettings:
+        path = self._path(owner_id)
         with self._lock:
-            if not self._path.exists():
+            if not path.exists():
                 raise ModelNotConfiguredError("Model settings have not been configured")
             try:
-                document = json.loads(self._path.read_text(encoding="utf-8"))
+                document = json.loads(path.read_text(encoding="utf-8"))
                 if document.pop("schema_version") != MODEL_SETTINGS_SCHEMA_VERSION:
                     raise ValueError("unsupported model settings schema")
                 return ModelSettings.model_validate(document)
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                 raise ModelNotConfiguredError("Model settings are invalid") from error
 
-    def public(self) -> PublicModelSettings:
+    def public(self, owner_id: str) -> PublicModelSettings:
         try:
-            settings = self.load()
+            settings = self.load(owner_id)
         except ModelNotConfiguredError:
             return PublicModelSettings(
                 base_url="https://api.openai.com/v1",

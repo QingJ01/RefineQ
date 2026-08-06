@@ -11,15 +11,15 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 @router.get("/model", response_model=PublicModelSettings)
-def get_model_settings(request: Request, _user: CurrentUser) -> PublicModelSettings:
-    return request.app.state.model_settings.public()
+def get_model_settings(request: Request, user: CurrentUser) -> PublicModelSettings:
+    return request.app.state.model_settings.public(user.id)
 
 
 @router.put("/model", response_model=PublicModelSettings)
 def update_model_settings(
     payload: ModelSettings,
     request: Request,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> PublicModelSettings:
-    request.app.state.model_settings.save(payload)
-    return request.app.state.model_settings.public()
+    request.app.state.model_settings.save(user.id, payload)
+    return request.app.state.model_settings.public(user.id)

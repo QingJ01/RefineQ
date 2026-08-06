@@ -130,7 +130,7 @@ class AgentService:
         except (RecordNotFoundError, KeyError) as error:
             raise AgentLearningStateError("Learning project has not been seeded") from error
 
-        settings = self._model_settings.load()
+        settings = self._model_settings.load(owner_id)
         try:
             sources = self._knowledge.search(
                 owner_id=owner_id,
