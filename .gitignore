@@ -33,6 +33,7 @@ apps/web/AGENTS.md
 apps/web/CLAUDE.md
 
 # Local artifacts
+.worktrees/
 *.log
 *.tmp
 *.bak
