@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from hashlib import sha256
 from typing import Any
 
 from refineq.storage.json_store import AtomicJsonStore, StoredRecord
@@ -41,3 +42,10 @@ class SessionRepository:
         transform: Callable[[dict[str, Any]], dict[str, Any]],
     ) -> StoredRecord:
         return self._store.mutate(owner_id, "sessions", session_id, transform)
+
+    def quota_transaction(self, owner_id: str):
+        return self._store.owner_transaction(owner_id, "session-quota")
+
+    def conversation_transaction(self, owner_id: str, session_id: str):
+        digest = sha256(session_id.encode("utf-8")).hexdigest()[:32]
+        return self._store.owner_transaction(owner_id, f"agent-{digest}")

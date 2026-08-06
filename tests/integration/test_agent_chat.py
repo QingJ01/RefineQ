@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +32,18 @@ class FakeModelTransport:
             text=self.text,
             citations=self.citations,
         )
+
+
+class FailingModelTransport:
+    def complete(self, *, settings, messages):
+        del settings, messages
+        raise RuntimeError("model unavailable")
+
+
+class SlowModelTransport(FakeModelTransport):
+    def complete(self, *, settings, messages):
+        time.sleep(0.05)
+        return super().complete(settings=settings, messages=messages)
 
 
 def _register(client: TestClient, email: str) -> dict[str, str]:
@@ -371,3 +385,153 @@ def test_agent_session_count_quota_prevents_unbounded_session_files(tmp_path: Pa
     assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "agent_session_limit"
+
+
+def test_failed_first_agent_call_does_not_persist_an_empty_session(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=FailingModelTransport(),
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        user = _register(client, "failed-session@example.com")
+        headers = _headers(user["token"])
+        project_id = client.post("/projects", headers=headers, json={"name": "Calculus"}).json()[
+            "id"
+        ]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Pass calculus",
+                "exam_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+                "daily_minutes": 45,
+                "topics": [{"id": "limits", "name": "Limits"}],
+            },
+        )
+        client.put(
+            "/settings/model",
+            headers=headers,
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "model": "exam-tutor",
+                "api_key": "secret",
+            },
+        )
+        response = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json={"message": "Explain limits"},
+        )
+
+    assert response.status_code == 500
+    assert app.state.sessions.count(user["user_id"]) == 0
+
+
+def test_concurrent_first_agent_calls_cannot_cross_session_quota(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            max_agent_sessions_per_user=1,
+            mutation_rate_limit_requests=100,
+            _env_file=None,
+        ),
+        model_transport=SlowModelTransport(),
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        user = _register(client, "concurrent-session@example.com")
+        headers = _headers(user["token"])
+        project_id = client.post("/projects", headers=headers, json={"name": "Calculus"}).json()[
+            "id"
+        ]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Pass calculus",
+                "exam_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+                "daily_minutes": 45,
+                "topics": [{"id": "limits", "name": "Limits"}],
+            },
+        )
+        client.put(
+            "/settings/model",
+            headers=headers,
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "model": "exam-tutor",
+                "api_key": "secret",
+            },
+        )
+
+        def chat(index: int) -> int:
+            return client.post(
+                f"/projects/{project_id}/agent/chat",
+                headers=headers,
+                json={"message": f"Explain limits {index}"},
+            ).status_code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = sorted(executor.map(chat, range(2)))
+
+    assert statuses == [200, 409]
+    assert app.state.sessions.count(user["user_id"]) == 1
+
+
+def test_concurrent_retry_of_the_same_agent_turn_is_idempotent(tmp_path: Path) -> None:
+    transport = SlowModelTransport()
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            mutation_rate_limit_requests=100,
+            _env_file=None,
+        ),
+        model_transport=transport,
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        user = _register(client, "idempotent-turn@example.com")
+        headers = _headers(user["token"])
+        project_id = client.post("/projects", headers=headers, json={"name": "Calculus"}).json()[
+            "id"
+        ]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Pass calculus",
+                "exam_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+                "daily_minutes": 45,
+                "topics": [{"id": "limits", "name": "Limits"}],
+            },
+        )
+        client.put(
+            "/settings/model",
+            headers=headers,
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "model": "exam-tutor",
+                "api_key": "secret",
+            },
+        )
+        payload = {
+            "session_id": "stable-session",
+            "turn_id": "stable-turn",
+            "message": "Explain limits",
+        }
+
+        def chat() -> tuple[int, dict]:
+            response = client.post(
+                f"/projects/{project_id}/agent/chat",
+                headers=headers,
+                json=payload,
+            )
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(executor.map(lambda _: chat(), range(2)))
+
+    assert [status for status, _ in responses] == [200, 200]
+    assert responses[0][1] == responses[1][1]
+    assert len(transport.calls) == 1
+    session = app.state.sessions.get(user["user_id"], "stable-session")
+    assert len(session.data["messages"]) == 2
+    assert session.data["turns"]["stable-turn"]["message"] == responses[0][1]["message"]

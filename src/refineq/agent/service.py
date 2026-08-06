@@ -20,6 +20,7 @@ from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
 
 MAX_SESSION_MESSAGES = 20
+MAX_SESSION_TURNS = 20
 MAX_HISTORY_CHARACTERS = 40_000
 MAX_MODEL_REPLY_CHARACTERS = 20_000
 _CITATION_MARKER = re.compile(r"\[([A-Za-z0-9_-]+#\d+)\]")
@@ -121,6 +122,10 @@ class AgentChatRequest(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
     )
+    turn_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+    )
 
 
 class AgentChatResponse(BaseModel):
@@ -196,6 +201,30 @@ class AgentService:
 
         session_id = payload.session_id or uuid4().hex
         validate_identifier(session_id, field="session_id")
+        available = {source.citation_id: source for source in sources}
+        with self._sessions.conversation_transaction(owner_id, session_id):
+            return self._chat_in_session(
+                owner_id=owner_id,
+                project_id=project_id,
+                session_id=session_id,
+                payload=payload,
+                settings=settings,
+                context=context,
+                available=available,
+            )
+
+    def _chat_in_session(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        session_id: str,
+        payload: AgentChatRequest,
+        settings: ModelSettings,
+        context: str,
+        available: dict[str, SearchResult],
+    ) -> AgentChatResponse:
+        session = None
         try:
             session = self._sessions.get(owner_id, session_id)
             session_workspace_id = session.data.get("workspace_id") or session.data.get(
@@ -206,16 +235,28 @@ class AgentService:
         except RecordNotFoundError as error:
             if self._sessions.count(owner_id) >= self._max_sessions:
                 raise AgentSessionLimitError("Agent session quota reached") from error
-            session = self._sessions.create(
-                owner_id,
-                session_id,
-                {"workspace_id": project_id, "messages": []},
-            )
+
+        if session is not None and payload.turn_id:
+            turns = session.data.get("turns", {})
+            stored_turn = turns.get(payload.turn_id) if isinstance(turns, dict) else None
+            if isinstance(stored_turn, dict) and isinstance(stored_turn.get("message"), str):
+                stored_citations = stored_turn.get("citations", [])
+                citations = [
+                    citation
+                    for citation in stored_citations
+                    if isinstance(citation, str) and citation in available
+                ]
+                return AgentChatResponse(
+                    session_id=session_id,
+                    message=_sanitize_reply(stored_turn["message"], set(available)),
+                    citations=citations,
+                    sources=[available[citation] for citation in citations],
+                )
 
         history = _bounded_history(
             [
                 {"role": item["role"], "content": item["content"]}
-                for item in session.data["messages"]
+                for item in (session.data["messages"] if session is not None else [])
             ]
         )
         messages = [
@@ -224,7 +265,6 @@ class AgentService:
             {"role": "user", "content": payload.message.strip()},
         ]
         reply = self._transport.complete(settings=settings, messages=messages)
-        available = {source.citation_id: source for source in sources}
         citations = [
             citation for citation in dict.fromkeys(reply.citations) if citation in available
         ]
@@ -242,9 +282,40 @@ class AgentService:
                 ]
             )
             data["messages"] = _bounded_history(data["messages"])
+            if payload.turn_id:
+                turns = data.get("turns")
+                if not isinstance(turns, dict):
+                    turns = {}
+                    data["turns"] = turns
+                turns[payload.turn_id] = {
+                    "message": reply_text,
+                    "citations": citations,
+                }
+                while len(turns) > MAX_SESSION_TURNS:
+                    turns.pop(next(iter(turns)))
             return data
 
-        self._sessions.mutate(owner_id, session_id, append_messages)
+        if session is not None:
+            self._sessions.mutate(owner_id, session_id, append_messages)
+        else:
+            with self._sessions.quota_transaction(owner_id):
+                try:
+                    concurrent_session = self._sessions.get(owner_id, session_id)
+                except RecordNotFoundError as error:
+                    if self._sessions.count(owner_id) >= self._max_sessions:
+                        raise AgentSessionLimitError("Agent session quota reached") from error
+                    self._sessions.create(
+                        owner_id,
+                        session_id,
+                        append_messages({"workspace_id": project_id, "messages": [], "turns": {}}),
+                    )
+                else:
+                    concurrent_workspace_id = concurrent_session.data.get(
+                        "workspace_id"
+                    ) or concurrent_session.data.get("project_id")
+                    if concurrent_workspace_id != project_id:
+                        raise AgentSessionConflictError("Session belongs to another learning space")
+                    self._sessions.mutate(owner_id, session_id, append_messages)
         return AgentChatResponse(
             session_id=session_id,
             message=reply_text,
