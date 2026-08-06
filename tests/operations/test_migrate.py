@@ -55,4 +55,3 @@ def test_migrate_refuses_non_empty_destination_without_touching_it(tmp_path: Pat
         migrate_data(source, destination, tmp_path / "backup.zip")
 
     assert marker.read_text(encoding="utf-8") == "keep"
-

@@ -143,9 +143,9 @@ def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) 
             headers=headers,
             json={"intent": "Learn calculus limits"},
         ).json()["workspace"]["id"]
-        before = client.get(
-            f"/workspaces/{workspace_id}/snapshot", headers=headers
-        ).json()["progress"]["mastery"]
+        before = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()[
+            "progress"
+        ]["mastery"]
         question = client.get(
             f"/workspaces/{workspace_id}/learning/question", headers=headers
         ).json()
@@ -158,9 +158,9 @@ def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) 
                 "answer": "limits",
             },
         )
-        after = client.get(
-            f"/workspaces/{workspace_id}/snapshot", headers=headers
-        ).json()["progress"]["mastery"]
+        after = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()[
+            "progress"
+        ]["mastery"]
 
     assert answer.status_code == 200
     assert answer.json()["is_correct"] is False

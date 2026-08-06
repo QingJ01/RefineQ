@@ -73,9 +73,7 @@ def _relative_exam(intent: str, now: datetime) -> datetime | None:
         days = count * (7 if unit.startswith("week") else 30 if unit.startswith("month") else 1)
         return now + timedelta(days=days)
 
-    chinese = re.search(
-        rf"(?P<count>{_NUMBER})\s*(?P<unit>天|日|周|星期|个月)(?:后|内)", intent
-    )
+    chinese = re.search(rf"(?P<count>{_NUMBER})\s*(?P<unit>天|日|周|星期|个月)(?:后|内)", intent)
     if chinese:
         count = _number(chinese.group("count"))
         unit = chinese.group("unit")

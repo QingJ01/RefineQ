@@ -20,10 +20,7 @@ def main() -> int:
     if result.backup is None:
         print("No legacy projects found; no files changed.")
         return 0
-    print(
-        f"Migrated {result.migrated_count} learning space(s). "
-        f"Backup: {result.backup.archive}"
-    )
+    print(f"Migrated {result.migrated_count} learning space(s). Backup: {result.backup.archive}")
     return 0
 
 

@@ -42,15 +42,14 @@ def test_containers_are_unprivileged_and_runtime_state_is_mounted() -> None:
     assert "USER refineq" in api_image
     assert "chown refineq:refineq /data" in api_image
     assert "USER nextjs" in web_image
-    assert "output: \"standalone\"" in _read("apps/web/next.config.ts")
+    assert 'output: "standalone"' in _read("apps/web/next.config.ts")
     assert "refineq-data:/data" in compose
     assert compose.count("read_only: true") >= 2
 
 
 def test_custom_deployment_environment_is_namespaced() -> None:
     deployment_text = "\n".join(
-        _read(path)
-        for path in ["infra/compose.yml", "infra/Caddyfile", ".env.example"]
+        _read(path) for path in ["infra/compose.yml", "infra/Caddyfile", ".env.example"]
     )
     interpolated = re.findall(r"\$\{?([A-Z][A-Z0-9_]+)", deployment_text)
     declared = re.findall(r"^\s{6}([A-Z][A-Z0-9_]+):", _read("infra/compose.yml"), re.MULTILINE)
@@ -65,6 +64,7 @@ def test_ci_runs_python_web_browser_and_container_contracts() -> None:
 
     for command in [
         "ruff check",
+        "ruff format --check",
         "pytest",
         "python scripts/scan_secrets.py",
         "npm test",
@@ -106,6 +106,12 @@ def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
         "REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS",
         "REFINEQ_MATERIAL_MAX_COUNT_PER_USER",
         "REFINEQ_MATERIAL_MAX_BYTES_PER_USER",
+        "REFINEQ_MATERIAL_MAX_PDF_PAGES",
+        "REFINEQ_MATERIAL_MAX_DOCX_ENTRIES",
+        "REFINEQ_MATERIAL_MAX_DOCX_EXPANDED_BYTES",
+        "REFINEQ_MATERIAL_MAX_DOCX_COMPRESSION_RATIO",
+        "REFINEQ_MATERIAL_MAX_EXTRACTED_CHARS",
+        "REFINEQ_MATERIAL_EXTRACTION_TIMEOUT_SECONDS",
         "REFINEQ_MAX_WORKSPACES_PER_USER",
         "REFINEQ_MAX_PROJECTS_PER_USER",
         "REFINEQ_MAX_AGENT_SESSIONS_PER_USER",

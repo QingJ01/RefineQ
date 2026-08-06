@@ -106,9 +106,7 @@ def test_unexpected_transport_bug_is_not_silently_masked(tmp_path: Path) -> None
             del kwargs
             raise RuntimeError("programming bug")
 
-    router = WorkspaceRoutingIntelligence(
-        _settings(tmp_path, configured=True), BrokenTransport()
-    )
+    router = WorkspaceRoutingIntelligence(_settings(tmp_path, configured=True), BrokenTransport())
 
     with pytest.raises(RuntimeError, match="programming bug"):
         router.route("Learn calculus limits", "owner", [])

@@ -161,9 +161,7 @@ def test_explicit_plan_constraints_override_values_in_intent(tmp_path: Path) -> 
             },
         )
         workspace_id = created.json()["workspace"]["id"]
-        plan = client.get(
-            f"/workspaces/{workspace_id}/snapshot", headers=headers
-        ).json()["plan"]
+        plan = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()["plan"]
 
     assert plan["daily_minutes"] == 30
     assert 3 <= len(plan["sessions"]) <= 4

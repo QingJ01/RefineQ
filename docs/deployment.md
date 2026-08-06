@@ -37,8 +37,9 @@ each learner must save their model settings again.
 endpoint; learner-provided URLs cannot extend the allowlist.
 
 The remaining values in `.env.example` set per-user material, workspace, project, Agent-session,
-and request-rate boundaries. Tune them for host capacity, but keep finite limits in public
-deployments.
+and request-rate boundaries. The extraction budget separately caps PDF pages, DOCX archive entry
+count, expanded DOCX bytes and compression ratio, extracted characters, and wall-clock extraction
+time. Tune them for host capacity, but keep finite limits in public deployments.
 
 ## Enable public HTTPS
 

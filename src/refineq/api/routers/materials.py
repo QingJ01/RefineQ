@@ -98,9 +98,7 @@ def _raise_extraction_error(error: MaterialExtractionError) -> None:
     limited = isinstance(error, MaterialExtractionLimitError)
     raise HTTPException(
         status_code=(
-            status.HTTP_413_CONTENT_TOO_LARGE
-            if limited
-            else status.HTTP_422_UNPROCESSABLE_CONTENT
+            status.HTTP_413_CONTENT_TOO_LARGE if limited else status.HTTP_422_UNPROCESSABLE_CONTENT
         ),
         detail={
             "code": "material_extraction_limit" if limited else "material_extraction_failed",
@@ -174,9 +172,7 @@ async def upload_materials(
                     )
             except TimeoutError:
                 _raise_extraction_error(
-                    MaterialExtractionLimitError(
-                        "Material extraction exceeded its time budget"
-                    )
+                    MaterialExtractionLimitError("Material extraction exceeded its time budget")
                 )
             except MaterialExtractionError as error:
                 _raise_extraction_error(error)
@@ -184,12 +180,8 @@ async def upload_materials(
 
         documents: list[MaterialDocument] = []
         material_files: list[tuple[Path, bytes]] = []
-        for (_, payload), descriptor, text in zip(
-            loaded, descriptors, extracted, strict=True
-        ):
-            material_id = (
-                f"material_{sha256(project_id.encode() + payload).hexdigest()[:20]}"
-            )
+        for (_, payload), descriptor, text in zip(loaded, descriptors, extracted, strict=True):
+            material_id = f"material_{sha256(project_id.encode() + payload).hexdigest()[:20]}"
             extension = Path(descriptor.filename).suffix.lower()
             material_path = (
                 request.app.state.settings.data_root

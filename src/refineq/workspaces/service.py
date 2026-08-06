@@ -122,9 +122,7 @@ class WorkspaceService:
             inferred = infer_intent_constraints(payload.intent, now=observed_at)
             exam_at = payload.exam_at or inferred.exam_at or observed_at + timedelta(days=30)
             daily_minutes = payload.daily_minutes or inferred.daily_minutes or 45
-            topic_seeds = [
-                TopicSeed(id=_topic_id(name), name=name) for name in decision.topics
-            ]
+            topic_seeds = [TopicSeed(id=_topic_id(name), name=name) for name in decision.topics]
             try:
                 build_study_plan(
                     goal=payload.intent.strip(),
@@ -158,9 +156,7 @@ class WorkspaceService:
                         topics=topic_seeds,
                     ),
                 )
-                self._learning_service.create_plan(
-                    owner_id, workspace.id, start_at=observed_at
-                )
+                self._learning_service.create_plan(owner_id, workspace.id, start_at=observed_at)
             except Exception:
                 self._learning.delete(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)

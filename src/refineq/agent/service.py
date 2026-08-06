@@ -212,10 +212,12 @@ class AgentService:
                 {"workspace_id": project_id, "messages": []},
             )
 
-        history = _bounded_history([
-            {"role": item["role"], "content": item["content"]}
-            for item in session.data["messages"]
-        ])
+        history = _bounded_history(
+            [
+                {"role": item["role"], "content": item["content"]}
+                for item in session.data["messages"]
+            ]
+        )
         messages = [
             {"role": "system", "content": context},
             *history,
@@ -224,9 +226,7 @@ class AgentService:
         reply = self._transport.complete(settings=settings, messages=messages)
         available = {source.citation_id: source for source in sources}
         citations = [
-            citation
-            for citation in dict.fromkeys(reply.citations)
-            if citation in available
+            citation for citation in dict.fromkeys(reply.citations) if citation in available
         ]
         reply_text = _sanitize_reply(reply.text, set(available))
 

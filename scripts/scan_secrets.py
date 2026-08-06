@@ -30,9 +30,7 @@ TEXT_SUFFIXES = {
 TEXT_NAMES = {"Caddyfile", "Dockerfile", "Dockerfile.api", "Dockerfile.web"}
 MAX_TEXT_BYTES = 5 * 1024 * 1024
 SECRET_PATTERNS = {
-    "private_key": re.compile(
-        "-----BEGIN " + r"(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-    ),
+    "private_key": re.compile("-----BEGIN " + r"(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
     "provider_token": re.compile(r"\b" + "sk" + r"-[A-Za-z0-9]{20,}\b"),
     "github_token": re.compile(r"\bgh" + r"[pousr]_[A-Za-z0-9]{20,}\b"),
     "slack_token": re.compile(r"\bxox" + r"[baprs]-[A-Za-z0-9-]{20,}\b"),

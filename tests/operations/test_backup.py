@@ -101,4 +101,3 @@ def test_restore_rejects_archive_path_traversal(tmp_path: Path) -> None:
         restore_backup(archive, tmp_path / "destination")
 
     assert not (tmp_path / "escape.txt").exists()
-

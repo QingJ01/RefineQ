@@ -69,9 +69,7 @@ def test_study_plan_and_session_ids_are_stable() -> None:
     second = build_study_plan(**inputs)
 
     assert first.id == second.id
-    assert [session.id for session in first.sessions] == [
-        session.id for session in second.sessions
-    ]
+    assert [session.id for session in first.sessions] == [session.id for session in second.sessions]
     assert len(first.sessions) == 4
     assert {session.topic_id for session in first.sessions} == {"limits", "derivatives"}
 

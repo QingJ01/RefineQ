@@ -19,7 +19,7 @@ def test_model_settings_round_trip_without_exposing_the_api_key(tmp_path: Path) 
             base_url="https://api.openai.com/v1",
             model="exam-tutor",
             api_key="sk-secret-value-1234",
-        )
+        ),
     )
 
     loaded = repository.load("owner-1")

@@ -86,10 +86,13 @@ def test_agent_uses_grounded_context_citations_and_persistent_session(
             },
         )
         assert seed.status_code == 200
-        assert client.post(
-            f"/projects/{project_id}/learning/plan",
-            headers=headers,
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/projects/{project_id}/learning/plan",
+                headers=headers,
+            ).status_code
+            == 200
+        )
         app.state.knowledge.add_document(
             owner_id=user["user_id"],
             project_id=project_id,
@@ -258,9 +261,9 @@ def test_agent_bounds_history_and_removes_unavailable_citation_markers(
     with TestClient(app) as client:
         user = _register(client, "bounded-agent@example.com")
         headers = _headers(user["token"])
-        project_id = client.post(
-            "/projects", headers=headers, json={"name": "Calculus"}
-        ).json()["id"]
+        project_id = client.post("/projects", headers=headers, json={"name": "Calculus"}).json()[
+            "id"
+        ]
         client.post(
             f"/projects/{project_id}/learning/seed",
             headers=headers,
@@ -331,9 +334,9 @@ def test_agent_session_count_quota_prevents_unbounded_session_files(tmp_path: Pa
     with TestClient(app) as client:
         user = _register(client, "session-quota@example.com")
         headers = _headers(user["token"])
-        project_id = client.post(
-            "/projects", headers=headers, json={"name": "Calculus"}
-        ).json()["id"]
+        project_id = client.post("/projects", headers=headers, json={"name": "Calculus"}).json()[
+            "id"
+        ]
         client.post(
             f"/projects/{project_id}/learning/seed",
             headers=headers,

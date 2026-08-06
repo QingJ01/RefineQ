@@ -9,9 +9,7 @@ SUPPORTED_MIME_TYPES: dict[str, frozenset[str]] = {
     ".txt": frozenset({"text/plain", "application/octet-stream"}),
     ".md": frozenset({"text/markdown", "text/plain", "application/octet-stream"}),
     ".pdf": frozenset({"application/pdf"}),
-    ".docx": frozenset(
-        {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
-    ),
+    ".docx": frozenset({"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}),
 }
 
 
@@ -57,9 +55,7 @@ class MaterialPolicy:
             raise MaterialPolicyError(f"Unsupported file extension: {extension or '(none)'}")
         content_type = descriptor.content_type.split(";", 1)[0].strip().lower()
         if content_type not in supported_mimes:
-            raise MaterialPolicyError(
-                f"MIME type {content_type!r} does not match {extension}"
-            )
+            raise MaterialPolicyError(f"MIME type {content_type!r} does not match {extension}")
         if descriptor.size < 0:
             raise MaterialPolicyError("Upload size must not be negative", code="material_limit")
 

@@ -149,9 +149,9 @@ class ModelSettingsRepository:
                 "schema_version": MODEL_SETTINGS_SCHEMA_VERSION,
                 "base_url": str(settings.base_url),
                 "model": settings.model,
-                "encrypted_api_key": self._get_cipher().encrypt(
-                    settings.api_key.get_secret_value().encode("utf-8")
-                ).decode("ascii"),
+                "encrypted_api_key": self._get_cipher()
+                .encrypt(settings.api_key.get_secret_value().encode("utf-8"))
+                .decode("ascii"),
                 "temperature": settings.temperature,
             },
         )
@@ -173,9 +173,9 @@ class ModelSettingsRepository:
                 if schema_version != MODEL_SETTINGS_SCHEMA_VERSION:
                     raise ValueError("unsupported model settings schema")
                 encrypted_api_key = document.pop("encrypted_api_key")
-                document["api_key"] = self._get_cipher().decrypt(
-                    encrypted_api_key.encode("ascii")
-                ).decode("utf-8")
+                document["api_key"] = (
+                    self._get_cipher().decrypt(encrypted_api_key.encode("ascii")).decode("utf-8")
+                )
                 settings = ModelSettings.model_validate(document)
                 self._validate_allowed_endpoint(settings)
                 return settings

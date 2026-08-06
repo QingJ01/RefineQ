@@ -30,12 +30,15 @@ class ExtractionLimits:
     max_processing_seconds: float = 15.0
 
     def __post_init__(self) -> None:
-        if min(
-            self.max_pdf_pages,
-            self.max_docx_entries,
-            self.max_docx_expanded_bytes,
-            self.max_extracted_chars,
-        ) < 1:
+        if (
+            min(
+                self.max_pdf_pages,
+                self.max_docx_entries,
+                self.max_docx_expanded_bytes,
+                self.max_extracted_chars,
+            )
+            < 1
+        ):
             raise ValueError("extraction limits must be positive")
         if self.max_docx_compression_ratio <= 0 or self.max_processing_seconds <= 0:
             raise ValueError("extraction ratio and time limits must be positive")
@@ -100,9 +103,7 @@ def _extract_docx(data: bytes, limits: ExtractionLimits, started_at: float) -> s
             _check_deadline(started_at, limits)
             extracted_chars += len(paragraph.text)
             if extracted_chars > limits.max_extracted_chars:
-                raise MaterialExtractionLimitError(
-                    "Material exceeds the extracted character limit"
-                )
+                raise MaterialExtractionLimitError("Material exceeds the extracted character limit")
             paragraphs.append(paragraph.text)
         return "\n".join(paragraphs)
     except MaterialExtractionLimitError:

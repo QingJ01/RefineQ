@@ -76,8 +76,7 @@ def _learning_context(
     raw_topics = progress.get("topics") or {}
     topic_values = raw_topics.values() if isinstance(raw_topics, dict) else raw_topics
     topics = [
-        str(item.get("name") if isinstance(item, dict) else item).strip()
-        for item in topic_values
+        str(item.get("name") if isinstance(item, dict) else item).strip() for item in topic_values
     ]
     topics = [item for item in topics if item and item != "None"]
     return goal, list(dict.fromkeys(topics)) or [project.title]
@@ -90,11 +89,7 @@ def _preflight_conflicts(
 ) -> None:
     for project in projects:
         workspace_path = (
-            data_root
-            / "users"
-            / project.owner_id
-            / "workspaces"
-            / f"{project.project_id}.json"
+            data_root / "users" / project.owner_id / "workspaces" / f"{project.project_id}.json"
         )
         if not workspace_path.exists():
             continue
@@ -118,11 +113,7 @@ def _replace_reference(data: dict, legacy_id: str) -> dict:
 
 def _rewrite_related_records(store: AtomicJsonStore, project: _LegacyProject) -> None:
     learning_path = (
-        store.data_root
-        / "users"
-        / project.owner_id
-        / "learning"
-        / f"{project.project_id}.json"
+        store.data_root / "users" / project.owner_id / "learning" / f"{project.project_id}.json"
     )
     if learning_path.exists():
         store.mutate(
@@ -164,11 +155,7 @@ def migrate_projects_to_workspaces(
 
     for project in projects:
         workspace_path = (
-            root
-            / "users"
-            / project.owner_id
-            / "workspaces"
-            / f"{project.project_id}.json"
+            root / "users" / project.owner_id / "workspaces" / f"{project.project_id}.json"
         )
         goal, topics = _learning_context(store, project)
         if not workspace_path.exists():

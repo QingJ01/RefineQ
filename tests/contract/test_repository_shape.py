@@ -71,9 +71,7 @@ def _tracked_files() -> list[Path]:
         capture_output=True,
     )
     return [
-        REPOSITORY_ROOT / path.decode("utf-8")
-        for path in completed.stdout.split(b"\0")
-        if path
+        REPOSITORY_ROOT / path.decode("utf-8") for path in completed.stdout.split(b"\0") if path
     ]
 
 
@@ -97,9 +95,7 @@ def test_final_repository_roots_are_focused() -> None:
 
 
 def test_browser_client_uses_only_learning_workspace_routes() -> None:
-    api_source = (REPOSITORY_ROOT / "apps" / "web" / "lib" / "api.ts").read_text(
-        encoding="utf-8"
-    )
+    api_source = (REPOSITORY_ROOT / "apps" / "web" / "lib" / "api.ts").read_text(encoding="utf-8")
 
     assert "/projects/" not in api_source
     assert "createProject" not in api_source

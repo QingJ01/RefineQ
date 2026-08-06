@@ -192,15 +192,12 @@ class LearningService:
                 "goal": payload.goal.strip(),
                 "exam_at": payload.exam_at.astimezone(UTC).isoformat(),
                 "daily_minutes": payload.daily_minutes,
-                "topics": {
-                    topic.id: topic.model_dump(mode="json") for topic in payload.topics
-                },
+                "topics": {topic.id: topic.model_dump(mode="json") for topic in payload.topics},
                 "bkt_states": {
                     topic.id: DEFAULT_BKT.model_dump(mode="json") for topic in payload.topics
                 },
                 "difficulty_states": {
-                    topic.id: DifficultyState().model_dump(mode="json")
-                    for topic in payload.topics
+                    topic.id: DifficultyState().model_dump(mode="json") for topic in payload.topics
                 },
                 "diagnostic_runs": [],
                 "evidence": [],

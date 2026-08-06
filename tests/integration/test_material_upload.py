@@ -114,13 +114,16 @@ def test_mixed_valid_and_invalid_batch_is_all_or_nothing(tmp_path: Path) -> None
         )
 
     assert response.status_code == 422
-    assert app.state.knowledge.list_materials(
-        owner_id=app.state.identity.authenticate(
-            email="atomic-upload@example.com",
-            password="correct-horse-battery-staple",
-        ).id,
-        project_id=project_id,
-    ) == []
+    assert (
+        app.state.knowledge.list_materials(
+            owner_id=app.state.identity.authenticate(
+                email="atomic-upload@example.com",
+                password="correct-horse-battery-staple",
+            ).id,
+            project_id=project_id,
+        )
+        == []
+    )
     material_dir = (
         tmp_path
         / "data"

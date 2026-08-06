@@ -13,10 +13,7 @@ from refineq.knowledge.extract import MaterialExtractionError, extract_text
 
 
 def test_extracts_utf8_text_and_markdown() -> None:
-    assert (
-        extract_text("notes.txt", "text/plain", "导数 derivative".encode())
-        == "导数 derivative"
-    )
+    assert extract_text("notes.txt", "text/plain", "导数 derivative".encode()) == "导数 derivative"
     assert extract_text("notes.md", "text/markdown", b"# Limits\nContinuity") == (
         "# Limits\nContinuity"
     )

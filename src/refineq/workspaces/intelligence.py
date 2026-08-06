@@ -51,9 +51,7 @@ class WorkspaceRoutingIntelligence:
                         "content": json.dumps(
                             {
                                 "intent": intent,
-                                "workspaces": [
-                                    item.model_dump(mode="json") for item in workspaces
-                                ],
+                                "workspaces": [item.model_dump(mode="json") for item in workspaces],
                             },
                             ensure_ascii=False,
                         ),

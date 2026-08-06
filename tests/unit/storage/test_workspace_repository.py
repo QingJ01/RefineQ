@@ -82,4 +82,3 @@ def test_workspace_listing_is_owner_scoped(tmp_path: Path) -> None:
         )
 
     assert [item.id for item in repository.list("alice")] == ["alice-space"]
-

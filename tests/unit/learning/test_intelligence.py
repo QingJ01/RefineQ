@@ -61,7 +61,7 @@ def _service(tmp_path: Path, *, configured: bool = True):
         settings.save(
             "owner",
             ModelSettings(
-            base_url="https://api.openai.com/v1",
+                base_url="https://api.openai.com/v1",
                 model="study-model",
                 api_key="secret-key-1234",
             ),
