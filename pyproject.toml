@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "refineq"
+version = "0.1.0"
+description = "A focused personal learning agent for evidence-based study."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "QingJ01", email = "qingj1314@163.com"},
+]
+dependencies = [
+    "bcrypt>=4.2.0,<5.0.0",
+    "fastapi>=0.115.0,<1.0.0",
+    "openai>=1.60.0,<3.0.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.7.0,<3.0.0",
+    "PyMuPDF>=1.25.0,<2.0.0",
+    "python-docx>=1.1.0,<2.0.0",
+    "python-jose[cryptography]>=3.3.0,<4.0.0",
+    "python-multipart>=0.0.20,<1.0.0",
+    "uvicorn[standard]>=0.34.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28.0,<1.0.0",
+    "pytest>=8.3.0,<9.0.0",
+    "pytest-asyncio>=0.25.0,<1.0.0",
+    "ruff>=0.9.0,<1.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["refineq*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+markers = [
+    "asyncio: mark tests that require pytest-asyncio",
+]
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["refineq"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

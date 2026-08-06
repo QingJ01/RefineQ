@@ -1,0 +1,1 @@
+"""Owner-scoped persistence adapters."""
