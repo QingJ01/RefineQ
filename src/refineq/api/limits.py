@@ -14,17 +14,65 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+from refineq.identity.service import InvalidTokenError
+
 
 class RequestBodyTooLargeError(RuntimeError):
     """Internal signal raised before multipart parsing can exceed its byte budget."""
 
 
+class UploadAdmissionController:
+    """Reject excess upload concurrency without queueing request bodies in memory."""
+
+    def __init__(self, *, max_global: int, max_per_owner: int) -> None:
+        if max_global < 1 or max_per_owner < 1:
+            raise ValueError("upload concurrency limits must be positive")
+        self._max_global = max_global
+        self._max_per_owner = max_per_owner
+        self._active_global = 0
+        self._active_by_owner: dict[str, int] = {}
+        self._lock = RLock()
+
+    def acquire_global(self) -> bool:
+        with self._lock:
+            if self._active_global >= self._max_global:
+                return False
+            self._active_global += 1
+            return True
+
+    def acquire_owner(self, owner_key: str) -> bool:
+        with self._lock:
+            active = self._active_by_owner.get(owner_key, 0)
+            if active >= self._max_per_owner:
+                return False
+            self._active_by_owner[owner_key] = active + 1
+            return True
+
+    def release(self, owner_key: str | None) -> None:
+        with self._lock:
+            if owner_key is not None:
+                active = self._active_by_owner.get(owner_key, 0)
+                if active <= 1:
+                    self._active_by_owner.pop(owner_key, None)
+                else:
+                    self._active_by_owner[owner_key] = active - 1
+            if self._active_global > 0:
+                self._active_global -= 1
+
+
 class RequestBodyLimitMiddleware:
     """Count material-upload bytes at the ASGI receive boundary, including chunked bodies."""
 
-    def __init__(self, app: Any, *, max_bytes: int) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        max_bytes: int,
+        admission: UploadAdmissionController | None = None,
+    ) -> None:
         self.app = app
         self._max_bytes = max_bytes
+        self._admission = admission
 
     @staticmethod
     def _is_material_upload(scope: dict[str, Any]) -> bool:
@@ -51,37 +99,117 @@ class RequestBodyLimitMiddleware:
         )
         await response(scope, receive, send)
 
+    @staticmethod
+    async def _reject_admission(
+        scope: dict[str, Any],
+        receive: Any,
+        send: Any,
+        *,
+        global_limit: bool,
+    ) -> None:
+        response = JSONResponse(
+            status_code=503 if global_limit else 429,
+            content={
+                "error": {
+                    "code": (
+                        "upload_capacity_exceeded"
+                        if global_limit
+                        else "upload_concurrency_exceeded"
+                    ),
+                    "message": "Too many material uploads are active; retry later",
+                }
+            },
+            headers={"Retry-After": "1"},
+        )
+        await response(scope, receive, send)
+
+    @staticmethod
+    def _owner_key(scope: dict[str, Any]) -> str:
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        authorization = headers.get(b"authorization", b"").decode("latin-1")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token:
+            try:
+                user = scope["app"].state.identity.verify_token(token)
+            except (InvalidTokenError, AttributeError, KeyError):
+                return f"credential:{sha256(token.encode('utf-8')).hexdigest()[:20]}"
+            return f"user:{user.id}"
+        client = scope.get("client")
+        host = client[0] if client else "unknown"
+        return f"anonymous:{host}"
+
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if not self._is_material_upload(scope):
             await self.app(scope, receive, send)
             return
 
-        headers = {key.lower(): value for key, value in scope.get("headers", [])}
-        content_length = headers.get(b"content-length")
-        if content_length is not None:
+        owner_key: str | None = None
+        if self._admission is not None:
+            if not self._admission.acquire_global():
+                await self._reject_admission(
+                    scope,
+                    receive,
+                    send,
+                    global_limit=True,
+                )
+                return
             try:
-                declared_size = int(content_length)
-            except ValueError:
-                declared_size = 0
-            if declared_size > self._max_bytes:
-                await self._reject(scope, receive, send)
+                owner_key = self._owner_key(scope)
+            except Exception:
+                self._admission.release(None)
+                raise
+            if not self._admission.acquire_owner(owner_key):
+                self._admission.release(None)
+                await self._reject_admission(
+                    scope,
+                    receive,
+                    send,
+                    global_limit=False,
+                )
                 return
 
-        received = 0
-
-        async def limited_receive() -> dict[str, Any]:
-            nonlocal received
-            message = await receive()
-            if message.get("type") == "http.request":
-                received += len(message.get("body", b""))
-                if received > self._max_bytes:
-                    raise RequestBodyTooLargeError
-            return message
-
         try:
-            await self.app(scope, limited_receive, send)
-        except RequestBodyTooLargeError:
-            await self._reject(scope, receive, send)
+            headers = {key.lower(): value for key, value in scope.get("headers", [])}
+            content_length = headers.get(b"content-length")
+            if content_length is not None:
+                try:
+                    declared_size = int(content_length)
+                except ValueError:
+                    declared_size = 0
+                if declared_size > self._max_bytes:
+                    await self._reject(scope, receive, send)
+                    return
+
+            received = 0
+            exceeded = False
+            downstream_messages: list[dict[str, Any]] = []
+
+            async def limited_receive() -> dict[str, Any]:
+                nonlocal exceeded, received
+                message = await receive()
+                if message.get("type") == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > self._max_bytes:
+                        exceeded = True
+                        raise RequestBodyTooLargeError
+                return message
+
+            async def buffered_send(message: dict[str, Any]) -> None:
+                downstream_messages.append(message)
+
+            try:
+                await self.app(scope, limited_receive, buffered_send)
+            except RequestBodyTooLargeError:
+                exceeded = True
+
+            if exceeded:
+                await self._reject(scope, receive, send)
+                return
+            for message in downstream_messages:
+                await send(message)
+        finally:
+            if self._admission is not None:
+                self._admission.release(owner_key)
 
 
 class SlidingWindowRateLimiter:

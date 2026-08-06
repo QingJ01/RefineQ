@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
-from refineq.api.limits import RequestBodyLimitMiddleware, SlidingWindowRateLimiter
+from refineq.api.limits import (
+    RequestBodyLimitMiddleware,
+    SlidingWindowRateLimiter,
+    UploadAdmissionController,
+)
 from refineq.config import Settings
 
 
@@ -72,6 +78,142 @@ async def test_chunked_material_body_is_stopped_at_the_same_limit() -> None:
 
     assert outgoing[0]["status"] == 413
     assert json.loads(outgoing[1]["body"])["error"]["code"] == "request_body_too_large"
+
+
+def test_real_chunked_multipart_returns_the_stable_413_contract(tmp_path: Path) -> None:
+    boundary = "refineq-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="files"; filename="notes.txt"\r\n'
+        "Content-Type: text/plain\r\n\r\n" + ("x" * 120) + f"\r\n--{boundary}--\r\n"
+    ).encode()
+
+    def chunks():
+        yield body[:80]
+        yield body[80:]
+
+    with TestClient(_app(tmp_path)) as client:
+        response = client.post(
+            "/workspaces/space/materials",
+            content=chunks(),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_body_too_large"
+
+
+@pytest.mark.asyncio
+async def test_upload_admission_rejects_before_a_second_request_reaches_the_app() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    app_calls = 0
+
+    async def blocked_app(scope, receive, send) -> None:
+        nonlocal app_calls
+        app_calls += 1
+        entered.set()
+        await release.wait()
+
+    controller = UploadAdmissionController(max_global=1, max_per_owner=1)
+    middleware = RequestBodyLimitMiddleware(
+        blocked_app,
+        max_bytes=1_000,
+        admission=controller,
+    )
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/projects/project/materials",
+        "headers": [],
+        "client": ("198.51.100.1", 50000),
+    }
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    first_messages: list[dict[str, Any]] = []
+
+    async def send_first(message: dict[str, Any]) -> None:
+        first_messages.append(message)
+
+    first = asyncio.create_task(middleware(scope, receive, send_first))
+    await entered.wait()
+    rejected: list[dict[str, Any]] = []
+
+    async def send_rejected(message: dict[str, Any]) -> None:
+        rejected.append(message)
+
+    await middleware(scope, receive, send_rejected)
+    release.set()
+    await first
+
+    assert app_calls == 1
+    assert rejected[0]["status"] == 503
+    assert json.loads(rejected[1]["body"])["error"]["code"] == "upload_capacity_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_upload_admission_groups_distinct_tokens_by_verified_user() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    app_calls = 0
+
+    async def blocked_app(scope, receive, send) -> None:
+        nonlocal app_calls
+        app_calls += 1
+        entered.set()
+        await release.wait()
+
+    class Identity:
+        def verify_token(self, token: str):
+            assert token in {"token-one", "token-two"}
+            return SimpleNamespace(id="user-1")
+
+    controller = UploadAdmissionController(max_global=2, max_per_owner=1)
+    middleware = RequestBodyLimitMiddleware(
+        blocked_app,
+        max_bytes=1_000,
+        admission=controller,
+    )
+    base_scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/projects/project/materials",
+        "client": ("198.51.100.1", 50000),
+        "app": SimpleNamespace(state=SimpleNamespace(identity=Identity())),
+    }
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    first_scope = {
+        **base_scope,
+        "headers": [(b"authorization", b"Bearer token-one")],
+    }
+    second_scope = {
+        **base_scope,
+        "headers": [(b"authorization", b"Bearer token-two")],
+    }
+    first_messages: list[dict[str, Any]] = []
+
+    async def send_first(message: dict[str, Any]) -> None:
+        first_messages.append(message)
+
+    first = asyncio.create_task(middleware(first_scope, receive, send_first))
+    await entered.wait()
+    rejected: list[dict[str, Any]] = []
+
+    async def send_rejected(message: dict[str, Any]) -> None:
+        rejected.append(message)
+
+    await middleware(second_scope, receive, send_rejected)
+    release.set()
+    await first
+
+    assert app_calls == 1
+    assert rejected[0]["status"] == 429
+    assert json.loads(rejected[1]["body"])["error"]["code"] == "upload_concurrency_exceeded"
 
 
 def test_two_external_clients_receive_independent_auth_windows(tmp_path: Path) -> None:

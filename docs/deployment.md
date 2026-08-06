@@ -40,8 +40,10 @@ The remaining values in `.env.example` set per-user material, workspace, project
 and request-rate boundaries. The extraction budget separately caps PDF pages, DOCX archive entry
 count, expanded DOCX bytes and compression ratio, extracted characters, and wall-clock extraction
 time. `REFINEQ_MATERIAL_MAX_REQUEST_BYTES` is enforced by both Caddy and the ASGI receive boundary
-before multipart parsing. Tune these values for host capacity, but keep finite limits in public
-deployments.
+before multipart parsing. `REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_GLOBAL` and
+`REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_PER_USER` reject excess uploads before their multipart
+bodies are parsed, preventing queued requests from multiplying the memory budget. Tune these
+values for host capacity, but keep finite limits in public deployments.
 
 ## Enable public HTTPS
 

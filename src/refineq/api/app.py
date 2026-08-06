@@ -22,6 +22,7 @@ from refineq.api.limits import (
     RequestBodyLimitMiddleware,
     RequestLimitMiddleware,
     SlidingWindowRateLimiter,
+    UploadAdmissionController,
 )
 from refineq.api.locks import KeyedAsyncLockPool
 from refineq.api.routers.agent import router as agent_router
@@ -61,6 +62,10 @@ def create_app(
     app.state.settings = settings or Settings()
     app.state.rate_limiter = SlidingWindowRateLimiter()
     app.state.material_quota_locks = KeyedAsyncLockPool()
+    app.state.upload_admission = UploadAdmissionController(
+        max_global=app.state.settings.material_upload_max_concurrent_global,
+        max_per_owner=app.state.settings.material_upload_max_concurrent_per_user,
+    )
     app.add_middleware(
         RequestLimitMiddleware,
         limiter=app.state.rate_limiter,
@@ -71,6 +76,7 @@ def create_app(
     app.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=app.state.settings.material_max_request_bytes,
+        admission=app.state.upload_admission,
     )
     app.state.store = AtomicJsonStore(app.state.settings.data_root)
     app.state.projects = ProjectRepository(app.state.store)

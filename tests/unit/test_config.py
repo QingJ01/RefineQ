@@ -34,3 +34,17 @@ def test_model_encryption_key_is_validated_at_startup(monkeypatch) -> None:
 
     with pytest.raises(ValidationError, match="valid Fernet key"):
         Settings(_env_file=None)
+
+
+def test_upload_concurrency_limits_are_configurable_and_positive(monkeypatch) -> None:
+    monkeypatch.setenv("REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_GLOBAL", "6")
+    monkeypatch.setenv("REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_PER_USER", "3")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.material_upload_max_concurrent_global == 6
+    assert settings.material_upload_max_concurrent_per_user == 3
+
+    monkeypatch.setenv("REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_PER_USER", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
