@@ -57,7 +57,7 @@ export function LearningHome({
   }
 
   return (
-    <main className="home-shell">
+    <main id="main-content" className="home-shell">
       <aside className="home-sidebar">
         <div className="sidebar-brand">
           <BrandMark className="brand-mark" size={36} />

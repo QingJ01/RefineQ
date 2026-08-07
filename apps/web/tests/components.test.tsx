@@ -9,6 +9,8 @@ import { LearningHome } from "../components/learning-home";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
 import { PracticeCard } from "../components/practice-card";
+import { ProgressInsights } from "../components/progress-insights";
+import { SourceDrawer } from "../components/source-drawer";
 import { translator } from "../lib/i18n";
 
 
@@ -51,6 +53,7 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="admin-form-section-basic"');
     expect(html).toContain('data-testid="admin-form-section-credentials"');
     expect(html).toContain('data-testid="admin-form-section-network"');
+    expect(html).toContain('data-testid="admin-save-test"');
     expect(html.match(/data-testid="integration-card-/g)).toHaveLength(1);
     expect(html).not.toContain('data-testid="integration-card-embedding"');
   });
@@ -81,6 +84,10 @@ describe("focused learning components", () => {
     expect(html).toContain("资料");
     expect(html).toContain("练习");
     expect(html).toContain("进步");
+    expect(html).toContain('autoComplete="email"');
+    expect(html).toContain('autoComplete="current-password"');
+    expect(html).toContain('data-testid="toggle-password"');
+    expect(html).toContain('data-testid="forgot-password"');
   });
 
   it("starts with one personal Agent prompt instead of a project form", () => {
@@ -209,7 +216,7 @@ describe("focused learning components", () => {
             source_id: "attempt-1",
             summary: "Practice response for limits was correct.",
             observed_at: "2026-08-06T08:00:00Z",
-            details: {},
+            details: { score: 88, feedback: "Strong explanation" },
           },
         ]}
       />,
@@ -219,6 +226,48 @@ describe("focused learning components", () => {
     expect(html).toContain("Practice response for limits was correct.");
     expect(html).toContain("data-tone=\"jade\"");
     expect(html).toContain('class="evidence-timeline"');
+    expect(html).toContain("Strong explanation");
+    expect(html).toContain("<details");
+  });
+
+  it("turns mastery into an actionable progress recommendation", () => {
+    const html = renderToStaticMarkup(
+      <ProgressInsights
+        t={t}
+        progress={{
+          goal: "Pass calculus",
+          mastery: { limits: 0.72, derivatives: 0.34 },
+          diagnostic_count: 1,
+          attempt_count: 4,
+          plan_id: "plan-1",
+        }}
+      />,
+    );
+
+    expect(html).toContain("derivatives");
+    expect(html).toContain("34%");
+    expect(html).toContain('data-testid="progress-recommendation"');
+  });
+
+  it("renders source evidence in a focused disclosure drawer", () => {
+    const html = renderToStaticMarkup(
+      <SourceDrawer
+        title="Evidence sources"
+        onClose={() => undefined}
+        sources={[{
+          citation_id: "notes#0",
+          material_id: "material-1",
+          filename: "notes.md",
+          chunk_index: 0,
+          text: "A limit describes the value a function approaches.",
+          score: 0.91,
+        }]}
+      />,
+    );
+
+    expect(html).toContain("notes#0");
+    expect(html).toContain("notes.md");
+    expect(html).toContain('role="dialog"');
   });
 
   it("never renders an expected answer in the practice card", () => {
@@ -337,11 +386,17 @@ describe("focused learning components", () => {
           indexed_at: "2026-08-06T00:00:00Z",
         }]}
         onUpload={async () => []}
+        onSearch={async () => []}
+        onDownload={() => undefined}
+        onDelete={() => undefined}
       />,
     );
 
     expect(html).toContain("limits.txt");
     expect(html).toContain('class="upload-surface"');
+    expect(html).toContain('data-testid="material-search"');
+    expect(html).toContain('data-testid="material-download-material-1"');
+    expect(html).toContain('data-testid="material-delete-material-1"');
   });
 
   it("renders the learning Agent with a focused chat composer", () => {
@@ -351,5 +406,7 @@ describe("focused learning components", () => {
 
     expect(html).toContain("content-card agent-card");
     expect(html).toContain('class="chat-composer"');
+    expect(html).toContain('data-testid="agent-new-conversation"');
+    expect(html).toContain('data-testid="agent-history"');
   });
 });

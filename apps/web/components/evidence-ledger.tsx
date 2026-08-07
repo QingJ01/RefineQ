@@ -41,6 +41,16 @@ export function EvidenceLedger({
               <div>
                 <span className="evidence-kind">{item.kind}</span>
                 <p>{item.summary}</p>
+                {Object.keys(item.details).length > 0 && (
+                  <details className="evidence-details">
+                    <summary>{t("viewDetails")}</summary>
+                    <dl>
+                      {Object.entries(item.details).map(([key, value]) => (
+                        <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>
+                      ))}
+                    </dl>
+                  </details>
+                )}
               </div>
             </li>
           ))}

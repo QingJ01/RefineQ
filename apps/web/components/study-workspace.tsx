@@ -21,6 +21,7 @@ import { LearningHome } from "@/components/learning-home";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { PracticeCard } from "@/components/practice-card";
+import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
 import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
@@ -41,6 +42,7 @@ import type {
   Progress,
   StudySession,
   StudyPlan,
+  SearchSource,
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
@@ -105,7 +107,10 @@ export function StudyWorkspace({
         return;
       }
       try {
-        if (saved.locale) setLocale(saved.locale);
+        if (saved.locale) {
+          setLocale(saved.locale);
+          document.documentElement.lang = saved.locale === "zh" ? "zh-CN" : "en";
+        }
         const user = await api.getProfile(saved.token);
         const restoredAuth: AuthResponse = {
           access_token: saved.token,
@@ -272,7 +277,7 @@ export function StudyWorkspace({
     }
   }
 
-  async function uploadMaterials(files: File[]): Promise<MaterialRecord[]> {
+  async function uploadMaterials(files: File[], signal?: AbortSignal): Promise<MaterialRecord[]> {
     if (!auth || !workspace) return [];
     setError("");
     try {
@@ -280,6 +285,7 @@ export function StudyWorkspace({
         auth.access_token,
         workspace.id,
         files,
+        signal,
       );
       setMaterials((current) => {
         const byId = new Map(current.map((item) => [item.id, item]));
@@ -290,6 +296,41 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
       return [];
+    }
+  }
+
+  async function searchMaterials(query: string): Promise<SearchSource[]> {
+    if (!auth || !workspace) return [];
+    try {
+      return await api.searchWorkspaceMaterials(auth.access_token, workspace.id, query);
+    } catch (caught) {
+      reportError(caught);
+      return [];
+    }
+  }
+
+  async function downloadMaterial(material: MaterialRecord) {
+    if (!auth || !workspace) return;
+    try {
+      const blob = await api.downloadWorkspaceMaterial(auth.access_token, workspace.id, material.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = material.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
+  async function deleteMaterial(material: MaterialRecord) {
+    if (!auth || !workspace) return;
+    try {
+      await api.deleteWorkspaceMaterial(auth.access_token, workspace.id, material.id);
+      setMaterials((current) => current.filter((item) => item.id !== material.id));
+    } catch (caught) {
+      reportError(caught);
     }
   }
 
@@ -402,7 +443,7 @@ export function StudyWorkspace({
   if (!workspace) {
     return (
       <>
-        {error && <div className="error-banner"><strong>{t("error")}</strong><span>{error}</span></div>}
+        {error && <div className="error-banner" role="alert"><strong>{t("error")}</strong><span>{error}</span></div>}
         <LearningHome
           t={t}
           busy={busy}
@@ -431,7 +472,7 @@ export function StudyWorkspace({
   ];
 
   return (
-    <main className="workspace-shell">
+    <main id="main-content" className="workspace-shell">
       <aside className="workspace-sidebar">
         <button className="sidebar-brand wordmark-button" onClick={returnHome} aria-label="RefineQ">
           <BrandMark className="brand-mark" size={36} />
@@ -525,15 +566,26 @@ export function StudyWorkspace({
               <button type="button" aria-label={t("routingDismiss")} onClick={dismissWorkspaceRoute}>×</button>
             </div>
           )}
-          {error && <div className="error-banner"><strong>{t("error")}</strong><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
+          {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span><button aria-label={t("routingDismiss")} onClick={() => setError("")}>×</button></div>}
           {section === "today" && (
             <div className="today-grid">
               <div className="daily-heading"><span className="kicker">TODAY&apos;S FOCUS</span><h2>{t("today")}</h2></div>
               <PlanTimeline plan={plan} locale={locale} t={t} onUpdateSession={updatePlanSession} />
               <PracticeCard question={question} answer={answer} result={result} busy={busy} onAnswerChange={setAnswer} onGetQuestion={getQuestion} onSubmit={submitAnswer} t={t} />
+              <ProgressInsights progress={progress} t={t} />
             </div>
           )}
-          {section === "materials" && <MaterialDropzone key={workspace.id} t={t} materials={materials} onUpload={uploadMaterials} />}
+          {section === "materials" && (
+            <MaterialDropzone
+              key={workspace.id}
+              t={t}
+              materials={materials}
+              onUpload={uploadMaterials}
+              onSearch={searchMaterials}
+              onDownload={downloadMaterial}
+              onDelete={deleteMaterial}
+            />
+          )}
           {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
           {section === "coach" && <AgentPanel token={auth.access_token} workspaceId={workspace.id} t={t} />}
         </section>

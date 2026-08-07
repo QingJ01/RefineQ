@@ -99,6 +99,11 @@ const copy = {
     networkSecurity: "网络安全",
     networkSecurityDescription: "默认阻止访问私网地址，降低服务端请求伪造风险。",
     networkWarning: "仅在明确使用可信内网服务时开启私网访问。",
+    saveTest: "保存并测试",
+    unsavedWarning: "当前配置尚未保存，确定离开并丢弃更改吗？",
+    unsaved: "有未保存的更改",
+    loadFailed: "配置读取失败，为避免覆盖已有设置，编辑已锁定。",
+    reload: "重新读取",
   },
   en: {
     title: "System settings",
@@ -148,6 +153,11 @@ const copy = {
     networkSecurity: "Network security",
     networkSecurityDescription: "Private-network access is blocked by default to reduce SSRF risk.",
     networkWarning: "Only enable private-network access for a service you explicitly trust.",
+    saveTest: "Save and test",
+    unsavedWarning: "This configuration has unsaved changes. Leave and discard them?",
+    unsaved: "Unsaved changes",
+    loadFailed: "Settings failed to load. Editing is locked to avoid overwriting saved configuration.",
+    reload: "Reload settings",
   },
 } as const;
 
@@ -396,12 +406,14 @@ function IntegrationCard({
   setting,
   locale,
   onChange,
+  locked = false,
 }: {
   token: string;
   definition: IntegrationDefinition;
   setting: PublicIntegrationSettings;
   locale: Locale;
   onChange: (setting: PublicIntegrationSettings) => void;
+  locked?: boolean;
 }) {
   const c = copy[locale];
   const [enabled, setEnabled] = useState(setting.enabled);
@@ -410,6 +422,30 @@ function IntegrationCard({
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const isDirty = enabled !== setting.enabled
+    || JSON.stringify(config) !== JSON.stringify(setting.config)
+    || Object.values(secrets).some((value) => value.length > 0);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const beforeunload = (event: BeforeUnloadEvent) => event.preventDefault();
+    const guardNavigation = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      const link = target?.closest("a[href]") as HTMLAnchorElement | null;
+      if (!link || link.target === "_blank" || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (!window.confirm(c.unsavedWarning)) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", beforeunload);
+    document.addEventListener("click", guardNavigation, true);
+    return () => {
+      window.removeEventListener("beforeunload", beforeunload);
+      document.removeEventListener("click", guardNavigation, true);
+    };
+  }, [c.unsavedWarning, isDirty]);
+
+  async function persistConfiguration(): Promise<PublicIntegrationSettings> {
+    return api.updateIntegration(token, definition.kind, { enabled, config, secrets });
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -417,12 +453,10 @@ function IntegrationCard({
     setError("");
     setNotice("");
     try {
-      const updated = await api.updateIntegration(token, definition.kind, {
-        enabled,
-        config,
-        secrets,
-      });
+      const updated = await persistConfiguration();
       setSecrets({});
+      setConfig(updated.config);
+      setEnabled(updated.enabled);
       setNotice(c.saved);
       onChange(updated);
     } catch (caught) {
@@ -439,6 +473,28 @@ function IntegrationCard({
     try {
       const result = await api.testIntegration(token, definition.kind);
       onChange(projectIntegrationTestResult(setting, result, new Date().toISOString()));
+      if (result.status === "failed") setError(result.message);
+      else setNotice(result.message);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveAndTest() {
+    setBusy("save");
+    setError("");
+    setNotice("");
+    try {
+      const updated = await persistConfiguration();
+      setSecrets({});
+      setConfig(updated.config);
+      setEnabled(updated.enabled);
+      setBusy("test");
+      const result = await api.testIntegration(token, definition.kind);
+      const projected = projectIntegrationTestResult(updated, result, new Date().toISOString());
+      onChange(projected);
       if (result.status === "failed") setError(result.message);
       else setNotice(result.message);
     } catch (caught) {
@@ -499,6 +555,7 @@ function IntegrationCard({
       data-testid={`integration-card-${definition.kind}`}
     >
       <form onSubmit={save}>
+        <fieldset className="integration-fieldset" disabled={locked}>
         <section className="admin-service-control">
           <div>
             <span className="kicker">SERVICE CONTROL</span>
@@ -589,20 +646,32 @@ function IntegrationCard({
           </p>
         )}
         <footer className="integration-actions">
+          {isDirty && <span className="integration-dirty">{c.unsaved}</span>}
           <button
             type="button"
             className="quiet-button"
             onClick={() => void testConnection()}
-            disabled={busy !== null || !setting.configured}
+            disabled={busy !== null || !setting.configured || isDirty}
           >
             {busy === "test" ? <LoaderCircle className="spin" size={15} /> : <PlugZap size={15} />}
             {busy === "test" ? c.testing : c.test}
+          </button>
+          <button
+            type="button"
+            data-testid="admin-save-test"
+            className="secondary-action"
+            onClick={() => void saveAndTest()}
+            disabled={busy !== null}
+          >
+            {busy === "test" ? <LoaderCircle className="spin" size={15} /> : <PlugZap size={15} />}
+            {c.saveTest}
           </button>
           <button className="primary-action" disabled={busy !== null}>
             {busy === "save" ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}
             {busy === "save" ? c.saving : c.save}
           </button>
         </footer>
+        </fieldset>
       </form>
     </article>
   );
@@ -624,7 +693,9 @@ export function AdminConsole({
   const c = copy[locale];
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [integrations, setIntegrations] = useState(defaults);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadNonce, setLoadNonce] = useState(0);
   const byKind = useMemo(
     () => new Map(integrations.map((integration) => [integration.kind, integration])),
     [integrations],
@@ -639,10 +710,11 @@ export function AdminConsole({
         setIntegrations(nextIntegrations);
       })
       .catch((caught: unknown) => {
-        if (active) setError(errorMessage(caught));
-      });
+        if (active) setLoadError(errorMessage(caught));
+      })
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [token]);
+  }, [token, loadNonce]);
 
   function updateIntegration(updated: PublicIntegrationSettings) {
     setIntegrations((current) => current.map((item) => (
@@ -663,7 +735,7 @@ export function AdminConsole({
     : undefined;
 
   return (
-    <main className="admin-console">
+    <main id="main-content" className="admin-console">
       <div className="admin-shell">
         <aside className="admin-sidebar">
           <Link className="admin-brand" href="/" aria-label="RefineQ">
@@ -715,9 +787,19 @@ export function AdminConsole({
             </div>
           </header>
 
-          {error && <div className="error-banner" role="alert">{error}</div>}
+          {loadError && (
+            <div className="admin-load-error" role="alert">
+              <TriangleAlert size={20} />
+              <div><strong>{c.loadFailed}</strong><span>{loadError}</span></div>
+              <button type="button" className="secondary-action" onClick={() => {
+                setLoading(true);
+                setLoadError("");
+                setLoadNonce((current) => current + 1);
+              }}>{c.reload}</button>
+            </div>
+          )}
 
-          {activeDefinition && activeKind ? (
+          {loadError ? null : activeDefinition && activeKind ? (
             <div className="admin-integration-detail" data-testid="admin-integration-detail">
               <Link className="admin-detail-back" href="/admin">
                 <ArrowLeft size={15} /> {c.backOverview}
@@ -731,6 +813,7 @@ export function AdminConsole({
                 setting={byKind.get(activeKind) ?? defaults[0]}
                 locale={locale}
                 onChange={updateIntegration}
+                locked={loading}
               />
             </div>
           ) : (

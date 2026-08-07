@@ -7,7 +7,7 @@ import { ApiClient, ApiError, authHeaders } from "../lib/api";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "../lib/session";
-import { clearSelectedFiles } from "../lib/upload-flow";
+import { clearSelectedFiles, validateUploadFile } from "../lib/upload-flow";
 import {
     buildPlanRows,
     evidenceTone,
@@ -442,6 +442,74 @@ describe("implicit workspace API", () => {
       { path: "/api/workspaces/resolve", method: "POST" },
       { path: "/api/workspaces/math-space/snapshot", method: "GET" },
     ]);
+  });
+});
+
+describe("recoverable material and Agent interactions", () => {
+  it("validates supported learning files before upload", () => {
+    expect(validateUploadFile({ name: "notes.md", size: 100 })).toBeNull();
+    expect(validateUploadFile({ name: "image.exe", size: 100 })).toBe("unsupported_type");
+    expect(validateUploadFile({ name: "large.pdf", size: 30 * 1024 * 1024 })).toBe("file_too_large");
+  });
+
+  it("ships cancellation, retry, history, and source controls", () => {
+    const materialSource = readFileSync(
+      fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
+      "utf8",
+    );
+    const agentSource = readFileSync(
+      fileURLToPath(new URL("../components/agent-panel.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(materialSource).toContain("AbortController");
+    expect(materialSource).toContain("retryUpload");
+    expect(materialSource).toContain("onDrop");
+    expect(agentSource).toContain("AbortController");
+    expect(agentSource).toContain('data-testid="agent-stop"');
+    expect(agentSource).toContain("navigator.clipboard.writeText");
+    expect(agentSource).toContain("listWorkspaceAgentSessions");
+    expect(agentSource).toContain("SourceDrawer");
+  });
+});
+
+describe("safe authentication and administration", () => {
+  it("ships password recovery and dirty-form protections", () => {
+    const authSource = readFileSync(
+      fileURLToPath(new URL("../components/auth-panel.tsx", import.meta.url)),
+      "utf8",
+    );
+    const adminSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-console.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(authSource).toContain("requestPasswordReset");
+    expect(authSource).toContain("completePasswordReset");
+    expect(authSource).toContain("passwordRules");
+    expect(adminSource).toContain("beforeunload");
+    expect(adminSource).toContain("isDirty");
+    expect(adminSource).toContain("saveAndTest");
+    expect(adminSource).toContain("loadError");
+  });
+});
+
+describe("accessible application shell", () => {
+  it("provides a keyboard skip target and localized document state", () => {
+    const layoutSource = readFileSync(
+      fileURLToPath(new URL("../app/layout.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(layoutSource).toContain('href="#main-content"');
+    expect(layoutSource).toContain("skip-link");
+    expect(workspaceSource).toContain('id="main-content"');
+    expect(workspaceSource).toContain("document.documentElement.lang");
+    expect(workspaceSource).toContain('aria-live="polite"');
   });
 });
 
