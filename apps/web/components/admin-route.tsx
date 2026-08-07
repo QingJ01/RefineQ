@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 
 import { AdminConsole } from "@/components/admin-console";
 import { BrandMark } from "@/components/brand";
-import { api } from "@/lib/api";
-import { clearLearningSession, loadLearningSession } from "@/lib/session";
+import { api, ApiError } from "@/lib/api";
+import { clearLearningSession, loadLearningSession, saveLearningSession } from "@/lib/session";
 import type { IntegrationKind, Locale } from "@/lib/types";
 
 
@@ -14,6 +14,8 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [locale, setLocale] = useState<Locale>("zh");
+  const [verificationError, setVerificationError] = useState("");
+  const [verificationNonce, setVerificationNonce] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -29,14 +31,24 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
           router.replace("/");
           return;
         }
+        if (session.locale) {
+          setLocale(session.locale);
+          document.documentElement.lang = session.locale === "zh" ? "zh-CN" : "en";
+        }
+        setVerificationError("");
         setToken(session.token);
       })
-      .catch(() => {
-        clearLearningSession(window.localStorage);
-        router.replace("/");
+      .catch((caught: unknown) => {
+        if (!active) return;
+        if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+          clearLearningSession(window.localStorage);
+          router.replace("/");
+        } else {
+          setVerificationError(caught instanceof Error ? caught.message : "Verification failed");
+        }
       });
     return () => { active = false; };
-  }, [router]);
+  }, [router, verificationNonce]);
 
   function logout() {
     clearLearningSession(window.localStorage);
@@ -45,9 +57,15 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
 
   if (!token) {
     return (
-      <main className="loading-stage">
+      <main id="main-content" className="loading-stage">
         <BrandMark size={44} />
-        <span>{locale === "zh" ? "正在验证管理员身份…" : "Verifying administrator…"}</span>
+        <span>{verificationError || (locale === "zh" ? "正在验证管理员身份…" : "Verifying administrator…")}</span>
+        {verificationError && (
+          <button className="secondary-action" onClick={() => {
+            setVerificationError("");
+            setVerificationNonce((current) => current + 1);
+          }}>{locale === "zh" ? "重试" : "Retry"}</button>
+        )}
       </main>
     );
   }
@@ -58,7 +76,13 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
       locale={locale}
       activeKind={activeKind}
       onLogout={logout}
-      onToggleLocale={() => setLocale((current) => current === "zh" ? "en" : "zh")}
+      onToggleLocale={() => setLocale((current) => {
+        const next = current === "zh" ? "en" : "zh";
+        const session = loadLearningSession(window.localStorage);
+        if (session) saveLearningSession(window.localStorage, { ...session, locale: next });
+        document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
+        return next;
+      })}
     />
   );
 }

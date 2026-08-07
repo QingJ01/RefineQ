@@ -510,6 +510,7 @@ describe("accessible application shell", () => {
     expect(workspaceSource).toContain('id="main-content"');
     expect(workspaceSource).toContain("document.documentElement.lang");
     expect(workspaceSource).toContain('aria-live="polite"');
+    expect(workspaceSource).toContain("caught.status === 401");
   });
 });
 

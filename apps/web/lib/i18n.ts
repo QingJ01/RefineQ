@@ -137,6 +137,12 @@ export const messages = {
     passwordsMatch: "两次密码输入一致",
     passwordRulesError: "请先满足全部密码要求。",
     backToLogin: "返回登录",
+    showArchived: "查看归档",
+    hideArchived: "只看活跃",
+    archived: "已归档",
+    restoreWorkspace: "恢复学习空间",
+    noRecentWorkspaces: "还没有学习空间，从上方告诉 Agent 你想学什么吧。",
+    noArchivedWorkspaces: "没有已归档的学习空间。",
   },
   en: {
     brandTagline: "Turn every study session into verifiable progress",
@@ -273,6 +279,12 @@ export const messages = {
     passwordsMatch: "Both passwords match",
     passwordRulesError: "Meet every password requirement first.",
     backToLogin: "Back to sign in",
+    showArchived: "Show archived",
+    hideArchived: "Active only",
+    archived: "Archived",
+    restoreWorkspace: "Restore learning space",
+    noRecentWorkspaces: "No learning spaces yet. Tell the Agent what you want to learn above.",
+    noArchivedWorkspaces: "No archived learning spaces.",
   },
 } as const;
 

@@ -134,6 +134,8 @@ describe("focused learning components", () => {
         onOpen={() => undefined}
         onUpdate={() => undefined}
         onDelete={() => undefined}
+        showArchived={false}
+        onToggleArchived={() => undefined}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}
       />,
@@ -144,6 +146,7 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="workspace-rename-math-space"');
     expect(html).toContain('data-testid="workspace-archive-math-space"');
     expect(html).toContain('data-testid="workspace-delete-math-space"');
+    expect(html).toContain('data-testid="archived-workspaces-toggle"');
   });
 
   it("renders plan sessions as a numbered study path", () => {

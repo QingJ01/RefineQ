@@ -3,6 +3,7 @@
 import {
   ArrowRight,
   Archive,
+  ArchiveRestore,
   Clock3,
   History,
   Languages,
@@ -28,6 +29,8 @@ export function LearningHome({
   onOpen,
   onUpdate,
   onDelete,
+  showArchived = false,
+  onToggleArchived,
   isAdmin = false,
   onAdmin,
   onLogout,
@@ -43,6 +46,8 @@ export function LearningHome({
     input: { title?: string; archived?: boolean },
   ) => void | Promise<void>;
   onDelete?: (workspace: LearningWorkspace) => void | Promise<void>;
+  showArchived?: boolean;
+  onToggleArchived?: (show: boolean) => void | Promise<void>;
   isAdmin?: boolean;
   onAdmin?: () => void;
   onLogout: () => void;
@@ -115,19 +120,25 @@ export function LearningHome({
             </div>
           </form>
         </div>
-        {workspaces.length > 0 && (
           <section className="recent-learning" id="recent-learning">
             <div className="section-heading compact">
               <div><span className="kicker">CONTINUE LEARNING</span><h2>{t("recentLearning")}</h2></div>
-              <Clock3 size={20} />
+              <div className="recent-heading-actions">
+                <button type="button" data-testid="archived-workspaces-toggle" aria-pressed={showArchived} onClick={() => void onToggleArchived?.(!showArchived)}>
+                  {showArchived ? <Clock3 size={15} /> : <Archive size={15} />}
+                  {t(showArchived ? "hideArchived" : "showArchived")}
+                </button>
+                <Clock3 size={20} />
+              </div>
             </div>
-            <div className="recent-grid">
+            {workspaces.length === 0 ? <div className="empty-note">{t(showArchived ? "noArchivedWorkspaces" : "noRecentWorkspaces")}</div> : <div className="recent-grid">
               {workspaces.map((workspace) => (
-                <article className="recent-card" key={workspace.id}>
-                  <button className="recent-card-open" onClick={() => onOpen(workspace)}>
+                <article className={workspace.archived ? "recent-card archived" : "recent-card"} key={workspace.id}>
+                  <button className="recent-card-open" onClick={() => onOpen(workspace)} disabled={workspace.archived}>
                     <span>{workspace.subject}</span>
                     <strong>{workspace.title}</strong>
                     <p>{workspace.goal}</p>
+                    {workspace.archived && <small>{t("archived")}</small>}
                     <ArrowRight size={16} />
                   </button>
                   <div className="recent-card-actions" aria-label={`${workspace.title} actions`}>
@@ -143,9 +154,9 @@ export function LearningHome({
                     <button
                       type="button"
                       data-testid={`workspace-archive-${workspace.id}`}
-                      aria-label={`${t("archiveWorkspace")} ${workspace.title}`}
-                      onClick={() => void onUpdate?.(workspace, { archived: true })}
-                    ><Archive size={14} /></button>
+                      aria-label={`${t(workspace.archived ? "restoreWorkspace" : "archiveWorkspace")} ${workspace.title}`}
+                      onClick={() => void onUpdate?.(workspace, { archived: !workspace.archived })}
+                    >{workspace.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
                     <button
                       type="button"
                       data-testid={`workspace-delete-${workspace.id}`}
@@ -157,9 +168,8 @@ export function LearningHome({
                   </div>
                 </article>
               ))}
-            </div>
+            </div>}
           </section>
-        )}
       </section>
     </main>
   );

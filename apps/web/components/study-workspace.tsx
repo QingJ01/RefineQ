@@ -71,11 +71,12 @@ export function StudyWorkspace({
   const [question, setQuestion] = useState<PracticeQuestion | null>(null);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<AnswerResult | null>(null);
-  const [section, setSection] = useState<LearningSection>(initialSection);
+  const section = initialSection;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
   const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   function reportError(caught: unknown) {
     setError(
@@ -149,8 +150,13 @@ export function StudyWorkspace({
             }
           }
         }
-      } catch {
-        clearLearningSession(window.localStorage);
+      } catch (caught) {
+        if (!active) return;
+        if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+          clearLearningSession(window.localStorage);
+        } else {
+          setError(caught instanceof Error ? caught.message : "Unable to restore the learning session");
+        }
       } finally {
         if (active) setRestoring(false);
       }
@@ -194,7 +200,6 @@ export function StudyWorkspace({
         locale,
         home: false,
       });
-      setSection(targetSection);
       router.push(learningPath(target.id, targetSection));
     } catch (caught) {
       reportError(caught);
@@ -226,7 +231,6 @@ export function StudyWorkspace({
         locale,
         home: false,
       });
-      setSection("today");
       router.push(learningPath(route.workspace.id, "today"));
     } catch (caught) {
       reportError(caught);
@@ -343,7 +347,7 @@ export function StudyWorkspace({
     setError("");
     try {
       const updated = await api.updateWorkspace(auth.access_token, target.id, input);
-      setWorkspaces((current) => input.archived
+      setWorkspaces((current) => updated.archived && !showArchived
         ? current.filter((item) => item.id !== target.id)
         : current.map((item) => item.id === target.id ? updated : item));
     } catch (caught) {
@@ -360,6 +364,20 @@ export function StudyWorkspace({
     try {
       await api.deleteWorkspace(auth.access_token, target.id);
       setWorkspaces((current) => current.filter((item) => item.id !== target.id));
+    } catch (caught) {
+      reportError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleArchivedWorkspaces(show: boolean) {
+    if (!auth) return;
+    setBusy(true);
+    setError("");
+    try {
+      setWorkspaces(await api.listWorkspaces(auth.access_token, show));
+      setShowArchived(show);
     } catch (caught) {
       reportError(caught);
     } finally {
@@ -412,6 +430,9 @@ export function StudyWorkspace({
   }
 
   function returnHome() {
+    window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+    setRoute(null);
+    setPreviousWorkspaceId(null);
     if (auth) {
       saveLearningSession(window.localStorage, {
         token: auth.access_token,
@@ -452,6 +473,8 @@ export function StudyWorkspace({
           onOpen={openWorkspace}
           onUpdate={updateLearningWorkspace}
           onDelete={deleteLearningWorkspace}
+          showArchived={showArchived}
+          onToggleArchived={toggleArchivedWorkspaces}
           isAdmin={auth.user.role === "admin"}
           onAdmin={() => router.push("/admin")}
           onLogout={logout}
@@ -485,7 +508,6 @@ export function StudyWorkspace({
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
               onClick={() => {
-                setSection(id);
                 router.push(`/learn/${workspace.id}/${id}`);
               }}
               aria-label={t(id)}

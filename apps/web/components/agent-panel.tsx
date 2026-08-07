@@ -123,6 +123,8 @@ export function AgentPanel({
     } catch (caught) {
       if (controller.signal.aborted) {
         setError(t("agentStopped"));
+        setFailedTurn(turn);
+        setMessage(turn.message);
       } else {
         setFailedTurn(turn);
         setError(errorMessage(caught, t));

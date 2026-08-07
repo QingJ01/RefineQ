@@ -491,6 +491,7 @@ function IntegrationCard({
       setSecrets({});
       setConfig(updated.config);
       setEnabled(updated.enabled);
+      onChange(updated);
       setBusy("test");
       const result = await api.testIntegration(token, definition.kind);
       const projected = projectIntegrationTestResult(updated, result, new Date().toISOString());

@@ -43,7 +43,7 @@
   transition: transform 140ms ease;
 }
 
-.skip-link:focus {
+.skip-link:focus-visible {
   transform: translateY(0);
 }
 
@@ -735,6 +735,28 @@ textarea:focus {
   animation: rise-in 420ms 80ms ease both;
 }
 
+.recent-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.recent-heading-actions button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 650;
+}
+
 .recent-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -764,6 +786,24 @@ textarea:focus {
 
 .recent-card:nth-child(3n) {
   background: #f5fbf8;
+}
+
+.recent-card.archived {
+  opacity: 0.78;
+  background: var(--surface-soft);
+}
+
+.recent-card-open:disabled {
+  cursor: default;
+}
+
+.recent-card-open small {
+  position: absolute;
+  left: 18px;
+  bottom: 15px;
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .recent-card-open {
