@@ -49,6 +49,48 @@ _SUBJECT_HINTS: dict[str, tuple[str, ...]] = {
         "rust",
         "coding",
     ),
+    "product": (
+        "产品思维",
+        "产品设计",
+        "用户需求",
+        "需求验证",
+        "用户研究",
+        "product thinking",
+        "product discovery",
+        "product",
+        "user needs",
+    ),
+    "operations": (
+        "运营思维",
+        "增长运营",
+        "内容运营",
+        "活动策划",
+        "运营",
+        "growth operations",
+        "campaign analysis",
+        "operations",
+        "growth",
+    ),
+    "writing": (
+        "写作",
+        "结构化表达",
+        "文案",
+        "内容创作",
+        "structured writing",
+        "copywriting",
+        "storytelling",
+        "argumentation",
+        "writing",
+    ),
+    "research": (
+        "研究",
+        "调研",
+        "信息检索",
+        "文献综述",
+        "research synthesis",
+        "literature review",
+        "research",
+    ),
     "science": (
         "物理",
         "化学",
@@ -103,6 +145,8 @@ _ENGLISH_STOPWORDS = {
     "with",
     "exam",
     "review",
+    "learn",
+    "practice",
     "today",
     "week",
     "weeks",
@@ -122,6 +166,12 @@ _BROAD_SUBJECT_TERMS = {
     "english",
     "programming",
     "coding",
+    "product",
+    "product thinking",
+    "operations",
+    "growth operations",
+    "writing",
+    "research",
     "science",
     "humanities",
 }
@@ -157,7 +207,47 @@ def _keywords(intent: str) -> list[str]:
     return sorted(keywords, key=lambda item: (normalized.find(item), item))
 
 
-def _topics(subject: str, keywords: list[str], title: str) -> list[str]:
+def _capability_topics(subject: str, normalized: str) -> list[str]:
+    mappings: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
+        "product": (
+            (("用户需求", "需求验证", "user needs", "validate", "validation"), "用户需求验证"),
+            (("用户访谈", "访谈", "interview"), "用户访谈分析"),
+            (("产品发现", "product discovery", "discovery"), "产品发现"),
+        ),
+        "operations": (
+            (("增长", "growth"), "增长实验"),
+            (("活动", "campaign"), "活动复盘"),
+            (("内容", "content"), "内容运营"),
+        ),
+        "writing": (
+            (("结构", "structured"), "结构化表达"),
+            (("论证", "argument"), "观点论证"),
+            (("文案", "copywriting"), "文案写作"),
+        ),
+        "research": (
+            (("检索", "综合", "synthesis", "literature review"), "证据检索与综合"),
+            (("研究问题", "research question"), "研究问题定义"),
+        ),
+    }
+    return [
+        label
+        for hints, label in mappings.get(subject, ())
+        if any(hint in normalized for hint in hints)
+    ]
+
+
+def _topics(subject: str, keywords: list[str], title: str, normalized: str) -> list[str]:
+    capability_topics = _capability_topics(subject, normalized)
+    if capability_topics:
+        return capability_topics[:3]
+    capability_defaults = {
+        "product": "产品问题分析",
+        "operations": "运营问题分析",
+        "writing": "内容写作",
+        "research": "研究方法",
+    }
+    if subject in capability_defaults:
+        return [capability_defaults[subject]]
     candidates = [item for item in keywords if item != subject]
     specific = [item for item in candidates if item not in _BROAD_SUBJECT_TERMS]
     return (specific or candidates or [title])[:3]
@@ -170,6 +260,14 @@ def _suggested_title(intent: str, subject: str) -> str:
             if name.casefold() in normalized:
                 return f"{name} 学习"
         return "编程学习"
+    if subject == "product":
+        return "产品思维"
+    if subject == "operations":
+        return "运营思维"
+    if subject == "writing":
+        return "写作能力"
+    if subject == "research":
+        return "研究能力"
     if subject == "mathematics":
         is_advanced = any(key in normalized for key in ("高数", "微积分", "极限"))
         return "高等数学" if is_advanced else "数学学习"
@@ -251,7 +349,7 @@ def route_workspace(
         action="created",
         title=title,
         subject=subject,
-        topics=_topics(subject, keywords, title),
+        topics=_topics(subject, keywords, title, normalized),
         keywords=keywords or [title],
         confidence=0.92 if subject != "general" else 0.72,
         reason="当前内容与已有学习方向差异明显，建立新的学习空间。",

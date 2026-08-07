@@ -136,6 +136,9 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert progress.json()["topics"] == {"chain-rule": "Chain Rule"}
         assert evidence.status_code == 200
         assert {item["kind"] for item in evidence.json()} == {"attempt", "diagnostic"}
+        attempt_evidence = next(item for item in evidence.json() if item["kind"] == "attempt")
+        assert "Chain Rule" in attempt_evidence["summary"]
+        assert "chain-rule" not in attempt_evidence["summary"]
 
         forbidden = client.get(
             f"/projects/{project_id}/learning/progress",

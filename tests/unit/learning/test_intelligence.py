@@ -13,6 +13,7 @@ from refineq.learning.intelligence import (
     fallback_grade,
     fallback_question,
 )
+from refineq.learning.models import LearningMode
 
 
 class FakeStructuredTransport:
@@ -90,6 +91,54 @@ def test_generated_question_is_grounded_and_filters_invented_citations(
     assert question.expected_answer
     assert sum(item.max_points for item in question.rubric) == 100
     assert transport.calls == ["QuestionModelOutput"]
+
+
+def test_generated_task_preserves_a_domain_neutral_learning_mode(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path)
+
+    task = service.generate_question(
+        owner_id="owner",
+        workspace_id="calculus",
+        topic_id="discovery",
+        topic_name="用户需求验证",
+        mastery=0.25,
+        difficulty_level=2,
+        learning_mode=LearningMode.CASE,
+    )
+
+    assert task.learning_mode is LearningMode.CASE
+
+
+def test_fallback_tasks_change_with_the_selected_learning_mode() -> None:
+    source = SearchResult(
+        citation_id="interview#0",
+        material_id="interview",
+        filename="interview.txt",
+        chunk_index=0,
+        text="用户反复要求导出，但真实目标是稳定完成每周汇报。",
+        score=1.0,
+    )
+
+    case = fallback_question(
+        topic_id="needs",
+        topic_name="用户需求验证",
+        difficulty_level=2,
+        sources=[source],
+        learning_mode=LearningMode.CASE,
+    )
+    project = fallback_question(
+        topic_id="needs",
+        topic_name="用户需求验证",
+        difficulty_level=2,
+        sources=[source],
+        learning_mode=LearningMode.PROJECT,
+    )
+
+    assert "场景" in case.prompt
+    assert "表面诉求" in case.prompt
+    assert "最小方案" in project.prompt
+    assert "验证标准" in project.prompt
+    assert case.prompt != project.prompt
 
 
 def test_question_generation_falls_back_when_model_is_not_configured(

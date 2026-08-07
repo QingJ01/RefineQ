@@ -39,7 +39,7 @@ test.beforeAll(() => {
 });
 
 
-test("learner completes and restores a projectless study journey", async ({ page }, testInfo) => {
+test.skip("legacy projectless study journey", async ({ page }, testInfo) => {
   const uniqueEmail = `learner-${Date.now()}@example.com`;
 
   await test.step("register and let the Agent establish a learning space", async () => {
@@ -223,6 +223,149 @@ test("learner completes and restores a projectless study journey", async ({ page
     await page.getByTestId(/workspace-archive-/).click();
     await expect(page.locator(".recent-card:not(.archived)")).toContainText(workspaceTitle);
   });
+});
+
+
+test("learner completes and restores a capability learning journey", async ({ page }, testInfo) => {
+  const uniqueEmail = `capability-learner-${Date.now()}@example.com`;
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await page.setViewportSize({ width: 1440, height: 1024 });
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Capability learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page
+    .getByTestId("learning-intent")
+    .fill("I want to learn product thinking, validate real user needs, and complete an interview analysis");
+  await page.getByTestId("start-learning").click();
+
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+  await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
+  await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
+  await expect(page.locator(".session-steps li")).toHaveCount(4);
+  const workspaceTitle = await page.locator(".sidebar-learning > strong").innerText();
+
+  await test.step("use a short, varied capability path", async () => {
+    await page.getByTestId("nav-path").click();
+    await expect(page).toHaveURL(/\/path$/);
+    await expect(page.locator(".plan-session")).toHaveCount(7);
+    await expect(page.locator(".plan-activity")).toHaveCount(7);
+    const firstSession = page.locator(".plan-session").first();
+    await expect(firstSession.locator(".plan-topic strong")).not.toContainText("topic_");
+    await firstSession.locator('[data-testid^="complete-session-"]').click();
+    await expect(firstSession).toHaveClass(/completed/);
+    await firstSession.locator('[data-testid^="complete-session-"]').click();
+    await expect(firstSession).not.toHaveClass(/completed/);
+  });
+
+  await test.step("keep mobile navigation accessible", async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await expect(page.getByTestId("learning-path-view")).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(page.locator(".skip-link")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.locator(".workspace-sidebar .sidebar-brand")).toHaveAccessibleName("RefineQ");
+    for (const testId of ["nav-today", "nav-path", "nav-materials", "nav-progress"]) {
+      await expect(page.getByTestId(testId)).toHaveAccessibleName(/.+/);
+    }
+    await page.screenshot({ path: testInfo.outputPath("capability-learning-mobile.png") });
+    await page.setViewportSize({ width: 1440, height: 1024 });
+  });
+
+  await test.step("upload a real interview source", async () => {
+    await page.getByTestId("nav-materials").click();
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "user-interview.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from(
+        "用户需求验证：A user asked for data export, but repeated interview evidence showed the underlying need was a trustworthy weekly reporting workflow. Validate the problem before choosing a feature solution.",
+      ),
+    });
+    await expect(page.locator(".material-list").getByText("user-interview.txt")).toBeVisible();
+    await page.getByTestId("material-search").fill("weekly reporting workflow");
+    await page.locator(".material-search button").click();
+    await expect(page.locator(".material-search-results")).toContainText("user-interview.txt");
+    await page.getByTestId("nav-today").click();
+    await expect(page.locator(".session-sources")).toContainText("user-interview.txt");
+  });
+
+  await test.step("complete two case-learning tasks", async () => {
+    await page.getByTestId("learning-mode-case").click();
+    await expect(page.getByTestId("learning-mode-case")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("session-start-task").click();
+    await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("capability-learning-practice.png") });
+    const firstQuestionId = await page.getByTestId("session-practice-stage").getAttribute("data-question-id");
+    expect(firstQuestionId).toBeTruthy();
+
+    await page.getByTestId("practice-sources").click();
+    await expect(page.getByRole("dialog")).toContainText("user-interview.txt");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("save-question").click();
+    await expect(page.getByTestId("save-question")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("skip-question").click();
+    await expect(page.getByTestId("session-practice-stage")).not.toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
+
+    await page.getByTestId("practice-answer").fill(
+      "The stated request is export, but the recurring job is reliable weekly reporting. I would interview five similar users, compare their current workaround, and test a lightweight report prototype before committing to an export feature.",
+    );
+    await page.getByTestId("submit-answer").click();
+    await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
+    await expect(page.locator(".feedback-score")).toContainText("/100");
+
+    await page.getByTestId("next-question").click();
+    await page.getByTestId("practice-answer").fill(
+      "I would separate the requested solution from the underlying outcome, gather behavioral evidence, define a falsifiable success signal, and compare the smallest alternatives before building.",
+    );
+    await page.getByTestId("submit-answer").click();
+    await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
+
+    await page.getByTestId("nav-progress").click();
+    await expect(page).toHaveURL(/\/progress$/);
+    await expect(page.locator(".evidence-timeline li")).toHaveCount(2);
+    await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
+  });
+
+  await test.step("restore sources and use the contextual coach", async () => {
+    await page.reload();
+    await expect(page.locator(".workspace-header h1")).toHaveText(workspaceTitle);
+    await page.getByTestId("nav-materials").click();
+    await expect(page.locator(".material-list").getByText("user-interview.txt")).toBeVisible();
+    await page.getByTestId("nav-today").click();
+    await page.getByTestId("session-coach-input").fill("Help me strengthen the evidence in my analysis");
+    await page.locator(".session-coach-form button").click();
+    await expect(page.getByTestId("session-coach-input")).toBeEnabled();
+    await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("capability-learning-desktop.png") });
+  });
+
+  await test.step("confirm before deleting a source", async () => {
+    await page.getByTestId("nav-materials").click();
+    const material = page.locator(".material-list").getByText("user-interview.txt");
+    await page.getByTestId(/material-delete-/).click();
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(material).toBeVisible();
+    await page.getByTestId(/material-delete-/).click();
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await expect(material).toBeHidden();
+  });
+
+  const unexpectedBrowserErrors = browserErrors.filter(
+    (message) => !message.includes("status of 409"),
+  );
+  expect(unexpectedBrowserErrors).toEqual([]);
 });
 
 

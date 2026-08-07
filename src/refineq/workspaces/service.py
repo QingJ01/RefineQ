@@ -29,6 +29,9 @@ from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.routing import route_workspace
 
 
+DEFAULT_CAPABILITY_HORIZON_DAYS = 7
+
+
 class WorkspaceServiceError(RuntimeError):
     code = "workspace_error"
 
@@ -151,7 +154,11 @@ class WorkspaceService:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
             workspace_id = uuid4().hex
             inferred = infer_intent_constraints(payload.intent, now=observed_at)
-            exam_at = payload.exam_at or inferred.exam_at or observed_at + timedelta(days=30)
+            exam_at = (
+                payload.exam_at
+                or inferred.exam_at
+                or observed_at + timedelta(days=DEFAULT_CAPABILITY_HORIZON_DAYS)
+            )
             daily_minutes = payload.daily_minutes or inferred.daily_minutes or 45
             topic_seeds = [TopicSeed(id=_topic_id(name), name=name) for name in decision.topics]
             try:

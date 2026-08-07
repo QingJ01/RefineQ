@@ -22,6 +22,7 @@ from refineq.learning.models import (
     BKTState,
     DifficultyState,
     KnowledgeType,
+    LearningMode,
     LearningEvidence,
     StudyPlan,
     StudySession,
@@ -91,6 +92,7 @@ class QuestionResponse(BaseModel):
     difficulty_level: int = Field(default=2, ge=1, le=5)
     citations: list[str] = Field(default_factory=list)
     sources: list[SearchResult] = Field(default_factory=list)
+    learning_mode: LearningMode = LearningMode.CONCEPT
     mode: str = "fallback"
     saved: bool = False
 
@@ -263,12 +265,15 @@ class LearningService:
                     state,
                     is_correct=result.is_correct,
                 ).model_dump(mode="json")
+                topic_name = str(
+                    progress["topics"][result.topic_id].get("name") or result.topic_id
+                )
                 evidence = create_evidence(
                     kind="diagnostic",
                     source_id=f"{project_id}:{payload.diagnostic_id}:{result.topic_id}",
                     summary=(
-                        f"Diagnostic response for {result.topic_id} was "
-                        f"{'correct' if result.is_correct else 'incorrect'}."
+                        f"Initial check for {topic_name} "
+                        f"{'met' if result.is_correct else 'did not yet meet'} the rubric."
                     ),
                     observed_at=datetime.now(UTC),
                     details={"topic_id": result.topic_id, "is_correct": result.is_correct},
@@ -366,6 +371,7 @@ class LearningService:
             difficulty_level=question.get("difficulty_level", 2),
             citations=question.get("citations", []),
             sources=cls._question_sources(question),
+            learning_mode=question.get("learning_mode", LearningMode.CONCEPT),
             mode=question.get("mode", "fallback"),
             saved=saved_at is not None,
         )
@@ -377,6 +383,7 @@ class LearningService:
         *,
         topic_id: str | None = None,
         difficulty_level: int | None = None,
+        learning_mode: LearningMode = LearningMode.CONCEPT,
         replace_pending: bool = False,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
@@ -410,6 +417,7 @@ class LearningService:
                 topic_name=topic["name"],
                 mastery=mastery,
                 difficulty_level=selected_difficulty,
+                learning_mode=learning_mode,
             )
         else:
             generated = fallback_question(
@@ -417,12 +425,14 @@ class LearningService:
                 topic_name=topic["name"],
                 difficulty_level=selected_difficulty,
                 sources=[],
+                learning_mode=learning_mode,
             )
         proposed = {
             "topic_id": topic_id,
             "prompt": generated.prompt,
             "expected_answer": generated.expected_answer,
             "difficulty_level": generated.difficulty_level,
+            "learning_mode": generated.learning_mode.value,
             "citations": generated.citations,
             "mode": generated.mode,
             "grading": generated.model_dump(mode="json"),
@@ -567,6 +577,8 @@ class LearningService:
 
             is_correct = grade.passed
             topic_id = question["topic_id"]
+            topic_name = str(progress["topics"][topic_id].get("name") or topic_id)
+            learning_mode = str(question.get("learning_mode") or LearningMode.CONCEPT.value)
             current_bkt = BKTState.model_validate(progress["bkt_states"][topic_id])
             current_difficulty = DifficultyState.model_validate(
                 progress["difficulty_states"][topic_id]
@@ -589,8 +601,8 @@ class LearningService:
                 kind="attempt",
                 source_id=payload.attempt_id,
                 summary=(
-                    f"Practice response for {topic_id} was "
-                    f"{'correct' if is_correct else 'incorrect'}."
+                    f"Completed a {learning_mode} learning task for {topic_name}; "
+                    f"the response {'met' if is_correct else 'did not yet meet'} the rubric."
                 ),
                 observed_at=datetime.now(UTC),
                 details={

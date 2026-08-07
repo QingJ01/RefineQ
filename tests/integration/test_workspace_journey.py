@@ -183,6 +183,37 @@ def test_natural_language_exam_and_daily_time_shape_the_created_plan(
     assert 13 <= len(plan["sessions"]) <= 14
 
 
+def test_flexible_capability_goal_uses_a_focused_seven_day_path(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": "Learn product thinking by validating a real user need",
+            },
+        )
+        workspace_id = created.json()["workspace"]["id"]
+        snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
+
+    assert created.status_code == 200
+    assert snapshot.status_code == 200
+    plan = snapshot.json()["plan"]
+    assert len(plan["sessions"]) == 7
+    assert [session["activity"] for session in plan["sessions"]] == [
+        "learn",
+        "practice",
+        "apply",
+        "review",
+        "learn",
+        "practice",
+        "apply",
+    ]
+
+
 def test_explicit_plan_constraints_override_values_in_intent(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
     exam_at = datetime.now(UTC) + timedelta(days=4)

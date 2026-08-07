@@ -238,3 +238,31 @@ def test_workspace_practice_can_replace_a_question_at_a_chosen_difficulty(
     assert replacement.json()["id"] != first.json()["id"]
     assert invalid_topic.status_code == 409
     assert invalid_topic.json()["error"]["code"] == "learning_conflict"
+
+
+def test_workspace_learning_task_accepts_project_mode(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "product-learner@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Product Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习产品思维，并练习验证真实用户需求"},
+        ).json()["workspace"]["id"]
+        response = client.get(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            params={"mode": "project"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["learning_mode"] == "project"

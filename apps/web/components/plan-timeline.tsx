@@ -33,6 +33,9 @@ export function PlanTimeline({
   }
   const rows = buildPlanRows(plan, locale === "zh" ? "zh-CN" : "en-US", topicLabels);
   const visibleRows = expanded ? rows : rows.slice(0, 7);
+  const activityLabels = locale === "zh"
+    ? { learn: "学习", practice: "练习", apply: "实战", review: "复盘" }
+    : { learn: "Learn", practice: "Practice", apply: "Apply", review: "Review" };
   return (
     <section className="content-card plan-card" aria-labelledby="plan-heading">
       <div className="section-heading">
@@ -52,7 +55,12 @@ export function PlanTimeline({
             <span className="sequence">{String(row.sequence).padStart(2, "0")}</span>
             <span className="timeline-rule" aria-hidden="true" />
             <div className="plan-topic">
-              <strong>{row.topic}</strong>
+              <div>
+                <strong>{row.topic}</strong>
+                <span className={`plan-activity plan-activity-${session.activity ?? "practice"}`}>
+                  {activityLabels[session.activity ?? "practice"]}
+                </span>
+              </div>
               <span>{row.dateLabel}</span>
             </div>
             <span className="plan-minutes">{row.minutesLabel}</span>

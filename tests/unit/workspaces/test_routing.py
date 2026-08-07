@@ -128,3 +128,29 @@ def test_english_exam_goal_uses_meaningful_topics_instead_of_stopwords() -> None
     assert decision.topics[0] == "limits"
     assert "and" not in decision.keywords
     assert "exam" not in decision.topics
+
+
+def test_product_and_operations_goals_become_capability_workspaces() -> None:
+    product = route_workspace("Learn product thinking and validate user needs", [])
+    operations = route_workspace("Practice growth operations and campaign analysis", [])
+
+    assert product.subject == "product"
+    assert product.title == "产品思维"
+    assert product.topics[0] == "用户需求验证"
+    assert "thinking" not in product.topics
+    assert operations.subject == "operations"
+    assert operations.title == "运营思维"
+    assert "增长实验" in operations.topics
+    assert "活动复盘" in operations.topics
+
+
+def test_writing_and_research_goals_are_first_class_capabilities() -> None:
+    writing = route_workspace("Improve structured writing and argumentation", [])
+    research = route_workspace("Learn research synthesis and literature review", [])
+
+    assert writing.subject == "writing"
+    assert writing.title == "写作能力"
+    assert writing.topics[0] == "结构化表达"
+    assert research.subject == "research"
+    assert research.title == "研究能力"
+    assert "证据检索与综合" in research.topics

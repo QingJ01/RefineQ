@@ -191,6 +191,7 @@ export class ApiClient {
     const query = new URLSearchParams();
     if (options.topicId) query.set("topic_id", options.topicId);
     if (options.difficulty !== undefined) query.set("difficulty", String(options.difficulty));
+    if (options.learningMode) query.set("mode", options.learningMode);
     if (options.replace) query.set("replace", "true");
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request(

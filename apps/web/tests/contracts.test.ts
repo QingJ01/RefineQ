@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
+import { learningSections, parseLearningSection } from "../lib/learning-routes";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "../lib/session";
 import { clearSelectedFiles, validateUploadFile } from "../lib/upload-flow";
 import {
@@ -64,6 +65,12 @@ describe("administrator routing", () => {
 
 
 describe("durable learner routing", () => {
+  it("uses capability-oriented learner routes and keeps legacy links recoverable", () => {
+    expect(learningSections).toEqual(["today", "path", "materials", "progress"]);
+    expect(parseLearningSection("evidence")).toBe("progress");
+    expect(parseLearningSection("coach")).toBe("today");
+  });
+
   it("ships a real learning route and uses it for section navigation", () => {
     const learningPage = fileURLToPath(
       new URL("../app/learn/[workspaceId]/[section]/page.tsx", import.meta.url),
@@ -285,7 +292,7 @@ describe("recoverable client workflows", () => {
 
 
 describe("targeted and saved practice API", () => {
-  it("sends topic, difficulty, and replacement intent without leaking them into paths", async () => {
+  it("sends topic, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
     const client = new ApiClient("/api", async (input) => {
       requestedPath = String(input);
@@ -303,12 +310,13 @@ describe("targeted and saved practice API", () => {
 
     await client.getWorkspaceQuestion("token", "workspace-1", {
       topicId: "limits",
+      learningMode: "case",
       difficulty: 4,
       replace: true,
     });
 
     expect(requestedPath).toBe(
-      "/api/workspaces/workspace-1/learning/question?topic_id=limits&difficulty=4&replace=true",
+      "/api/workspaces/workspace-1/learning/question?topic_id=limits&difficulty=4&mode=case&replace=true",
     );
   });
 

@@ -1,4 +1,5 @@
 export type Locale = "zh" | "en";
+export type LearningMode = "concept" | "case" | "project" | "exam";
 
 export interface User {
   id: string;
@@ -48,6 +49,7 @@ export interface StudySession {
   topic_id: string;
   planned_at: string;
   minutes: number;
+  activity?: "learn" | "practice" | "apply" | "review";
   status?: "planned" | "completed";
 }
 
@@ -75,6 +77,7 @@ export interface PracticeQuestion {
   difficulty_level?: number;
   citations?: string[];
   sources?: SearchSource[];
+  learning_mode?: LearningMode;
   mode?: "ai" | "fallback";
   saved?: boolean;
 }
@@ -86,6 +89,7 @@ export interface SavedPracticeQuestion extends PracticeQuestion {
 
 export interface PracticeRequest {
   topicId?: string;
+  learningMode?: LearningMode;
   difficulty?: number;
   replace?: boolean;
 }

@@ -2,29 +2,29 @@
 
 import {
   Archive,
-  Bot,
   BookOpen,
+  CalendarDays,
+  ChartNoAxesColumnIncreasing,
   Languages,
   LogOut,
-  NotebookTabs,
   Settings2,
   Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { AgentPanel } from "@/components/agent-panel";
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
+import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
-import { PracticeCard } from "@/components/practice-card";
 import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
 import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
+import { inferLearningMode } from "@/lib/learning-session";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
@@ -35,6 +35,7 @@ import type {
   AnswerResult,
   AuthResponse,
   LearningEvidence,
+  LearningMode,
   LearningWorkspace,
   Locale,
   MaterialRecord,
@@ -74,7 +75,8 @@ export function StudyWorkspace({
   const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<AnswerResult | null>(null);
-  const [practiceDifficulty, setPracticeDifficulty] = useState<number | null>(null);
+  const [learningMode, setLearningMode] = useState<LearningMode>("concept");
+  const [coachSessionId, setCoachSessionId] = useState<string | undefined>();
   const section = initialSection;
   const [homeBusy, setHomeBusy] = useState(false);
   const [practiceBusy, setPracticeBusy] = useState(false);
@@ -101,6 +103,8 @@ export function StudyWorkspace({
     setEvidence(snapshot.evidence);
     setMaterials(snapshot.materials);
     setSavedQuestions(snapshot.saved_questions ?? []);
+    setLearningMode(inferLearningMode(snapshot.workspace.subject, snapshot.workspace.goal));
+    setCoachSessionId(undefined);
     setQuestion(null);
     setResult(null);
     setAnswer("");
@@ -171,6 +175,16 @@ export function StudyWorkspace({
     void restore();
     return () => { active = false; };
   }, [initialWorkspaceId]);
+
+  useEffect(() => {
+    if (!route) return;
+    const timeout = window.setTimeout(() => {
+      window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+      setRoute(null);
+      setPreviousWorkspaceId(null);
+    }, 7000);
+    return () => window.clearTimeout(timeout);
+  }, [route]);
 
   async function authenticated(response: AuthResponse) {
     setAuth(response);
@@ -252,7 +266,10 @@ export function StudyWorkspace({
     setError("");
     try {
       await loadNextQuestion(
-        () => api.getWorkspaceQuestion(auth.access_token, workspace.id, request),
+        () => api.getWorkspaceQuestion(auth.access_token, workspace.id, {
+          learningMode,
+          ...request,
+        }),
         (nextQuestion) => {
           setQuestion(nextQuestion);
           setResult(null);
@@ -315,7 +332,8 @@ export function StudyWorkspace({
   async function practiceTopic(topicId: string, difficulty?: number) {
     await getQuestion({
       topicId,
-      difficulty: difficulty ?? practiceDifficulty ?? undefined,
+      difficulty,
+      learningMode,
       replace: question !== null,
     });
     window.requestAnimationFrame(() => {
@@ -380,6 +398,26 @@ export function StudyWorkspace({
       setMaterials((current) => current.filter((item) => item.id !== material.id));
     } catch (caught) {
       reportError(caught);
+    }
+  }
+
+  async function askSessionCoach(message: string) {
+    if (!auth || !workspace) throw new Error(t("error"));
+    const reply = await api.chatWorkspace(
+      auth.access_token,
+      workspace.id,
+      message,
+      coachSessionId,
+      crypto.randomUUID(),
+    );
+    setCoachSessionId(reply.session_id);
+    return reply;
+  }
+
+  function changeLearningMode(mode: LearningMode) {
+    setLearningMode(mode);
+    if (question) {
+      void getQuestion({ learningMode: mode, replace: true });
     }
   }
 
@@ -537,9 +575,9 @@ export function StudyWorkspace({
     / Math.max(1, masteryValues.length);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
+    { id: "path", icon: CalendarDays },
     { id: "materials", icon: Archive },
-    { id: "evidence", icon: NotebookTabs },
-    { id: "coach", icon: Bot },
+    { id: "progress", icon: ChartNoAxesColumnIncreasing },
   ];
 
   return (
@@ -579,7 +617,13 @@ export function StudyWorkspace({
         <div className="sidebar-learning">
           <span className="kicker">CURRENT LEARNING</span>
           <strong>{workspace.title}</strong>
-          <p>{workspace.goal}</p>
+          <p className="sidebar-current-topic">{progress?.topics ? Object.values(progress.topics)[0] : workspace.topics[0]}</p>
+          <span className="sidebar-goal">{workspace.goal}</span>
+          <div className="sidebar-capability-progress">
+            <span>{t("learningProgress")}</span>
+            <strong>{Math.round(averageMastery * 100)}%</strong>
+            <i><b style={{ width: `${Math.round(averageMastery * 100)}%` }} /></i>
+          </div>
           <button className="quiet-button switch-learning" onClick={returnHome}>
             <Sparkles size={15} /> {t("recentLearning")}
           </button>
@@ -590,41 +634,23 @@ export function StudyWorkspace({
         </div>
       </aside>
       <section className="workspace-stage">
-        <header className="workspace-header">
-          <div>
-            <span className="kicker">{t("workspaceEyebrow")}</span>
-            <h1>{workspace.title}</h1>
-            <p>{workspace.goal}</p>
-          </div>
-          <span className="workspace-date">
-            {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            }).format(new Date())}
-          </span>
-        </header>
-        <div className="workspace-progress">
-          <div className="progress-copy">
-            <strong>{Math.round(averageMastery * 100)}%</strong>
-            <span>{t("mastery")}</span>
-          </div>
-          <div
-            className="progress-track"
-            role="progressbar"
-            aria-label={t("mastery")}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(averageMastery * 100)}
-          >
-            <span style={{ width: `${Math.round(averageMastery * 100)}%` }} />
-          </div>
-          <dl className="progress-stats">
-            <div><dt>{t("attempts")}</dt><dd>{progress?.attempt_count ?? 0}</dd></div>
-            <div><dt>{t("diagnostic")}</dt><dd>{progress?.diagnostic_count ?? 0}</dd></div>
-          </dl>
-        </div>
-        <section className="workspace-content">
+        {section !== "today" && (
+          <header className="workspace-header">
+            <div>
+              <span className="kicker">{t("workspaceEyebrow")}</span>
+              <h1>{workspace.title}</h1>
+              <p>{workspace.goal}</p>
+            </div>
+            <span className="workspace-date">
+              {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              }).format(new Date())}
+            </span>
+          </header>
+        )}
+        <section className={`workspace-content workspace-content-${section}`}>
           {route && (
             <div className="workspace-route-notice" data-testid="workspace-route-notice" role="status">
               <Sparkles size={18} />
@@ -638,37 +664,45 @@ export function StudyWorkspace({
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span><button aria-label={t("routingDismiss")} onClick={() => setError("")}>×</button></div>}
           {section === "today" && (
-            <div className="today-grid">
-              <div className="daily-heading"><span className="kicker">TODAY&apos;S FOCUS</span><h2>{t("today")}</h2></div>
-               <PlanTimeline
-                 plan={plan}
-                 locale={locale}
-                 t={t}
-                 onUpdateSession={updatePlanSession}
-                 onStartSession={(session) => practiceTopic(session.topic_id)}
-                 busySessionId={busySessionId}
-                 topicLabels={progress?.topics}
-               />
-               <PracticeCard
-                 question={question}
-                 answer={answer}
-                 result={result}
-                 busy={practiceBusy}
-                 difficulty={practiceDifficulty}
-                 savedQuestions={savedQuestions}
-                 onAnswerChange={setAnswer}
-                 onGetQuestion={getQuestion}
-                 onSubmit={submitAnswer}
-                 onDifficultyChange={setPracticeDifficulty}
-                 onToggleSaved={toggleSavedQuestion}
-                 t={t}
-               />
-               <ProgressInsights
-                 progress={progress}
-                 t={t}
-                 onPracticeTopic={practiceTopic}
-                 topicLabels={progress?.topics}
-               />
+            <LearningSessionCanvas
+              locale={locale}
+              t={t}
+              workspace={workspace}
+              plan={plan}
+              progress={progress}
+              materials={materials}
+              question={question}
+              answer={answer}
+              result={result}
+              busy={practiceBusy}
+              learningMode={learningMode}
+              savedQuestions={savedQuestions}
+              onLearningModeChange={changeLearningMode}
+              onAnswerChange={setAnswer}
+              onStartTask={() => getQuestion({ learningMode })}
+              onSubmit={submitAnswer}
+              onNextTask={() => getQuestion({ learningMode, replace: true })}
+              onToggleSaved={toggleSavedQuestion}
+              onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
+              onAskCoach={askSessionCoach}
+            />
+          )}
+          {section === "path" && (
+            <div className="learning-path-view" data-testid="learning-path-view">
+              <div className="page-section-heading">
+                <span className="kicker">PATH / ADAPTIVE</span>
+                <h2>{t("path")}</h2>
+                <p>{locale === "zh" ? "围绕能力目标组织每次学习，而不是堆积重复日程。" : "Each session advances the capability goal without a wall of repeated dates."}</p>
+              </div>
+              <PlanTimeline
+                plan={plan}
+                locale={locale}
+                t={t}
+                onUpdateSession={updatePlanSession}
+                onStartSession={(session) => practiceTopic(session.topic_id)}
+                busySessionId={busySessionId}
+                topicLabels={progress?.topics}
+              />
             </div>
           )}
           {section === "materials" && (
@@ -683,15 +717,21 @@ export function StudyWorkspace({
               onDelete={deleteMaterial}
             />
           )}
-          {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
-          {section === "coach" && (
-            <AgentPanel
-              token={auth.access_token}
-              workspaceId={workspace.id}
-              t={t}
-              isAdmin={auth.user.role === "admin"}
-              onOpenSettings={() => router.push("/admin/integrations/chat")}
-            />
+          {section === "progress" && (
+            <div className="learning-progress-view" data-testid="learning-progress-view">
+              <div className="page-section-heading">
+                <span className="kicker">PROGRESS / CAPABILITY</span>
+                <h2>{t("progress")}</h2>
+                <p>{locale === "zh" ? "把能力变化、实践反馈和下一步安排放在一起。" : "Capability change, task feedback, and next actions in one place."}</p>
+              </div>
+              <ProgressInsights
+                progress={progress}
+                t={t}
+                onPracticeTopic={practiceTopic}
+                topicLabels={progress?.topics}
+              />
+              <EvidenceLedger evidence={evidence} locale={locale} t={t} />
+            </div>
           )}
         </section>
       </section>

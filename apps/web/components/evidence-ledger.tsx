@@ -5,6 +5,45 @@ import type { LearningEvidence, Locale } from "@/lib/types";
 import { evidenceTone } from "@/lib/view-models";
 
 
+const visibleDetailKeys = ["score", "feedback", "strengths", "gaps", "misconceptions"] as const;
+
+const detailCopy = {
+  zh: {
+    attempt: "实践反馈",
+    diagnostic: "初始诊断",
+    review: "复盘记录",
+    self_explanation: "自我解释",
+    material: "资料记录",
+    score: "评分",
+    feedback: "总体反馈",
+    strengths: "做得好的地方",
+    gaps: "下一步改进",
+    misconceptions: "需要纠正",
+  },
+  en: {
+    attempt: "Task feedback",
+    diagnostic: "Initial check",
+    review: "Review",
+    self_explanation: "Self-explanation",
+    material: "Source record",
+    score: "Score",
+    feedback: "Feedback",
+    strengths: "Strengths",
+    gaps: "Improve next",
+    misconceptions: "Correct next",
+  },
+} as const;
+
+function hasDisplayValue(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== null && value !== undefined && String(value).trim().length > 0;
+}
+
+function displayValue(value: unknown) {
+  return Array.isArray(value) ? value.join(" · ") : String(value);
+}
+
+
 export function EvidenceLedger({
   evidence,
   locale,
@@ -27,7 +66,11 @@ export function EvidenceLedger({
         <div className="empty-note">{t("noEvidence")}</div>
       ) : (
         <ol className="evidence-timeline">
-          {evidence.map((item) => (
+          {evidence.map((item) => {
+            const visibleDetails = visibleDetailKeys
+              .filter((key) => hasDisplayValue(item.details[key]))
+              .map((key) => [key, item.details[key]] as const);
+            return (
             <li key={item.id} data-tone={evidenceTone(item.kind)}>
               <div className="ledger-date">
                 {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
@@ -39,21 +82,22 @@ export function EvidenceLedger({
               </div>
               <div className="ledger-mark" aria-hidden="true" />
               <div>
-                <span className="evidence-kind">{item.kind}</span>
+                <span className="evidence-kind">{detailCopy[locale][item.kind]}</span>
                 <p>{item.summary}</p>
-                {Object.keys(item.details).length > 0 && (
+                {visibleDetails.length > 0 && (
                   <details className="evidence-details">
                     <summary>{t("viewDetails")}</summary>
                     <dl>
-                      {Object.entries(item.details).map(([key, value]) => (
-                        <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>
+                      {visibleDetails.map(([key, value]) => (
+                        <div key={key}><dt>{detailCopy[locale][key]}</dt><dd>{displayValue(value)}</dd></div>
                       ))}
                     </dl>
                   </details>
                 )}
               </div>
             </li>
-          ))}
+            );
+          })}
         </ol>
       )}
     </section>

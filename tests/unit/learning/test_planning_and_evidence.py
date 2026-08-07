@@ -72,6 +72,12 @@ def test_study_plan_and_session_ids_are_stable() -> None:
     assert [session.id for session in first.sessions] == [session.id for session in second.sessions]
     assert len(first.sessions) == 4
     assert {session.topic_id for session in first.sessions} == {"limits", "derivatives"}
+    assert [session.activity for session in first.sessions] == [
+        "learn",
+        "practice",
+        "apply",
+        "review",
+    ]
 
 
 def test_study_plan_rejects_naive_exam_time() -> None:

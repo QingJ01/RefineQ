@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from refineq.api.dependencies import CurrentUser
-from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
+from refineq.learning.models import LearningEvidence, LearningMode, StudyPlan, StudySession
 from refineq.learning.service import (
     AnswerRequest,
     AnswerResponse,
@@ -83,6 +83,7 @@ def question(
     user: CurrentUser,
     topic_id: str | None = None,
     difficulty: int | None = Query(default=None, ge=1, le=5),
+    mode: LearningMode = LearningMode.CONCEPT,
     replace: bool = False,
 ) -> QuestionResponse:
     try:
@@ -91,6 +92,7 @@ def question(
             project_id,
             topic_id=topic_id,
             difficulty_level=difficulty,
+            learning_mode=mode,
             replace_pending=replace,
         )
     except LearningServiceError as error:
@@ -104,6 +106,7 @@ def workspace_question(
     user: CurrentUser,
     topic_id: str | None = None,
     difficulty: int | None = Query(default=None, ge=1, le=5),
+    mode: LearningMode = LearningMode.CONCEPT,
     replace: bool = False,
 ) -> QuestionResponse:
     try:
@@ -112,6 +115,7 @@ def workspace_question(
             workspace_id,
             topic_id=topic_id,
             difficulty_level=difficulty,
+            learning_mode=mode,
             replace_pending=replace,
         )
     except LearningServiceError as error:

@@ -6,6 +6,7 @@ import { AuthPanel } from "../components/auth-panel";
 import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole } from "../components/admin-console";
 import { LearningHome } from "../components/learning-home";
+import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
 import { PracticeCard } from "../components/practice-card";
@@ -18,6 +19,68 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders one coherent capability session with contextual sources and coach", () => {
+    const html = renderToStaticMarkup(
+      <LearningSessionCanvas
+        locale="zh"
+        t={t}
+        workspace={{
+          id: "product-thinking",
+          title: "产品思维",
+          subject: "product",
+          goal: "学会验证真实用户需求",
+          topics: ["用户需求验证"],
+          keywords: ["需求验证"],
+          routing_summary: "能力学习",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-07T00:00:00Z",
+        }}
+        plan={null}
+        progress={null}
+        materials={[{
+          id: "interview",
+          filename: "用户访谈原文.md",
+          content_type: "text/markdown",
+          size: 1200,
+          status: "indexed",
+          chunk_count: 3,
+          content_sha256: "abc",
+          indexed_at: "2026-08-07T00:00:00Z",
+        }]}
+        question={null}
+        answer=""
+        result={null}
+        busy={false}
+        learningMode="case"
+        savedQuestions={[]}
+        onLearningModeChange={() => undefined}
+        onAnswerChange={() => undefined}
+        onStartTask={() => undefined}
+        onSubmit={() => undefined}
+        onNextTask={() => undefined}
+        onToggleSaved={() => undefined}
+        onOpenLibrary={() => undefined}
+        onAskCoach={async () => ({
+          session_id: "session-1",
+          message: "我们从真实行为证据开始。",
+          citations: [],
+          sources: [],
+        })}
+      />,
+    );
+
+    expect(html).toContain('data-testid="learning-session-canvas"');
+    expect(html).toContain('data-testid="learning-mode-case"');
+    expect(html).toContain("目标校准");
+    expect(html).toContain("案例拆解");
+    expect(html).toContain("实战任务");
+    expect(html).toContain("反馈复盘");
+    expect(html).toContain("用户访谈原文.md");
+    expect(html).toContain('data-testid="session-coach"');
+    expect(html).not.toContain("证据账本");
+  });
+
   it("renders a reusable accessible confirmation dialog", () => {
     const html = renderToStaticMarkup(
       <ConfirmDialog
@@ -187,6 +250,7 @@ describe("focused learning components", () => {
               topic_id: "limits",
               planned_at: "2026-08-06T08:00:00Z",
               minutes: 45,
+              activity: "learn",
             },
           ],
         }}
@@ -198,6 +262,7 @@ describe("focused learning components", () => {
     expect(html).toContain("limits");
     expect(html).toContain("01");
     expect(html).toContain("45 min");
+    expect(html).toContain("Learn");
     expect(html).toContain("content-card plan-card");
     expect(html).toContain('data-testid="complete-session-session-1"');
     expect(html).toContain('data-testid="defer-session-session-1"');
@@ -243,18 +308,25 @@ describe("focused learning components", () => {
             source_id: "attempt-1",
             summary: "Practice response for limits was correct.",
             observed_at: "2026-08-06T08:00:00Z",
-            details: { score: 88, feedback: "Strong explanation" },
+            details: {
+              topic_id: "topic_internal",
+              question_id: "question_internal",
+              score: 88,
+              feedback: "Strong explanation",
+            },
           },
         ]}
       />,
     );
 
-    expect(html).toContain("Learning evidence ledger");
+    expect(html).toContain("Learning record");
     expect(html).toContain("Practice response for limits was correct.");
     expect(html).toContain("data-tone=\"jade\"");
     expect(html).toContain('class="evidence-timeline"');
     expect(html).toContain("Strong explanation");
     expect(html).toContain("<details");
+    expect(html).not.toContain("topic_internal");
+    expect(html).not.toContain("question_internal");
   });
 
   it("turns mastery into an actionable progress recommendation", () => {
