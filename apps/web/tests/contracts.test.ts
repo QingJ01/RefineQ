@@ -618,6 +618,31 @@ describe("accessible application shell", () => {
     expect(workspaceSource).toContain('aria-live="polite"');
     expect(workspaceSource).toContain("caught.status === 401");
   });
+
+  it("ships branded route loading, error, and not-found recovery states", () => {
+    const loadingPath = fileURLToPath(new URL("../app/loading.tsx", import.meta.url));
+    const errorPath = fileURLToPath(new URL("../app/error.tsx", import.meta.url));
+    const notFoundPath = fileURLToPath(new URL("../app/not-found.tsx", import.meta.url));
+
+    expect(existsSync(loadingPath)).toBe(true);
+    expect(existsSync(errorPath)).toBe(true);
+    expect(existsSync(notFoundPath)).toBe(true);
+    expect(readFileSync(loadingPath, "utf8")).toContain('data-testid="route-loading"');
+    expect(readFileSync(errorPath, "utf8")).toContain("reset()");
+    expect(readFileSync(notFoundPath, "utf8")).toContain('href="/"');
+  });
+
+  it("provides application and social metadata", () => {
+    const layoutSource = readFileSync(
+      fileURLToPath(new URL("../app/layout.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(layoutSource).toContain("applicationName");
+    expect(layoutSource).toContain("openGraph");
+    expect(layoutSource).toContain("twitter");
+    expect(layoutSource).toContain("icons");
+  });
 });
 
 

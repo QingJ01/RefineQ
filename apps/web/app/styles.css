@@ -55,6 +55,91 @@ body {
   color: var(--text);
 }
 
+.route-state-stage {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at 78% 18%, rgba(255, 173, 115, 0.16), transparent 24%),
+    radial-gradient(circle at 16% 76%, rgba(42, 99, 232, 0.09), transparent 28%),
+    var(--canvas);
+}
+
+.route-state-card {
+  width: min(100%, 560px);
+  padding: clamp(30px, 6vw, 54px);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-card);
+}
+
+.route-state-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 44px;
+}
+
+.route-state-brand .brand-name {
+  font-size: 20px;
+}
+
+.route-state-card h1 {
+  max-width: 430px;
+  margin: 10px 0 14px;
+  font-size: clamp(30px, 6vw, 46px);
+  line-height: 1.08;
+}
+
+.route-state-card > p {
+  max-width: 430px;
+  margin-bottom: 0;
+  color: var(--muted-strong);
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.route-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+.route-state-skeleton {
+  display: grid;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.route-state-skeleton i {
+  height: 11px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--surface-soft) 20%, #e7ebf3 50%, var(--surface-soft) 80%);
+  background-size: 220% 100%;
+  animation: route-state-shimmer 1.4s ease-in-out infinite;
+}
+
+.route-state-skeleton i:nth-child(2) {
+  width: 78%;
+}
+
+.route-state-skeleton i:nth-child(3) {
+  width: 54%;
+}
+
+@keyframes route-state-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
 body {
   font-family: "Manrope Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
