@@ -1,9 +1,19 @@
 "use client";
 
-import { Archive, Bot, BookOpen, Languages, LogOut, NotebookTabs, Sparkles } from "lucide-react";
+import {
+  Archive,
+  Bot,
+  BookOpen,
+  Languages,
+  LogOut,
+  NotebookTabs,
+  Settings2,
+  Sparkles,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { AgentPanel } from "@/components/agent-panel";
+import { AdminConsole } from "@/components/admin-console";
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
 import { EvidenceLedger } from "@/components/evidence-ledger";
@@ -33,7 +43,7 @@ import type {
 } from "@/lib/types";
 
 
-type Section = "today" | "materials" | "evidence" | "coach";
+type Section = "today" | "materials" | "evidence" | "coach" | "admin";
 
 export function StudyWorkspace() {
   const [locale, setLocale] = useState<Locale>("zh");
@@ -234,6 +244,15 @@ export function StudyWorkspace() {
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
   if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
+  if (auth.user.role === "admin" && section === "admin") {
+    return (
+      <AdminConsole
+        token={auth.access_token}
+        locale={locale}
+        onClose={() => setSection("today")}
+      />
+    );
+  }
   if (!workspace) {
     return (
       <>
@@ -244,6 +263,8 @@ export function StudyWorkspace() {
           workspaces={workspaces}
           onResolve={resolveIntent}
           onOpen={openWorkspace}
+          isAdmin={auth.user.role === "admin"}
+          onAdmin={() => setSection("admin")}
         />
       </>
     );
@@ -257,6 +278,7 @@ export function StudyWorkspace() {
     { id: "materials", icon: Archive },
     { id: "evidence", icon: NotebookTabs },
     { id: "coach", icon: Bot },
+    ...(auth.user.role === "admin" ? [{ id: "admin" as const, icon: Settings2 }] : []),
   ];
 
   return (
@@ -273,10 +295,10 @@ export function StudyWorkspace() {
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
               onClick={() => setSection(id)}
-              aria-label={t(id)}
+              aria-label={id === "admin" ? "管理" : t(id)}
             >
               <Icon size={19} />
-              <span>{t(id)}</span>
+              <span>{id === "admin" ? "管理" : t(id)}</span>
             </button>
           ))}
         </nav>

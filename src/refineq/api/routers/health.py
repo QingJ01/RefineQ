@@ -29,7 +29,7 @@ def _prove_writable(data_root: Path) -> None:
 
 @router.get("/ready")
 def ready(request: Request) -> dict[str, object]:
-    """Report readiness only after a real write succeeds in the data root."""
+    """Report readiness only after storage and the primary database respond."""
 
     settings: Settings = request.app.state.settings
     try:
@@ -40,4 +40,17 @@ def ready(request: Request) -> dict[str, object]:
             detail="Storage is not writable",
         ) from error
 
-    return {"status": "ready", "checks": {"storage": "ok"}}
+    try:
+        database_ready = request.app.state.database.ping()
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not ready",
+        ) from error
+    if not database_ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not ready",
+        )
+
+    return {"status": "ready", "checks": {"storage": "ok", "database": "ok"}}

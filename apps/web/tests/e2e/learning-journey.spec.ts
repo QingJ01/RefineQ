@@ -93,7 +93,7 @@ test("learner completes and restores a projectless study journey", async ({ page
 
   await test.step("open the grounded learning Agent", async () => {
     await page.getByTestId("nav-coach").click();
-    await expect(page.getByTestId("model-settings")).toBeVisible();
+    await expect(page.getByTestId("model-status")).toBeVisible();
     await page.locator(".chat-composer textarea").fill("Explain my weakest point");
     await page.locator(".chat-composer button").click();
     await expect(page.locator(".agent-card .error-banner")).toContainText(

@@ -34,3 +34,17 @@ def current_user(
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+
+
+def require_admin(user: CurrentUser) -> User:
+    """Allow access only when the user's current database role is administrator."""
+
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required",
+        )
+    return user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]

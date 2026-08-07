@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { EvidenceLedger } from "../components/evidence-ledger";
 import { AuthPanel } from "../components/auth-panel";
 import { AgentPanel } from "../components/agent-panel";
+import { AdminConsole } from "../components/admin-console";
 import { LearningHome } from "../components/learning-home";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
@@ -14,6 +15,20 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders the four administrator-managed platform capabilities", () => {
+    const html = renderToStaticMarkup(
+      <AdminConsole token="admin-token" locale="zh" onClose={() => undefined} />,
+    );
+
+    expect(html).toContain('class="admin-console"');
+    expect(html).toContain("平台控制台");
+    expect(html).toContain("模型推理");
+    expect(html).toContain("语义检索");
+    expect(html).toContain("扫描识别");
+    expect(html).toContain("文件存储");
+    expect(html.match(/data-testid="integration-card-/g)).toHaveLength(4);
+  });
+
   it("presents authentication as a calm RefineQ welcome card", () => {
     const html = renderToStaticMarkup(
       <AuthPanel t={translator("zh")} onAuthenticated={() => undefined} />,

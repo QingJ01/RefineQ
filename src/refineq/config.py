@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, field_validator
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     )
 
     data_root: Path = Field(default_factory=lambda: Path("data").resolve())
+    database_url: SecretStr | None = None
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     forwarded_allow_ips: str = "127.0.0.1"
@@ -70,6 +72,27 @@ class Settings(BaseSettings):
         except (UnicodeEncodeError, ValueError) as exc:
             raise ValueError("model encryption key must be a valid Fernet key") from exc
         return value
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def validate_database_url(cls, value: SecretStr | None) -> SecretStr | None:
+        """Limit persistence drivers to the two explicitly supported SQL dialects."""
+
+        if value is None or not value.get_secret_value().strip():
+            return None
+        scheme = urlsplit(value.get_secret_value()).scheme.lower()
+        if scheme not in {"postgresql+psycopg", "sqlite+pysqlite"}:
+            raise ValueError("database URL must use PostgreSQL or SQLite")
+        return value
+
+    @property
+    def resolved_database_url(self) -> str:
+        """Return the configured production URL or an isolated development database."""
+
+        if self.database_url is not None and self.database_url.get_secret_value().strip():
+            return self.database_url.get_secret_value().strip()
+        database_path = self.data_root / "system" / "refineq.sqlite3"
+        return f"sqlite+pysqlite:///{database_path.as_posix()}"
 
     @property
     def allowed_model_hosts(self) -> set[str]:

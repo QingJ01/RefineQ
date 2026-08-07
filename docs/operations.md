@@ -1,7 +1,28 @@
 # RefineQ operations
 
-All commands operate on the directory selected by `REFINEQ_DATA_ROOT`. Stop writes before a
-production backup or restore so the application and operator have a clear maintenance boundary.
+Production state spans PostgreSQL and the object store selected in the administrator console. Stop
+writes before backup or restore so both snapshots represent the same point in time.
+
+## Administrator account
+
+Local development:
+
+```powershell
+$env:REFINEQ_ADMIN_PASSWORD = "replace-with-a-strong-password"
+refineq-admin --email qingj1314@163.com --display-name QingJ01
+Remove-Item Env:REFINEQ_ADMIN_PASSWORD
+```
+
+Compose deployment:
+
+```powershell
+docker compose --env-file .env -f infra/compose.yml exec `
+  -e REFINEQ_ADMIN_PASSWORD="replace-with-a-strong-password" `
+  api refineq-admin --email qingj1314@163.com --display-name QingJ01
+```
+
+The command is idempotent. Re-running it promotes an existing account to `admin` and resets its
+password; plaintext credentials are never saved by the command.
 
 ## Demo data
 
@@ -12,7 +33,20 @@ python scripts/seed_demo.py --data-root .\data-demo
 The command prints the local demo credentials and learning-space identifier. Re-running it leaves existing
 attempts, mastery, and plans unchanged.
 
-## Backup
+## PostgreSQL production backup
+
+Create a database dump while the database container is healthy:
+
+```powershell
+docker compose --env-file .env -f infra/compose.yml exec -T database `
+  pg_dump -U refineq -d refineq -Fc > .\backups\refineq-postgres.dump
+```
+
+Also back up the `refineq-data` volume when local object storage is enabled. When S3-compatible
+storage is enabled, use that provider's versioned backup or replication facility. Preserve the
+Fernet key separately; without it, saved API and object-storage credentials cannot be decrypted.
+
+## Legacy local backup
 
 ```powershell
 python scripts/backup.py .\backups\refineq.zip --data-root .\data
@@ -30,7 +64,7 @@ separate secret store and back up that secret independently.
 Keep the encryption key stable during restore and upgrade. Replacing it does not corrupt learning
 data, but saved model credentials can no longer be decrypted and must be entered again.
 
-## Restore
+## Legacy local restore
 
 ```powershell
 python scripts/restore.py .\backups\refineq.zip .\restored-data
@@ -62,3 +96,25 @@ old record is removed only after the replacement is durable. Re-running the comm
 
 Choose a new archive path outside the data root. If a workspace with the same ID but incompatible
 content already exists, migration stops without creating a backup or modifying data.
+
+## Import the pre-PostgreSQL layout
+
+Run a report first, then repeat without `--dry-run`:
+
+```powershell
+refineq-migrate-postgres --data-root .\data --dry-run
+refineq-migrate-postgres --data-root .\data
+```
+
+The importer copies `auth.json`, owner-scoped JSON records, and each owner's legacy
+`knowledge/search.sqlite3` into the configured SQL database. It is idempotent and never deletes or
+rewrites source files. Existing SQL rows win, so a rerun cannot replace newer production state.
+
+Personal model credentials are not silently promoted to a platform-wide secret. If one legacy
+account's configuration should become the shared chat integration, select it explicitly in both
+the report and import runs:
+
+```powershell
+refineq-migrate-postgres --data-root .\data --platform-owner-email owner@example.com --dry-run
+refineq-migrate-postgres --data-root .\data --platform-owner-email owner@example.com
+```

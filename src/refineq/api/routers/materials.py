@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
+from dataclasses import replace
 from functools import partial
 from hashlib import sha256
-from pathlib import Path
 from typing import Annotated
 
 from anyio import to_thread
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 
 from refineq.api.dependencies import CurrentUser
+from refineq.integrations.ocr import OcrError
 from refineq.knowledge.execution import SubprocessTimeoutError, extract_text_isolated
 from refineq.knowledge.extract import (
     ExtractionLimits,
@@ -62,24 +61,6 @@ def _material_error(error: MaterialPolicyError) -> HTTPException:
         status_code=status_code,
         detail={"code": error.code, "message": str(error)},
     )
-
-
-def _write_material(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.stem}-",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    temporary_path = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as temporary_file:
-            temporary_file.write(payload)
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-        os.replace(temporary_path, path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
 
 
 def _extraction_limits(request: Request) -> ExtractionLimits:
@@ -182,25 +163,30 @@ async def upload_materials(
                     MaterialExtractionLimitError("Material extraction exceeded its time budget")
                 )
             except MaterialExtractionError as error:
-                _raise_extraction_error(error)
+                use_ocr = (
+                    descriptor.filename.lower().endswith(".pdf")
+                    and request.app.state.ocr.available()
+                )
+                if use_ocr:
+                    try:
+                        text = await to_thread.run_sync(
+                            request.app.state.ocr.extract,
+                            descriptor.filename,
+                            descriptor.content_type,
+                            payload,
+                            abandon_on_cancel=False,
+                        )
+                    except OcrError as ocr_error:
+                        _raise_extraction_error(MaterialExtractionError(str(ocr_error)))
+                else:
+                    _raise_extraction_error(error)
             extracted.append(text)
 
         documents: list[MaterialDocument] = []
-        material_files: list[tuple[Path, bytes]] = []
+        material_payloads: list[bytes] = []
         for (_, payload), descriptor, text in zip(loaded, descriptors, extracted, strict=True):
             material_id = f"material_{sha256(project_id.encode() + payload).hexdigest()[:20]}"
-            extension = Path(descriptor.filename).suffix.lower()
-            material_path = (
-                request.app.state.settings.data_root
-                / "users"
-                / user.id
-                / "knowledge"
-                / "projects"
-                / project_id
-                / "materials"
-                / f"{material_id}{extension}"
-            )
-            material_files.append((material_path, payload))
+            material_payloads.append(payload)
             documents.append(
                 MaterialDocument(
                     project_id=project_id,
@@ -214,20 +200,27 @@ async def upload_materials(
 
         async with request.app.state.material_quota_locks.get(user.id):
             _enforce_owner_quota(request, user.id, descriptors)
-            created_paths: list[Path] = []
+            stored_objects = []
             try:
-                for material_path, payload in material_files:
-                    if material_path.exists():
-                        continue
-                    _write_material(material_path, payload)
-                    created_paths.append(material_path)
+                indexed_documents: list[MaterialDocument] = []
+                for document, payload in zip(documents, material_payloads, strict=True):
+                    stored = request.app.state.object_storage.put(
+                        owner_id=user.id,
+                        workspace_id=project_id,
+                        material_id=document.material_id,
+                        filename=document.filename,
+                        payload=payload,
+                    )
+                    stored_objects.append(stored)
+                    indexed_documents.append(replace(document, storage_key=stored.key))
                 return request.app.state.knowledge.add_documents(
                     owner_id=user.id,
-                    documents=documents,
+                    documents=indexed_documents,
                 )
             except Exception:
-                for created_path in created_paths:
-                    created_path.unlink(missing_ok=True)
+                for stored in stored_objects:
+                    if stored.created:
+                        request.app.state.object_storage.delete(stored.key)
                 raise
     finally:
         for upload in files:

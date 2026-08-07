@@ -4,6 +4,7 @@ export interface User {
   id: string;
   email: string;
   display_name: string;
+  role: "learner" | "admin";
   created_at: string;
 }
 
@@ -140,4 +141,36 @@ export interface PublicModelSettings {
   temperature: number;
   configured: boolean;
   api_key_hint: string;
+}
+
+export type IntegrationKind = "chat" | "embedding" | "ocr" | "object_storage";
+
+export interface PublicIntegrationSettings {
+  kind: IntegrationKind;
+  enabled: boolean;
+  configured: boolean;
+  config: Record<string, string | number | boolean>;
+  secret_hints: Record<string, string>;
+  last_test_status: "ok" | "failed" | null;
+  last_test_message: string | null;
+  last_tested_at: string | null;
+}
+
+export interface IntegrationUpdateInput {
+  enabled: boolean;
+  config: Record<string, string | number | boolean>;
+  secrets: Record<string, string>;
+}
+
+export interface IntegrationTestResult {
+  kind: IntegrationKind;
+  status: "ok" | "failed";
+  message: string;
+}
+
+export interface AdminOverview {
+  database: "postgresql" | "sqlite";
+  pgvector: boolean;
+  users: number;
+  integrations_configured: number;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, ExternalLink, RotateCcw, Send, Settings2 } from "lucide-react";
+import { Bot, ExternalLink, RotateCcw, Send } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
@@ -40,21 +40,15 @@ export function AgentPanel({
   const [message, setMessage] = useState("");
   const [sessionId, setSessionId] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
-  const [model, setModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
 
   useEffect(() => {
     let active = true;
     void api.getModelSettings(token).then((settings) => {
       if (!active) return;
-      setBaseUrl(settings.base_url);
-      setModel(settings.model);
-      setShowSettings(!settings.configured);
+      setModelConfigured(settings.configured);
     }).catch((caught: unknown) => {
       if (active) setError(errorMessage(caught, t));
     });
@@ -71,7 +65,6 @@ export function AgentPanel({
     setSessionId(turn.sessionId);
     setBusy(true);
     setError("");
-    setNotice("");
     try {
       const reply = await api.chatWorkspace(
         token,
@@ -93,7 +86,7 @@ export function AgentPanel({
       setMessage(turn.message);
       setError(errorMessage(caught, t));
       if (caught instanceof ApiError && caught.code === "model_not_configured") {
-        setShowSettings(true);
+        setModelConfigured(false);
       }
     } finally {
       setBusy(false);
@@ -105,28 +98,6 @@ export function AgentPanel({
     await sendMessage(message.trim());
   }
 
-  async function saveSettings(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      await api.updateModelSettings(token, {
-        base_url: baseUrl,
-        model,
-        api_key: apiKey,
-        temperature: 0.2,
-      });
-      setApiKey("");
-      setShowSettings(false);
-      setNotice(t("settingsSaved"));
-    } catch (caught) {
-      setError(errorMessage(caught, t));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <section className="content-card agent-card">
       <div className="section-heading">
@@ -134,14 +105,12 @@ export function AgentPanel({
           <span className="kicker">GROUNDED / LEARNING MEMORY</span>
           <h2>{t("askCoach")}</h2>
         </div>
-        <button
-          data-testid="model-settings"
-          className="icon-button"
-          onClick={() => setShowSettings((value) => !value)}
-          aria-label={t("modelSettings")}
+        <span
+          data-testid="model-status"
+          className={modelConfigured ? "agent-model-status ready" : "agent-model-status"}
         >
-          <Settings2 size={20} />
-        </button>
+          {modelConfigured ? "AI READY" : "ADMIN SETUP REQUIRED"}
+        </span>
       </div>
       {error && (
         <div className="error-banner" role="alert">
@@ -157,29 +126,6 @@ export function AgentPanel({
             </button>
           )}
         </div>
-      )}
-      {notice && <p role="status">{notice}</p>}
-      {showSettings && (
-        <form className="settings-strip" onSubmit={saveSettings}>
-          <label>
-            {t("baseUrl")}
-            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required />
-          </label>
-          <label>
-            {t("model")}
-            <input value={model} onChange={(event) => setModel(event.target.value)} required />
-          </label>
-          <label>
-            {t("apiKey")}
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              required
-            />
-          </label>
-          <button className="secondary-action" disabled={busy}>{t("save")}</button>
-        </form>
       )}
       <div className="chat-log">
         {messages.length === 0 && (

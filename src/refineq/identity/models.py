@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -13,6 +14,7 @@ class User(BaseModel):
     id: str = Field(min_length=1)
     email: str = Field(min_length=3, max_length=254)
     display_name: str = Field(min_length=1, max_length=100)
+    role: Literal["learner", "admin"] = "learner"
     created_at: datetime
 
     @field_validator("created_at", mode="after")

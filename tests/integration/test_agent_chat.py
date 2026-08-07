@@ -10,8 +10,10 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from refineq.agent.service import ModelReply
+from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.operations.admin import ensure_admin
 
 
 class FakeModelTransport:
@@ -64,6 +66,25 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _configure_model(
+    app,
+    *,
+    base_url: str = "https://api.openai.com/v1",
+    model: str = "exam-tutor",
+    api_key: str = "secret",
+) -> None:
+    admin = ensure_admin(
+        app.state.identity,
+        email="platform-admin@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Platform Admin",
+    ).user
+    app.state.model_settings.save(
+        admin.id,
+        ModelSettings(base_url=base_url, model=model, api_key=api_key),
+    )
+
+
 def test_agent_uses_grounded_context_citations_and_persistent_session(
     tmp_path: Path,
 ) -> None:
@@ -114,17 +135,14 @@ def test_agent_uses_grounded_context_citations_and_persistent_session(
             filename="notes.txt",
             text="A derivative gives the local rate of change of a function.",
         )
-        settings_response = client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "sk-secret-value-1234",
-            },
+        _configure_model(
+            app,
+            api_key="sk-secret-value-1234",
         )
-        assert settings_response.status_code == 200
-        assert "sk-secret-value-1234" not in settings_response.text
+        assert (
+            "sk-secret-value-1234"
+            not in app.state.model_settings.public(user["user_id"]).model_dump_json()
+        )
 
         first = client.post(
             f"/projects/{project_id}/agent/chat",
@@ -199,10 +217,16 @@ def test_model_settings_reject_endpoint_outside_server_allowlist(tmp_path: Path)
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        user = _register(client, "endpoint-policy@example.com")
+        _register(client, "endpoint-policy@example.com")
+        admin = ensure_admin(
+            app.state.identity,
+            email="platform-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
         response = client.put(
             "/settings/model",
-            headers=_headers(user["token"]),
+            headers=_headers(app.state.identity.issue_token(admin)),
             json={
                 "base_url": "https://models.example.com/v1",
                 "model": "exam-tutor",
@@ -236,15 +260,7 @@ def test_agent_chat_works_through_an_implicit_workspace(tmp_path: Path) -> None:
             filename="notes.txt",
             text="A derivative gives the local rate of change of a function.",
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "sk-secret-value-1234",
-            },
-        )
+        _configure_model(app, api_key="sk-secret-value-1234")
 
         response = client.post(
             f"/workspaces/{workspace_id}/agent/chat",
@@ -295,15 +311,7 @@ def test_agent_bounds_history_and_removes_unavailable_citation_markers(
             filename="notes.txt",
             text="Limits describe function behavior near an input.",
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "secret",
-            },
-        )
+        _configure_model(app)
         first = client.post(
             f"/projects/{project_id}/agent/chat",
             headers=headers,
@@ -361,15 +369,7 @@ def test_agent_session_count_quota_prevents_unbounded_session_files(tmp_path: Pa
                 "topics": [{"id": "limits", "name": "Limits"}],
             },
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "secret",
-            },
-        )
+        _configure_model(app)
 
         first = client.post(
             f"/projects/{project_id}/agent/chat",
@@ -408,15 +408,7 @@ def test_failed_first_agent_call_does_not_persist_an_empty_session(tmp_path: Pat
                 "topics": [{"id": "limits", "name": "Limits"}],
             },
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "secret",
-            },
-        )
+        _configure_model(app)
         response = client.post(
             f"/projects/{project_id}/agent/chat",
             headers=headers,
@@ -453,15 +445,7 @@ def test_concurrent_first_agent_calls_cannot_cross_session_quota(tmp_path: Path)
                 "topics": [{"id": "limits", "name": "Limits"}],
             },
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "secret",
-            },
-        )
+        _configure_model(app)
 
         def chat(index: int) -> int:
             return client.post(
@@ -503,15 +487,7 @@ def test_concurrent_retry_of_the_same_agent_turn_is_idempotent(tmp_path: Path) -
                 "topics": [{"id": "limits", "name": "Limits"}],
             },
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "exam-tutor",
-                "api_key": "secret",
-            },
-        )
+        _configure_model(app)
         payload = {
             "session_id": "stable-session",
             "turn_id": "stable-turn",

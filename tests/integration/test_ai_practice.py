@@ -6,8 +6,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.operations.admin import ensure_admin
 
 
 class FakeLearningModel:
@@ -72,15 +74,20 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
             filename="limits.txt",
             text="函数极限是自变量趋近某点时函数值趋近的目标。",
         )
-        client.put(
-            "/settings/model",
-            headers=headers,
-            json={
-                "base_url": "https://api.openai.com/v1",
-                "model": "study-model",
-                "api_key": "secret-key-1234",
-                "temperature": 0.2,
-            },
+        admin = ensure_admin(
+            app.state.identity,
+            email="platform-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+                temperature=0.2,
+            ),
         )
 
         question_response = client.get(

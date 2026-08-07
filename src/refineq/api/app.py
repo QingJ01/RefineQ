@@ -8,7 +8,6 @@ from starlette.exceptions import HTTPException
 
 from refineq import __version__
 from refineq.agent.service import AgentService, ModelTransport, OpenAICompatibleTransport
-from refineq.agent.settings import ModelSettingsRepository
 from refineq.agent.structured import (
     OpenAICompatibleStructuredTransport,
     StructuredModelTransport,
@@ -25,6 +24,7 @@ from refineq.api.limits import (
     UploadAdmissionController,
 )
 from refineq.api.locks import KeyedAsyncLockPool
+from refineq.api.routers.admin import router as admin_router
 from refineq.api.routers.agent import router as agent_router
 from refineq.api.routers.agent import workspace_router as workspace_agent_router
 from refineq.api.routers.auth import router as auth_router
@@ -37,14 +37,22 @@ from refineq.api.routers.projects import router as projects_router
 from refineq.api.routers.settings import router as settings_router
 from refineq.api.routers.workspaces import router as workspaces_router
 from refineq.config import Settings
+from refineq.database.engine import Database
 from refineq.identity.service import IdentityService
+from refineq.integrations.model_settings import PlatformModelSettingsRepository
+from refineq.integrations.object_storage import ConfiguredObjectStorage
+from refineq.integrations.ocr import OcrService
+from refineq.integrations.repository import IntegrationRepository
+from refineq.integrations.service import IntegrationTester
+from refineq.knowledge.embeddings import PlatformEmbeddingService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.service import LearningService
-from refineq.storage.json_store import AtomicJsonStore, InvalidIdentifierError
+from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
+from refineq.storage.sql_store import SqlRecordStore
 from refineq.storage.workspaces import WorkspaceRepository
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.service import WorkspaceService
@@ -55,11 +63,14 @@ def create_app(
     *,
     model_transport: ModelTransport | None = None,
     learning_model_transport: StructuredModelTransport | None = None,
+    database: Database | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
 
     app = FastAPI(title="RefineQ", version=__version__)
     app.state.settings = settings or Settings()
+    app.state.database = database or Database(app.state.settings.resolved_database_url)
+    app.state.database.initialize()
     app.state.rate_limiter = SlidingWindowRateLimiter()
     app.state.material_quota_locks = KeyedAsyncLockPool()
     app.state.upload_admission = UploadAdmissionController(
@@ -80,15 +91,33 @@ def create_app(
         body_total_timeout_seconds=app.state.settings.material_upload_body_total_timeout_seconds,
         admission=app.state.upload_admission,
     )
-    app.state.store = AtomicJsonStore(app.state.settings.data_root)
+    app.state.store = SqlRecordStore(app.state.database)
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
-    app.state.knowledge = KnowledgeIndex(app.state.settings.data_root)
-    app.state.model_settings = ModelSettingsRepository(
-        app.state.settings.data_root,
-        allowed_hosts=app.state.settings.allowed_model_hosts,
+    app.state.integrations = IntegrationRepository(
+        app.state.database,
         encryption_key=app.state.settings.model_encryption_key,
+        key_path=app.state.settings.data_root / "system" / "integration-encryption.key",
+        allowed_model_hosts=app.state.settings.allowed_model_hosts,
+    )
+    app.state.integration_tester = IntegrationTester(app.state.integrations)
+    app.state.embedding_service = PlatformEmbeddingService(app.state.integrations)
+    app.state.object_storage = ConfiguredObjectStorage(
+        app.state.integrations,
+        data_root=app.state.settings.data_root,
+    )
+    app.state.ocr = OcrService(
+        app.state.integrations,
+        max_chars=app.state.settings.material_max_extracted_chars,
+    )
+    app.state.knowledge = KnowledgeIndex(
+        app.state.database,
+        embedder=app.state.embedding_service,
+    )
+    app.state.model_settings = PlatformModelSettingsRepository(
+        app.state.integrations,
+        allowed_hosts=app.state.settings.allowed_model_hosts,
     )
     app.state.learning_intelligence = LearningIntelligenceService(
         app.state.knowledge,
@@ -135,7 +164,7 @@ def create_app(
         transport=model_transport or OpenAICompatibleTransport(),
         max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
-    app.state.identity = IdentityService(app.state.settings.data_root)
+    app.state.identity = IdentityService(app.state.database)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
     app.add_exception_handler(InvalidIdentifierError, invalid_identifier_exception_handler)
@@ -150,6 +179,8 @@ def create_app(
     app.include_router(workspace_agent_router)
     app.include_router(settings_router)
     app.include_router(workspaces_router)
+    app.include_router(admin_router)
+    app.router.add_event_handler("shutdown", app.state.database.close)
     return app
 
 

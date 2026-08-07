@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Clock3, History, MessageSquarePlus, Sparkles } from "lucide-react";
+import { ArrowRight, Clock3, History, MessageSquarePlus, Settings2, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
@@ -14,12 +14,16 @@ export function LearningHome({
   workspaces,
   onResolve,
   onOpen,
+  isAdmin = false,
+  onAdmin,
 }: {
   t: Translator;
   busy: boolean;
   workspaces: LearningWorkspace[];
   onResolve: (intent: string) => void | Promise<void>;
   onOpen: (workspace: LearningWorkspace) => void | Promise<void>;
+  isAdmin?: boolean;
+  onAdmin?: () => void;
 }) {
   const [intent, setIntent] = useState("");
 
@@ -38,6 +42,11 @@ export function LearningHome({
         </div>
         <div className="home-nav-item active"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></div>
         <div className="home-nav-item"><History size={19} /><span>{t("recentLearning")}</span></div>
+        {isAdmin && (
+          <button className="home-nav-item home-admin-link" onClick={onAdmin}>
+            <Settings2 size={19} /><span>平台控制台</span>
+          </button>
+        )}
         <p className="sidebar-footnote">Personal learning, remembered.</p>
       </aside>
       <section className="learning-home">

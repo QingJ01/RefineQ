@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from refineq.database.engine import Database
 from refineq.identity.service import AccountExistsError, IdentityService
 from refineq.knowledge.index import KnowledgeIndex, MaterialNotFoundError
 from refineq.learning.models import KnowledgeType
@@ -20,12 +21,9 @@ from refineq.learning.service import (
     SeedRequest,
     TopicSeed,
 )
-from refineq.storage.json_store import (
-    AtomicJsonStore,
-    RecordAlreadyExistsError,
-    RecordNotFoundError,
-)
+from refineq.storage.json_store import RecordAlreadyExistsError, RecordNotFoundError
 from refineq.storage.learning import LearningRepository
+from refineq.storage.sql_store import SqlRecordStore
 from refineq.storage.workspaces import WorkspaceRepository
 
 DEMO_EMAIL = "learner@refineq.local"
@@ -67,7 +65,10 @@ def seed_demo(data_root: Path) -> DemoResult:
     """Create one presentation-ready learner without resetting an existing run."""
 
     root = data_root.expanduser().resolve()
-    identity = IdentityService(root)
+    database_path = root / "system" / "refineq.sqlite3"
+    database = Database(f"sqlite+pysqlite:///{database_path.as_posix()}")
+    database.initialize()
+    identity = IdentityService(database)
     try:
         user = identity.register(
             email=DEMO_EMAIL,
@@ -77,7 +78,7 @@ def seed_demo(data_root: Path) -> DemoResult:
     except AccountExistsError:
         user = identity.authenticate(email=DEMO_EMAIL, password=DEMO_PASSWORD)
 
-    store = AtomicJsonStore(root)
+    store = SqlRecordStore(database)
     workspaces = WorkspaceRepository(store)
     learning = LearningRepository(store)
     service = LearningService(workspaces, learning)
@@ -150,7 +151,7 @@ def seed_demo(data_root: Path) -> DemoResult:
             ),
         )
 
-    knowledge = KnowledgeIndex(root)
+    knowledge = KnowledgeIndex(database)
     try:
         knowledge.get_material(
             owner_id=user.id,
@@ -182,9 +183,11 @@ def seed_demo(data_root: Path) -> DemoResult:
             text=material_text,
         )
 
-    return DemoResult(
+    result = DemoResult(
         owner_id=user.id,
         workspace_id=DEMO_WORKSPACE_ID,
         email=DEMO_EMAIL,
         password=DEMO_PASSWORD,
     )
+    database.close()
+    return result

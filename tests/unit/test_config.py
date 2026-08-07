@@ -52,3 +52,28 @@ def test_upload_concurrency_limits_are_configurable_and_positive(monkeypatch) ->
     monkeypatch.setenv("REFINEQ_MATERIAL_UPLOAD_MAX_CONCURRENT_PER_USER", "0")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_database_url_defaults_to_owner_local_sqlite_for_development(tmp_path: Path) -> None:
+    settings = Settings(data_root=tmp_path / "runtime", _env_file=None)
+
+    assert settings.resolved_database_url == (
+        f"sqlite+pysqlite:///{(tmp_path / 'runtime' / 'system' / 'refineq.sqlite3').as_posix()}"
+    )
+
+
+def test_database_url_accepts_postgresql_psycopg_and_rejects_unknown_drivers(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "REFINEQ_DATABASE_URL",
+        "postgresql+psycopg://refineq:secret@database:5432/refineq",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.resolved_database_url.startswith("postgresql+psycopg://")
+
+    monkeypatch.setenv("REFINEQ_DATABASE_URL", "mysql://root@database/refineq")
+    with pytest.raises(ValidationError, match="PostgreSQL or SQLite"):
+        Settings(_env_file=None)

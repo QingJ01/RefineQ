@@ -17,6 +17,46 @@ import type { StudyPlan } from "../lib/types";
 
 
 describe("authentication and API errors", () => {
+  it("sends platform integration changes only to administrator endpoints", async () => {
+    let requestedPath = "";
+    let requestedInit: RequestInit | undefined;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedInit = init;
+      return new Response(JSON.stringify({
+        kind: "chat",
+        enabled: true,
+        configured: true,
+        config: {
+          base_url: "https://api.openai.com/v1",
+          model: "gpt-4.1-mini",
+          temperature: 0.2,
+        },
+        secret_hints: { api_key: "••••1234" },
+        last_test_status: null,
+        last_test_message: null,
+        last_tested_at: null,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.updateIntegration("admin-token", "chat", {
+      enabled: true,
+      config: {
+        base_url: "https://api.openai.com/v1",
+        model: "gpt-4.1-mini",
+        temperature: 0.2,
+      },
+      secrets: { api_key: "sk-secret" },
+    });
+
+    expect(requestedPath).toBe("/api/admin/integrations/chat");
+    expect(requestedInit?.method).toBe("PUT");
+    expect(requestedInit?.headers).toMatchObject({ Authorization: "Bearer admin-token" });
+    expect(JSON.parse(String(requestedInit?.body))).toMatchObject({
+      secrets: { api_key: "sk-secret" },
+    });
+  });
+
   it("adds a bearer token only when authenticated", () => {
     expect(authHeaders("token-1")).toEqual({ Authorization: "Bearer token-1" });
     expect(authHeaders(null)).toEqual({});

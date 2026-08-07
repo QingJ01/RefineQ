@@ -1,17 +1,39 @@
 name: refineq
 
 services:
+  database:
+    image: pgvector/pgvector:0.8.2-pg17
+    environment:
+      - "POSTGRES_DB=${REFINEQ_POSTGRES_DB:-refineq}"
+      - "POSTGRES_USER=${REFINEQ_POSTGRES_USER:-refineq}"
+      - "POSTGRES_PASSWORD=${REFINEQ_POSTGRES_PASSWORD:-refineq-local-change-me}"
+    volumes:
+      - refineq-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${REFINEQ_POSTGRES_USER:-refineq} -d ${REFINEQ_POSTGRES_DB:-refineq}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
   api:
     build:
       context: ..
       dockerfile: infra/Dockerfile.api
     environment:
       REFINEQ_DATA_ROOT: /data
+      REFINEQ_DATABASE_URL: "${REFINEQ_DATABASE_URL:-postgresql+psycopg://refineq:refineq-local-change-me@database:5432/refineq}"
       REFINEQ_HOST: 0.0.0.0
       REFINEQ_PORT: 8000
       REFINEQ_FORWARDED_ALLOW_IPS: "${REFINEQ_FORWARDED_ALLOW_IPS:-*}"
       REFINEQ_MODEL_ENCRYPTION_KEY: "${REFINEQ_MODEL_ENCRYPTION_KEY:-}"
-      REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS: "${REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS:-api.openai.com}"
+      REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS: "${REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS:-api.openai.com,api.deepseek.com}"
       REFINEQ_MATERIAL_MAX_COUNT_PER_USER: "${REFINEQ_MATERIAL_MAX_COUNT_PER_USER:-500}"
       REFINEQ_MATERIAL_MAX_BYTES_PER_USER: "${REFINEQ_MATERIAL_MAX_BYTES_PER_USER:-2147483648}"
       REFINEQ_MATERIAL_MAX_REQUEST_BYTES: "${REFINEQ_MATERIAL_MAX_REQUEST_BYTES:-54525952}"
@@ -33,6 +55,9 @@ services:
       REFINEQ_RATE_LIMIT_WINDOW_SECONDS: "${REFINEQ_RATE_LIMIT_WINDOW_SECONDS:-60}"
     volumes:
       - refineq-data:/data
+    depends_on:
+      database:
+        condition: service_healthy
     expose:
       - "8000"
     read_only: true
@@ -93,5 +118,6 @@ services:
 
 volumes:
   refineq-data:
+  refineq-postgres:
   caddy-data:
   caddy-config:

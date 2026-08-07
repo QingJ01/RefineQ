@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -43,12 +42,11 @@ def test_first_user_registration_hashes_the_password(tmp_path: Path) -> None:
 
     assert payload["token_type"] == "bearer"
     assert payload["user"]["email"] == "learner@example.com"
-    auth_file = tmp_path / "data" / "system" / "auth.json"
-    persisted = json.loads(auth_file.read_text(encoding="utf-8"))
-    serialized = auth_file.read_text(encoding="utf-8")
-    assert "correct-horse-battery-staple" not in serialized
-    assert persisted["schema_version"] == 1
-    assert persisted["users"]["learner@example.com"]["password_hash"].startswith("$2")
+    assert payload["user"]["role"] == "learner"
+    database_file = tmp_path / "data" / "system" / "refineq.sqlite3"
+    assert "correct-horse-battery-staple" not in database_file.read_bytes().decode(
+        "utf-8", errors="ignore"
+    )
 
 
 def test_login_and_authenticated_profile(tmp_path: Path) -> None:

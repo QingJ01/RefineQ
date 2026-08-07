@@ -1,10 +1,15 @@
 import type {
   AgentReply,
+  AdminOverview,
   AnswerResult,
   AuthResponse,
   LearningWorkspace,
+  IntegrationKind,
+  IntegrationTestResult,
+  IntegrationUpdateInput,
   MaterialRecord,
   PracticeQuestion,
+  PublicIntegrationSettings,
   PublicModelSettings,
   User,
   WorkspaceRoute,
@@ -213,6 +218,38 @@ export class ApiClient {
       "/settings/model",
       { method: "PUT", body: JSON.stringify(input) },
       token,
+    );
+  }
+
+  getAdminOverview(token: string): Promise<AdminOverview> {
+    return this.request("/admin/overview", {}, token);
+  }
+
+  listIntegrations(token: string): Promise<PublicIntegrationSettings[]> {
+    return this.request("/admin/integrations", {}, token);
+  }
+
+  updateIntegration(
+    token: string,
+    kind: IntegrationKind,
+    input: IntegrationUpdateInput,
+  ): Promise<PublicIntegrationSettings> {
+    return this.request(
+      `/admin/integrations/${kind}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
+  testIntegration(
+    token: string,
+    kind: IntegrationKind,
+  ): Promise<IntegrationTestResult> {
+    return this.request(
+      `/admin/integrations/${kind}/test`,
+      { method: "POST" },
+      token,
+      this.longRequestTimeouts.model,
     );
   }
 }

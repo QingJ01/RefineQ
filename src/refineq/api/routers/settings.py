@@ -9,7 +9,7 @@ from refineq.agent.settings import (
     ModelSettings,
     PublicModelSettings,
 )
-from refineq.api.dependencies import CurrentUser
+from refineq.api.dependencies import AdminUser, CurrentUser
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -23,7 +23,7 @@ def get_model_settings(request: Request, user: CurrentUser) -> PublicModelSettin
 def update_model_settings(
     payload: ModelSettings,
     request: Request,
-    user: CurrentUser,
+    user: AdminUser,
 ) -> PublicModelSettings:
     try:
         request.app.state.model_settings.save(user.id, payload)
