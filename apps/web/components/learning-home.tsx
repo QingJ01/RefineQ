@@ -1,6 +1,15 @@
 "use client";
 
-import { ArrowRight, Clock3, History, MessageSquarePlus, Settings2, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  Clock3,
+  History,
+  Languages,
+  LogOut,
+  MessageSquarePlus,
+  Settings2,
+  Sparkles,
+} from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
@@ -16,6 +25,8 @@ export function LearningHome({
   onOpen,
   isAdmin = false,
   onAdmin,
+  onLogout,
+  onToggleLocale,
 }: {
   t: Translator;
   busy: boolean;
@@ -24,6 +35,8 @@ export function LearningHome({
   onOpen: (workspace: LearningWorkspace) => void | Promise<void>;
   isAdmin?: boolean;
   onAdmin?: () => void;
+  onLogout: () => void;
+  onToggleLocale: () => void;
 }) {
   const [intent, setIntent] = useState("");
 
@@ -47,7 +60,23 @@ export function LearningHome({
             <Settings2 size={19} /><span>平台控制台</span>
           </button>
         )}
-        <p className="sidebar-footnote">Personal learning, remembered.</p>
+        <div className="home-sidebar-actions">
+          <button
+            data-testid="home-language"
+            className="home-nav-item home-admin-link"
+            onClick={onToggleLocale}
+          >
+            <Languages size={19} /><span>{t("language")}</span>
+          </button>
+          <button
+            data-testid="home-logout"
+            className="home-nav-item home-admin-link"
+            onClick={onLogout}
+          >
+            <LogOut size={19} /><span>{t("logout")}</span>
+          </button>
+          <p className="sidebar-footnote">Personal learning, remembered.</p>
+        </div>
       </aside>
       <section className="learning-home">
         <div className="learning-home-hero">

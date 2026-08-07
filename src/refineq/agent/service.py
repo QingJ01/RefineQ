@@ -7,11 +7,12 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
 
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from refineq.agent.context import build_agent_context
 from refineq.agent.settings import ModelSettings, ModelSettingsRepository
+from refineq.integrations.endpoints import assert_safe_endpoint
 from refineq.knowledge.index import KnowledgeIndex, SearchResult
 from refineq.learning.models import BKTState
 from refineq.storage.json_store import RecordNotFoundError, validate_identifier
@@ -68,11 +69,17 @@ class OpenAICompatibleTransport:
         settings: ModelSettings,
         messages: list[dict[str, str]],
     ) -> ModelReply:
+        assert_safe_endpoint(
+            str(settings.base_url),
+            allow_private_network=settings.allow_private_network,
+            allow_transparent_proxy=True,
+        )
         client = OpenAI(
             api_key=settings.api_key.get_secret_value(),
             base_url=str(settings.base_url),
             timeout=30.0,
             max_retries=2,
+            http_client=DefaultHttpxClient(follow_redirects=False),
         )
         response = client.chat.completions.create(
             model=settings.model,

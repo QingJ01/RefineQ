@@ -5,8 +5,9 @@ from __future__ import annotations
 import math
 from typing import Protocol
 
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 
+from refineq.integrations.endpoints import assert_safe_endpoint
 from refineq.integrations.models import IntegrationKind
 from refineq.integrations.repository import (
     IntegrationNotConfiguredError,
@@ -28,11 +29,17 @@ class PlatformEmbeddingService:
         integration = self.integrations.load(IntegrationKind.EMBEDDING)
         if not integration.enabled or "api_key" not in integration.secrets:
             raise IntegrationNotConfiguredError("embedding integration is not enabled")
+        assert_safe_endpoint(
+            str(integration.config["base_url"]),
+            allow_private_network=bool(integration.config.get("allow_private_network", False)),
+            allow_transparent_proxy=True,
+        )
         dimensions = int(integration.config["dimensions"])
         client = OpenAI(
             api_key=integration.secrets["api_key"].get_secret_value(),
             base_url=str(integration.config["base_url"]),
             timeout=30.0,
+            http_client=DefaultHttpxClient(follow_redirects=False),
         )
         response = client.embeddings.create(
             model=str(integration.config["model"]),

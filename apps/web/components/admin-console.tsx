@@ -8,6 +8,7 @@ import {
   FileScan,
   HardDrive,
   LoaderCircle,
+  LogOut,
   PlugZap,
   Save,
   ShieldCheck,
@@ -23,13 +24,14 @@ import type {
   Locale,
   PublicIntegrationSettings,
 } from "@/lib/types";
+import { projectIntegrationTestResult } from "@/lib/view-models";
 
 
 type FieldDefinition = {
   key: string;
   label: string;
   placeholder?: string;
-  type?: "text" | "number" | "password" | "select";
+  type?: "text" | "number" | "password" | "select" | "boolean";
   options?: Array<{ value: string; label: string }>;
 };
 
@@ -63,6 +65,7 @@ const copy = {
     saved: "配置已安全保存",
     secretHint: "留空会继续使用当前密钥",
     loading: "正在读取平台状态…",
+    logout: "退出登录",
   },
   en: {
     title: "Platform console",
@@ -83,6 +86,7 @@ const copy = {
     saved: "Configuration saved securely",
     secretHint: "Leave blank to keep the current secret",
     loading: "Loading platform status…",
+    logout: "Sign out",
   },
 } as const;
 
@@ -98,6 +102,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
         { key: "base_url", label: "API 地址", placeholder: "https://api.openai.com/v1" },
         { key: "model", label: "模型名称", placeholder: "gpt-4.1-mini" },
         { key: "temperature", label: "温度", type: "number", placeholder: "0.2" },
+        {
+          key: "allow_private_network",
+          label: "允许私网地址",
+          type: "boolean",
+          options: [{ value: "false", label: "否" }, { value: "true", label: "是" }],
+        },
       ],
       secretFields: [{ key: "api_key", label: "API Key", type: "password" }],
     },
@@ -111,6 +121,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
         { key: "base_url", label: "API 地址", placeholder: "https://api.openai.com/v1" },
         { key: "model", label: "Embedding 模型", placeholder: "text-embedding-3-small" },
         { key: "dimensions", label: "向量维度", type: "number", placeholder: "1536" },
+        {
+          key: "allow_private_network",
+          label: "允许私网地址",
+          type: "boolean",
+          options: [{ value: "false", label: "否" }, { value: "true", label: "是" }],
+        },
       ],
       secretFields: [{ key: "api_key", label: "API Key", type: "password" }],
     },
@@ -123,6 +139,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
       configFields: [
         { key: "base_url", label: "API 地址", placeholder: "https://api.openai.com/v1" },
         { key: "model", label: "视觉模型", placeholder: "gpt-4.1-mini" },
+        {
+          key: "allow_private_network",
+          label: "允许私网地址",
+          type: "boolean",
+          options: [{ value: "false", label: "否" }, { value: "true", label: "是" }],
+        },
       ],
       secretFields: [{ key: "api_key", label: "API Key", type: "password" }],
     },
@@ -146,6 +168,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
             { value: "virtual", label: "Virtual host" },
           ],
         },
+        {
+          key: "allow_private_network",
+          label: "允许私网地址",
+          type: "boolean",
+          options: [{ value: "false", label: "否" }, { value: "true", label: "是" }],
+        },
       ],
       secretFields: [
         { key: "access_key_id", label: "Access Key ID", type: "password" },
@@ -164,6 +192,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
         { key: "base_url", label: "API endpoint", placeholder: "https://api.openai.com/v1" },
         { key: "model", label: "Model", placeholder: "gpt-4.1-mini" },
         { key: "temperature", label: "Temperature", type: "number", placeholder: "0.2" },
+        {
+          key: "allow_private_network",
+          label: "Allow private network",
+          type: "boolean",
+          options: [{ value: "false", label: "No" }, { value: "true", label: "Yes" }],
+        },
       ],
       secretFields: [{ key: "api_key", label: "API Key", type: "password" }],
     },
@@ -177,6 +211,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
         { key: "base_url", label: "API endpoint", placeholder: "https://api.openai.com/v1" },
         { key: "model", label: "Embedding model", placeholder: "text-embedding-3-small" },
         { key: "dimensions", label: "Vector dimensions", type: "number", placeholder: "1536" },
+        {
+          key: "allow_private_network",
+          label: "Allow private network",
+          type: "boolean",
+          options: [{ value: "false", label: "No" }, { value: "true", label: "Yes" }],
+        },
       ],
       secretFields: [{ key: "api_key", label: "API Key", type: "password" }],
     },
@@ -189,6 +229,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
       configFields: [
         { key: "base_url", label: "API endpoint", placeholder: "https://api.openai.com/v1" },
         { key: "model", label: "Vision model", placeholder: "gpt-4.1-mini" },
+        {
+          key: "allow_private_network",
+          label: "Allow private network",
+          type: "boolean",
+          options: [{ value: "false", label: "No" }, { value: "true", label: "Yes" }],
+        },
       ],
       secretFields: [{ key: "api_key", label: "API Key", type: "password" }],
     },
@@ -212,6 +258,12 @@ const definitions: Record<Locale, IntegrationDefinition[]> = {
             { value: "virtual", label: "Virtual host" },
           ],
         },
+        {
+          key: "allow_private_network",
+          label: "Allow private network",
+          type: "boolean",
+          options: [{ value: "false", label: "No" }, { value: "true", label: "Yes" }],
+        },
       ],
       secretFields: [
         { key: "access_key_id", label: "Access Key ID", type: "password" },
@@ -226,7 +278,12 @@ const defaults: PublicIntegrationSettings[] = [
     kind: "chat",
     enabled: false,
     configured: false,
-    config: { base_url: "https://api.openai.com/v1", model: "", temperature: 0.2 },
+    config: {
+      base_url: "https://api.openai.com/v1",
+      model: "",
+      temperature: 0.2,
+      allow_private_network: false,
+    },
     secret_hints: {}, last_test_status: null, last_test_message: null, last_tested_at: null,
   },
   {
@@ -237,6 +294,7 @@ const defaults: PublicIntegrationSettings[] = [
       base_url: "https://api.openai.com/v1",
       model: "text-embedding-3-small",
       dimensions: 1536,
+      allow_private_network: false,
     },
     secret_hints: {}, last_test_status: null, last_test_message: null, last_tested_at: null,
   },
@@ -244,14 +302,24 @@ const defaults: PublicIntegrationSettings[] = [
     kind: "ocr",
     enabled: false,
     configured: false,
-    config: { base_url: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
+    config: {
+      base_url: "https://api.openai.com/v1",
+      model: "gpt-4.1-mini",
+      allow_private_network: false,
+    },
     secret_hints: {}, last_test_status: null, last_test_message: null, last_tested_at: null,
   },
   {
     kind: "object_storage",
     enabled: false,
     configured: false,
-    config: { endpoint_url: "", bucket: "", region: "auto", addressing_style: "auto" },
+    config: {
+      endpoint_url: "",
+      bucket: "",
+      region: "auto",
+      addressing_style: "auto",
+      allow_private_network: false,
+    },
     secret_hints: {}, last_test_status: null, last_test_message: null, last_tested_at: null,
   },
 ];
@@ -310,6 +378,7 @@ function IntegrationCard({
     setNotice("");
     try {
       const result = await api.testIntegration(token, definition.kind);
+      onChange(projectIntegrationTestResult(setting, result, new Date().toISOString()));
       if (result.status === "failed") setError(result.message);
       else setNotice(result.message);
     } catch (caught) {
@@ -322,7 +391,11 @@ function IntegrationCard({
   function updateConfig(field: FieldDefinition, value: string) {
     setConfig((current) => ({
       ...current,
-      [field.key]: field.type === "number" ? Number(value) : value,
+      [field.key]: field.type === "number"
+        ? Number(value)
+        : field.type === "boolean"
+          ? value === "true"
+          : value,
     }));
   }
 
@@ -363,7 +436,7 @@ function IntegrationCard({
           {definition.configFields.map((field) => (
             <label key={field.key}>
               <span>{field.label}</span>
-              {field.type === "select" ? (
+              {field.type === "select" || field.type === "boolean" ? (
                 <select
                   value={String(config[field.key] ?? "")}
                   onChange={(event) => updateConfig(field, event.target.value)}
@@ -431,10 +504,12 @@ export function AdminConsole({
   token,
   locale,
   onClose,
+  onLogout,
 }: {
   token: string;
   locale: Locale;
   onClose: () => void;
+  onLogout: () => void;
 }) {
   const c = copy[locale];
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -469,9 +544,14 @@ export function AdminConsole({
     <main className="admin-console">
       <header className="admin-topbar">
         <div className="admin-brand"><BrandMark size={34} /><BrandName /></div>
-        <button className="quiet-button" onClick={onClose}>
-          <ArrowLeft size={16} /> {c.back}
-        </button>
+        <div className="admin-topbar-actions">
+          <button className="quiet-button" onClick={onClose}>
+            <ArrowLeft size={16} /> {c.back}
+          </button>
+          <button data-testid="admin-logout" className="quiet-button" onClick={onLogout}>
+            <LogOut size={16} /> {c.logout}
+          </button>
+        </div>
       </header>
       <section className="admin-stage">
         <div className="admin-hero">

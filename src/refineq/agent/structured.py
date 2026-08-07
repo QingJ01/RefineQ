@@ -6,10 +6,11 @@ import json
 import re
 from typing import Protocol, TypeVar
 
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 from pydantic import BaseModel, ValidationError
 
 from refineq.agent.settings import ModelSettings
+from refineq.integrations.endpoints import assert_safe_endpoint
 
 StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
 
@@ -58,11 +59,17 @@ class OpenAICompatibleStructuredTransport:
         messages: list[dict[str, str]],
         response_model: type[StructuredResponse],
     ) -> StructuredResponse:
+        assert_safe_endpoint(
+            str(settings.base_url),
+            allow_private_network=settings.allow_private_network,
+            allow_transparent_proxy=True,
+        )
         client = OpenAI(
             api_key=settings.api_key.get_secret_value(),
             base_url=str(settings.base_url),
             timeout=30.0,
             max_retries=2,
+            http_client=DefaultHttpxClient(follow_redirects=False),
         )
         response = client.chat.completions.create(
             model=settings.model,

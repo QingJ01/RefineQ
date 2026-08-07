@@ -5,11 +5,15 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import get_ident
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.knowledge.extract import MaterialExtractionLimitError
 
 
 def _register(client: TestClient, email: str) -> str:
@@ -37,6 +41,43 @@ def _project(client: TestClient, token: str) -> str:
     )
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def test_pdf_extraction_limit_does_not_fall_back_to_ocr(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    ocr_calls: list[str] = []
+
+    def extraction_limit(*args, **kwargs):
+        raise MaterialExtractionLimitError("PDF exceeds the configured page limit")
+
+    class AvailableOcr:
+        @staticmethod
+        def available() -> bool:
+            return True
+
+        @staticmethod
+        def extract(filename: str, *args, **kwargs) -> str:
+            ocr_calls.append(filename)
+            return "OCR text"
+
+    monkeypatch.setattr(
+        "refineq.api.routers.materials.extract_text_isolated",
+        extraction_limit,
+    )
+    app.state.ocr = AvailableOcr()
+
+    with TestClient(app) as client:
+        token = _register(client, "extraction-limit@example.com")
+        project_id = _project(client, token)
+        response = client.post(
+            f"/projects/{project_id}/materials",
+            headers=_headers(token),
+            files={"files": ("large.pdf", b"%PDF-1.7", "application/pdf")},
+        )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "material_extraction_limit"
+    assert ocr_calls == []
 
 
 def test_upload_status_and_search_are_project_scoped(tmp_path: Path) -> None:
@@ -207,3 +248,45 @@ def test_concurrent_uploads_cannot_cross_owner_material_quota(tmp_path: Path, mo
             statuses = sorted(executor.map(upload, range(2)))
 
     assert statuses == [201, 413]
+
+
+@pytest.mark.asyncio
+async def test_storage_and_indexing_run_outside_the_event_loop_thread(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    event_loop_thread = get_ident()
+    storage_threads: list[int] = []
+    original_put = app.state.object_storage.put
+
+    def recording_put(**kwargs):
+        storage_threads.append(get_ident())
+        return original_put(**kwargs)
+
+    monkeypatch.setattr(app.state.object_storage, "put", recording_put)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        registered = await client.post(
+            "/auth/register",
+            json={
+                "email": "worker-upload@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Learner",
+            },
+        )
+        token = registered.json()["access_token"]
+        project = await client.post(
+            "/projects",
+            headers=_headers(token),
+            json={"name": "Calculus"},
+        )
+        response = await client.post(
+            f"/projects/{project.json()['id']}/materials",
+            headers=_headers(token),
+            files={"files": ("notes.txt", b"Limits notes", "text/plain")},
+        )
+
+    assert response.status_code == 201
+    assert storage_threads
+    assert all(thread_id != event_loop_thread for thread_id in storage_threads)

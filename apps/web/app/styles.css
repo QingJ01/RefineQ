@@ -508,10 +508,16 @@ textarea:focus {
 }
 
 .sidebar-footnote {
-  margin: auto 10px 4px;
+  margin: 14px 10px 4px;
   color: #aaaeb6;
   font-size: 10px;
   line-height: 1.5;
+}
+
+.home-sidebar-actions {
+  display: grid;
+  gap: 4px;
+  margin-top: auto;
 }
 
 .learning-home {
@@ -1333,6 +1339,12 @@ textarea:focus {
   gap: 10px;
 }
 
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .admin-stage {
   width: min(1260px, calc(100% - 40px));
   margin: 0 auto;
@@ -1795,6 +1807,11 @@ textarea:focus {
 
   .sidebar-footnote {
     display: none;
+  }
+
+  .home-sidebar-actions {
+    display: flex;
+    margin: 0;
   }
 
   .learning-home {

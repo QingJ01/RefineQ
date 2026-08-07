@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -11,12 +12,27 @@ from pathlib import Path
 from threading import Lock, RLock
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import (
+    and_,
+    case,
+    delete,
+    func,
+    insert,
+    literal_column,
+    or_,
+    select,
+    update,
+)
+from sqlalchemy import (
+    text as sql_text,
+)
 
 from refineq.database.engine import Database
 from refineq.database.schema import material_chunks, materials
 from refineq.knowledge.embeddings import Embedder
 from refineq.storage.json_store import validate_identifier
+
+logger = logging.getLogger(__name__)
 
 
 class MaterialRecord(BaseModel):
@@ -48,6 +64,10 @@ class MaterialNotFoundError(LookupError):
     """Raised when an indexed material is outside the requested scope."""
 
 
+class MaterialQuotaExceededError(ValueError):
+    """Raised when a material transaction would exceed its owner's quota."""
+
+
 @dataclass(frozen=True, slots=True)
 class MaterialDocument:
     project_id: str
@@ -71,6 +91,7 @@ class KnowledgeIndex:
         *,
         chunk_chars: int = 1_200,
         embedder: Embedder | None = None,
+        embedding_batch_size: int = 64,
     ) -> None:
         if isinstance(database, Path):
             path = database.expanduser().resolve() / "system" / "refineq.sqlite3"
@@ -79,6 +100,9 @@ class KnowledgeIndex:
         self.database = database
         self.chunk_chars = chunk_chars
         self.embedder = embedder
+        if embedding_batch_size < 1:
+            raise ValueError("embedding_batch_size must be positive")
+        self.embedding_batch_size = embedding_batch_size
 
     @classmethod
     def _lock_for(cls, key: str) -> RLock:
@@ -104,13 +128,21 @@ class KnowledgeIndex:
     def _embed_or_none(self, texts: list[str]) -> list[list[float] | None]:
         if self.embedder is None:
             return [None] * len(texts)
-        try:
-            vectors = self.embedder.embed(texts)
-            if len(vectors) != len(texts):
-                raise ValueError("Embedding count does not match chunk count")
-            return vectors
-        except Exception:
-            return [None] * len(texts)
+        embedded: list[list[float] | None] = []
+        for start in range(0, len(texts), self.embedding_batch_size):
+            batch = texts[start : start + self.embedding_batch_size]
+            try:
+                vectors = self.embedder.embed(batch)
+                if len(vectors) != len(batch):
+                    raise ValueError("Embedding count does not match chunk count")
+                embedded.extend(vectors)
+            except Exception as error:
+                logger.warning(
+                    "Embedding batch failed; lexical retrieval remains available (%s)",
+                    type(error).__name__,
+                )
+                embedded.extend([None] * len(batch))
+        return embedded
 
     @staticmethod
     def _aware(value: datetime) -> datetime:
@@ -165,6 +197,79 @@ class KnowledgeIndex:
         owner_id: str,
         documents: list[MaterialDocument],
     ) -> list[MaterialRecord]:
+        owner_id, prepared = self._prepare_documents(owner_id=owner_id, documents=documents)
+        embeddings = self._embed_prepared(prepared)
+        with self._lock_for(owner_id), self.database.session() as session:
+            self._write_prepared(
+                session=session,
+                owner_id=owner_id,
+                prepared=prepared,
+                embeddings=embeddings,
+            )
+        return [record for record, _, _ in prepared]
+
+    def add_documents_with_quota(
+        self,
+        *,
+        owner_id: str,
+        documents: list[MaterialDocument],
+        max_count: int,
+        max_bytes: int,
+    ) -> list[MaterialRecord]:
+        """Validate quota and replace documents inside one owner-serialized transaction."""
+
+        if max_count < 1 or max_bytes < 1:
+            raise ValueError("Material quotas must be positive")
+        owner_id, prepared = self._prepare_documents(owner_id=owner_id, documents=documents)
+        embeddings = self._embed_prepared(prepared)
+        with self._lock_for(owner_id), self.database.session() as session:
+            if self.database.is_postgresql:
+                session.execute(
+                    sql_text("SELECT pg_advisory_xact_lock(hashtextextended(:owner_id, 0))"),
+                    {"owner_id": owner_id},
+                )
+            total_count, total_bytes = session.execute(
+                select(func.count(), func.coalesce(func.sum(materials.c.size), 0)).where(
+                    materials.c.owner_id == owner_id
+                )
+            ).one()
+            identities = [
+                and_(
+                    materials.c.project_id == record.project_id,
+                    materials.c.material_id == record.id,
+                )
+                for record, _, _ in prepared
+            ]
+            replaced_sizes = list(
+                session.scalars(
+                    select(materials.c.size).where(
+                        materials.c.owner_id == owner_id,
+                        or_(*identities),
+                    )
+                )
+            )
+            projected_count = int(total_count) - len(replaced_sizes) + len(prepared)
+            projected_bytes = (
+                int(total_bytes)
+                - sum(int(size) for size in replaced_sizes)
+                + sum(record.size for record, _, _ in prepared)
+            )
+            if projected_count > max_count or projected_bytes > max_bytes:
+                raise MaterialQuotaExceededError("The learner material quota would be exceeded")
+            self._write_prepared(
+                session=session,
+                owner_id=owner_id,
+                prepared=prepared,
+                embeddings=embeddings,
+            )
+        return [record for record, _, _ in prepared]
+
+    def _prepare_documents(
+        self,
+        *,
+        owner_id: str,
+        documents: list[MaterialDocument],
+    ) -> tuple[str, list[tuple[MaterialRecord, MaterialDocument, list[str]]]]:
         if not documents:
             raise ValueError("At least one indexed document is required")
         owner_id = validate_identifier(owner_id, field="owner_id")
@@ -194,55 +299,68 @@ class KnowledgeIndex:
                 indexed_at=indexed_at,
             )
             prepared.append((record, document, chunks))
+        return owner_id, prepared
 
+    def _embed_prepared(
+        self,
+        prepared: list[tuple[MaterialRecord, MaterialDocument, list[str]]],
+    ) -> list[list[float] | None]:
         all_chunks = [chunk for _, _, chunks in prepared for chunk in chunks]
-        embeddings = iter(self._embed_or_none(all_chunks))
-        with self._lock_for(owner_id), self.database.session() as session:
-            for record, document, chunks in prepared:
-                scope = (
-                    materials.c.owner_id == owner_id,
-                    materials.c.project_id == record.project_id,
-                    materials.c.material_id == record.id,
+        return self._embed_or_none(all_chunks)
+
+    @staticmethod
+    def _write_prepared(
+        *,
+        session,
+        owner_id: str,
+        prepared: list[tuple[MaterialRecord, MaterialDocument, list[str]]],
+        embeddings: list[list[float] | None],
+    ) -> None:
+        vectors = iter(embeddings)
+        for record, document, chunks in prepared:
+            scope = (
+                materials.c.owner_id == owner_id,
+                materials.c.project_id == record.project_id,
+                materials.c.material_id == record.id,
+            )
+            session.execute(
+                delete(material_chunks).where(
+                    material_chunks.c.owner_id == owner_id,
+                    material_chunks.c.project_id == record.project_id,
+                    material_chunks.c.material_id == record.id,
                 )
-                session.execute(
-                    delete(material_chunks).where(
-                        material_chunks.c.owner_id == owner_id,
-                        material_chunks.c.project_id == record.project_id,
-                        material_chunks.c.material_id == record.id,
-                    )
+            )
+            session.execute(delete(materials).where(*scope))
+            session.execute(
+                insert(materials).values(
+                    owner_id=owner_id,
+                    project_id=record.project_id,
+                    material_id=record.id,
+                    filename=record.filename,
+                    content_type=record.content_type,
+                    size=record.size,
+                    status=record.status,
+                    chunk_count=record.chunk_count,
+                    content_sha256=record.content_sha256,
+                    storage_key=document.storage_key,
+                    indexed_at=record.indexed_at,
                 )
-                session.execute(delete(materials).where(*scope))
-                session.execute(
-                    insert(materials).values(
-                        owner_id=owner_id,
-                        project_id=record.project_id,
-                        material_id=record.id,
-                        filename=record.filename,
-                        content_type=record.content_type,
-                        size=record.size,
-                        status=record.status,
-                        chunk_count=record.chunk_count,
-                        content_sha256=record.content_sha256,
-                        storage_key=document.storage_key,
-                        indexed_at=record.indexed_at,
-                    )
-                )
-                session.execute(
-                    insert(material_chunks),
-                    [
-                        {
-                            "owner_id": owner_id,
-                            "project_id": record.project_id,
-                            "material_id": record.id,
-                            "filename": record.filename,
-                            "chunk_index": index,
-                            "content": chunk,
-                            "embedding": next(embeddings),
-                        }
-                        for index, chunk in enumerate(chunks)
-                    ],
-                )
-        return [record for record, _, _ in prepared]
+            )
+            session.execute(
+                insert(material_chunks),
+                [
+                    {
+                        "owner_id": owner_id,
+                        "project_id": record.project_id,
+                        "material_id": record.id,
+                        "filename": record.filename,
+                        "chunk_index": index,
+                        "content": chunk,
+                        "embedding": next(vectors),
+                    }
+                    for index, chunk in enumerate(chunks)
+                ],
+            )
 
     def owner_material_usage(self, *, owner_id: str) -> tuple[int, int]:
         owner_id = validate_identifier(owner_id, field="owner_id")
@@ -285,8 +403,64 @@ class KnowledgeIndex:
         try:
             vectors = self.embedder.embed([query])
             return vectors[0] if len(vectors) == 1 else None
-        except Exception:
+        except Exception as error:
+            logger.warning(
+                "Query embedding failed; lexical retrieval remains available (%s)",
+                type(error).__name__,
+            )
             return None
+
+    def backfill_embeddings(self) -> int:
+        """Fill missing vectors in bounded batches and stop cleanly on provider failure."""
+
+        if self.embedder is None:
+            return 0
+        updated_count = 0
+        with self._lock_for("__embedding_backfill__"):
+            while True:
+                with self.database.session() as session:
+                    rows = session.execute(
+                        select(
+                            material_chunks.c.owner_id,
+                            material_chunks.c.project_id,
+                            material_chunks.c.material_id,
+                            material_chunks.c.chunk_index,
+                            material_chunks.c.content,
+                        )
+                        .where(material_chunks.c.embedding.is_(None))
+                        .order_by(
+                            material_chunks.c.owner_id,
+                            material_chunks.c.project_id,
+                            material_chunks.c.material_id,
+                            material_chunks.c.chunk_index,
+                        )
+                        .limit(self.embedding_batch_size)
+                    ).all()
+                if not rows:
+                    break
+                vectors = self._embed_or_none([row.content for row in rows])
+                successful = [
+                    (row, vector)
+                    for row, vector in zip(rows, vectors, strict=True)
+                    if vector is not None
+                ]
+                if not successful:
+                    break
+                with self.database.session() as session:
+                    for row, vector in successful:
+                        session.execute(
+                            update(material_chunks)
+                            .where(
+                                material_chunks.c.owner_id == row.owner_id,
+                                material_chunks.c.project_id == row.project_id,
+                                material_chunks.c.material_id == row.material_id,
+                                material_chunks.c.chunk_index == row.chunk_index,
+                                material_chunks.c.embedding.is_(None),
+                            )
+                            .values(embedding=vector)
+                        )
+                updated_count += len(successful)
+        return updated_count
 
     def search(
         self,
@@ -298,39 +472,66 @@ class KnowledgeIndex:
     ) -> list[SearchResult]:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
+        query = query.strip()
+        if not query:
+            raise ValueError("Search query must contain a word")
+        bounded_limit = max(1, min(limit, 50))
+        candidate_limit = max(50, bounded_limit * 8)
         query_embedding = self._query_embedding(query)
         with self.database.session() as session:
-            rows = session.execute(
-                select(material_chunks).where(
-                    material_chunks.c.owner_id == owner_id,
-                    material_chunks.c.project_id == project_id,
-                )
-            ).all()
-
+            scope = (
+                material_chunks.c.owner_id == owner_id,
+                material_chunks.c.project_id == project_id,
+            )
             database_scores: dict[tuple[str, int], float] = {}
-            if self.database.is_postgresql and query_embedding is not None:
-                distance = material_chunks.c.embedding.cosine_distance(query_embedding)
-                semantic_rows = session.execute(
-                    select(
-                        material_chunks.c.material_id,
-                        material_chunks.c.chunk_index,
-                        (1 - distance).label("semantic_score"),
-                    )
-                    .where(
-                        material_chunks.c.owner_id == owner_id,
-                        material_chunks.c.project_id == project_id,
-                        material_chunks.c.embedding.is_not(None),
-                    )
-                    .order_by(distance)
-                    .limit(max(50, limit * 8))
+            lexical_by_key: dict[tuple[str, int], float] = {}
+            if self.database.is_postgresql:
+                search_config = literal_column("'simple'::regconfig")
+                search_query = func.websearch_to_tsquery(search_config, query)
+                search_document = func.to_tsvector(search_config, material_chunks.c.content)
+                escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                substring_match = material_chunks.c.content.ilike(
+                    f"%{escaped_query}%",
+                    escape="\\",
+                )
+                lexical_rank = func.greatest(
+                    func.ts_rank_cd(search_document, search_query),
+                    case((substring_match, 1.0), else_=0.0),
+                )
+                lexical_rows = session.execute(
+                    select(material_chunks, lexical_rank.label("lexical_score"))
+                    .where(*scope, or_(search_document.op("@@")(search_query), substring_match))
+                    .order_by(lexical_rank.desc())
+                    .limit(candidate_limit)
                 ).all()
-                database_scores = {
-                    (row.material_id, int(row.chunk_index)): float(row.semantic_score)
-                    for row in semantic_rows
+                rows_by_key = {(row.material_id, int(row.chunk_index)): row for row in lexical_rows}
+                lexical_by_key = {
+                    (row.material_id, int(row.chunk_index)): float(row.lexical_score)
+                    for row in lexical_rows
                 }
+                if query_embedding is not None:
+                    distance = material_chunks.c.embedding.cosine_distance(query_embedding)
+                    semantic_rows = session.execute(
+                        select(material_chunks, (1 - distance).label("semantic_score"))
+                        .where(*scope, material_chunks.c.embedding.is_not(None))
+                        .order_by(distance)
+                        .limit(candidate_limit)
+                    ).all()
+                    for row in semantic_rows:
+                        key = (row.material_id, int(row.chunk_index))
+                        rows_by_key.setdefault(key, row)
+                        database_scores[key] = float(row.semantic_score)
+                rows = list(rows_by_key.values())
+            else:
+                rows = session.execute(select(material_chunks).where(*scope)).all()
 
         scored: list[tuple[float, object]] = []
-        lexical_scores = [self._lexical_score(row.content, query) for row in rows]
+        if self.database.is_postgresql:
+            lexical_scores = [
+                lexical_by_key.get((row.material_id, int(row.chunk_index)), 0.0) for row in rows
+            ]
+        else:
+            lexical_scores = [self._lexical_score(row.content, query) for row in rows]
         lexical_max = max(lexical_scores, default=0.0)
         for row, lexical in zip(rows, lexical_scores, strict=True):
             semantic = database_scores.get((row.material_id, int(row.chunk_index)), 0.0)
@@ -361,7 +562,7 @@ class KnowledgeIndex:
                 text=row.content,
                 score=float(score),
             )
-            for score, row in scored[: max(1, min(limit, 50))]
+            for score, row in scored[:bounded_limit]
         ]
 
     def get_material(

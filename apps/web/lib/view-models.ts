@@ -1,4 +1,10 @@
-import type { AnswerResult, EvidenceKind, StudyPlan } from "./types";
+import type {
+  AnswerResult,
+  EvidenceKind,
+  IntegrationTestResult,
+  PublicIntegrationSettings,
+  StudyPlan,
+} from "./types";
 
 
 export interface PlanRow {
@@ -37,4 +43,17 @@ export function evidenceTone(kind: EvidenceKind): EvidenceTone {
   if (kind === "attempt" || kind === "review") return "jade";
   if (kind === "diagnostic" || kind === "self_explanation") return "amber";
   return "ink";
+}
+
+export function projectIntegrationTestResult(
+  setting: PublicIntegrationSettings,
+  result: IntegrationTestResult,
+  testedAt: string,
+): PublicIntegrationSettings {
+  return {
+    ...setting,
+    last_test_status: result.status,
+    last_test_message: result.message,
+    last_tested_at: testedAt,
+  };
 }

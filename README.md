@@ -72,7 +72,13 @@ Remove-Item Env:REFINEQ_ADMIN_PASSWORD
 - 扫描识别：支持视觉输入的 OCR 模型
 - 文件存储：本地存储或 S3/MinIO/R2 等 S3 兼容服务
 
+外部服务域名必须先由部署者加入服务器环境 allowlist。对象存储使用独立的
+`REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS`；私有 MinIO 还需要在管理后台显式打开
+“允许私网地址”。系统会在实际请求前重新校验 DNS/IP，默认拒绝回环、内网和保留地址。
+
 PDF、DOCX、TXT、Markdown 的基础文字提取不需要 API；只有扫描 PDF 才需要 OCR。所有配置均支持服务端连通性测试，密钥只返回掩码提示。
+混合 PDF 只会把无文字页面分批发送给 OCR，并受像素、页数和图片字节预算保护。启用
+Embedding 后，系统会在后台为迁移资料和历史资料补齐缺失向量。
 
 ## 生产部署
 

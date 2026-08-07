@@ -46,7 +46,12 @@ class Database:
         with self.engine.begin() as connection:
             if self.is_postgresql:
                 connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             metadata.create_all(connection)
+            if not self.is_postgresql:
+                connection.execute(
+                    text("UPDATE material_chunks SET embedding = NULL WHERE embedding = 'null'")
+                )
             current = connection.scalar(select(schema_versions.c.version).limit(1))
             if current is None:
                 connection.execute(insert(schema_versions).values(version=SCHEMA_VERSION))
@@ -59,6 +64,12 @@ class Database:
                     text(
                         "CREATE INDEX IF NOT EXISTS ix_material_chunks_content_fts "
                         "ON material_chunks USING gin (to_tsvector('simple', content))"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_material_chunks_content_trgm "
+                        "ON material_chunks USING gin (content gin_trgm_ops)"
                     )
                 )
                 connection.execute(

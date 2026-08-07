@@ -21,6 +21,7 @@ from refineq.knowledge.extract import (
 from refineq.knowledge.index import (
     MaterialDocument,
     MaterialNotFoundError,
+    MaterialQuotaExceededError,
     MaterialRecord,
     SearchResult,
 )
@@ -88,27 +89,43 @@ def _raise_extraction_error(error: MaterialExtractionError) -> None:
     ) from error
 
 
-def _enforce_owner_quota(
+def _store_and_index(
     request: Request,
     owner_id: str,
-    descriptors: list[UploadDescriptor],
-) -> None:
-    existing_count, existing_bytes = request.app.state.knowledge.owner_material_usage(
-        owner_id=owner_id
-    )
+    documents: list[MaterialDocument],
+    material_payloads: list[bytes],
+) -> list[MaterialRecord]:
     settings = request.app.state.settings
-    if (
-        existing_count + len(descriptors) > settings.material_max_count_per_user
-        or existing_bytes + sum(item.size for item in descriptors)
-        > settings.material_max_bytes_per_user
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={
-                "code": "material_quota",
-                "message": "The learner material quota would be exceeded",
-            },
+    stored_objects = []
+    try:
+        indexed_documents: list[MaterialDocument] = []
+        for document, payload in zip(documents, material_payloads, strict=True):
+            stored = request.app.state.object_storage.put(
+                owner_id=owner_id,
+                workspace_id=document.project_id,
+                material_id=document.material_id,
+                filename=document.filename,
+                payload=payload,
+            )
+            stored_objects.append(stored)
+            indexed_documents.append(replace(document, storage_key=stored.key))
+        return request.app.state.knowledge.add_documents_with_quota(
+            owner_id=owner_id,
+            documents=indexed_documents,
+            max_count=settings.material_max_count_per_user,
+            max_bytes=settings.material_max_bytes_per_user,
         )
+    except Exception:
+        for stored in reversed(stored_objects):
+            stored.rollback()
+        raise
+
+
+def _raise_quota_error(error: MaterialQuotaExceededError) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        detail={"code": "material_quota", "message": str(error)},
+    ) from error
 
 
 @router.post("", response_model=list[MaterialRecord], status_code=status.HTTP_201_CREATED)
@@ -142,11 +159,10 @@ async def upload_materials(
         except MaterialPolicyError as error:
             raise _material_error(error) from error
 
-        _enforce_owner_quota(request, user.id, descriptors)
-
         limits = _extraction_limits(request)
         extracted: list[str] = []
         for (_, payload), descriptor in zip(loaded, descriptors, strict=True):
+            used_ocr = False
             try:
                 text = await to_thread.run_sync(
                     partial(
@@ -164,7 +180,8 @@ async def upload_materials(
                 )
             except MaterialExtractionError as error:
                 use_ocr = (
-                    descriptor.filename.lower().endswith(".pdf")
+                    not isinstance(error, MaterialExtractionLimitError)
+                    and descriptor.filename.lower().endswith(".pdf")
                     and request.app.state.ocr.available()
                 )
                 if use_ocr:
@@ -176,10 +193,29 @@ async def upload_materials(
                             payload,
                             abandon_on_cancel=False,
                         )
+                        used_ocr = True
                     except OcrError as ocr_error:
                         _raise_extraction_error(MaterialExtractionError(str(ocr_error)))
                 else:
                     _raise_extraction_error(error)
+            if (
+                not used_ocr
+                and descriptor.filename.lower().endswith(".pdf")
+                and request.app.state.ocr.available()
+            ):
+                try:
+                    text = await to_thread.run_sync(
+                        partial(
+                            request.app.state.ocr.extract,
+                            descriptor.filename,
+                            descriptor.content_type,
+                            payload,
+                            local_text=text,
+                        ),
+                        abandon_on_cancel=False,
+                    )
+                except OcrError as ocr_error:
+                    _raise_extraction_error(MaterialExtractionError(str(ocr_error)))
             extracted.append(text)
 
         documents: list[MaterialDocument] = []
@@ -198,30 +234,19 @@ async def upload_materials(
                 )
             )
 
-        async with request.app.state.material_quota_locks.get(user.id):
-            _enforce_owner_quota(request, user.id, descriptors)
-            stored_objects = []
-            try:
-                indexed_documents: list[MaterialDocument] = []
-                for document, payload in zip(documents, material_payloads, strict=True):
-                    stored = request.app.state.object_storage.put(
-                        owner_id=user.id,
-                        workspace_id=project_id,
-                        material_id=document.material_id,
-                        filename=document.filename,
-                        payload=payload,
-                    )
-                    stored_objects.append(stored)
-                    indexed_documents.append(replace(document, storage_key=stored.key))
-                return request.app.state.knowledge.add_documents(
-                    owner_id=user.id,
-                    documents=indexed_documents,
-                )
-            except Exception:
-                for stored in stored_objects:
-                    if stored.created:
-                        request.app.state.object_storage.delete(stored.key)
-                raise
+        try:
+            return await to_thread.run_sync(
+                partial(
+                    _store_and_index,
+                    request,
+                    user.id,
+                    documents,
+                    material_payloads,
+                ),
+                abandon_on_cancel=False,
+            )
+        except MaterialQuotaExceededError as error:
+            _raise_quota_error(error)
     finally:
         for upload in files:
             await upload.close()

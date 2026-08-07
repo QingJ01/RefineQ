@@ -128,3 +128,30 @@ def test_admin_cannot_bypass_the_server_model_host_allowlist(tmp_path) -> None:
 
     assert response.status_code == 422
     assert "allowlist" in response.json()["error"]["message"]
+
+
+def test_admin_cannot_bypass_the_object_storage_host_allowlist(tmp_path) -> None:
+    app, _, admin_token = _tokens(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.put(
+            "/admin/integrations/object_storage",
+            json={
+                "enabled": True,
+                "config": {
+                    "endpoint_url": "https://storage.example.com",
+                    "bucket": "refineq-private",
+                    "region": "auto",
+                    "addressing_style": "path",
+                    "allow_private_network": False,
+                },
+                "secrets": {
+                    "access_key_id": "access",
+                    "secret_access_key": "secret",
+                },
+            },
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    assert response.status_code == 422
+    assert "allowlist" in response.json()["error"]["message"]

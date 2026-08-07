@@ -32,6 +32,10 @@ class IntegrationNotConfiguredError(RuntimeError):
     """Raised when an enabled capability has not been configured."""
 
 
+class IntegrationConfigurationError(RuntimeError):
+    """Raised when persisted integration configuration cannot be used safely."""
+
+
 class IntegrationRepository:
     def __init__(
         self,
@@ -40,6 +44,7 @@ class IntegrationRepository:
         encryption_key: SecretStr | str | bytes | None = None,
         key_path: Path | None = None,
         allowed_model_hosts: set[str] | None = None,
+        allowed_object_storage_hosts: set[str] | None = None,
     ) -> None:
         self.database = database
         self._configured_key = encryption_key
@@ -47,6 +52,11 @@ class IntegrationRepository:
         self._allowed_model_hosts = (
             {host.lower().rstrip(".") for host in allowed_model_hosts}
             if allowed_model_hosts is not None
+            else None
+        )
+        self._allowed_object_storage_hosts = (
+            {host.lower().rstrip(".") for host in allowed_object_storage_hosts}
+            if allowed_object_storage_hosts is not None
             else None
         )
         self._cipher: Fernet | None = None
@@ -102,7 +112,7 @@ class IntegrationRepository:
                 raise ValueError("invalid integration secret document")
             return {str(key): SecretStr(str(value)) for key, value in document.items()}
         except (InvalidToken, UnicodeError, ValueError, json.JSONDecodeError) as error:
-            raise IntegrationNotConfiguredError("Integration secrets are invalid") from error
+            raise IntegrationConfigurationError("Integration secrets are invalid") from error
 
     def _row_to_settings(self, kind: IntegrationKind, row) -> IntegrationSettings:
         return IntegrationSettings(
@@ -129,9 +139,15 @@ class IntegrationRepository:
         actor_id: str,
     ) -> PublicIntegrationSettings:
         config = validate_config(kind, payload.config)
-        if kind is not IntegrationKind.OBJECT_STORAGE and self._allowed_model_hosts is not None:
-            host = (urlsplit(str(config["base_url"])).hostname or "").lower().rstrip(".")
-            if host not in self._allowed_model_hosts:
+        allowed_hosts = (
+            self._allowed_object_storage_hosts
+            if kind is IntegrationKind.OBJECT_STORAGE
+            else self._allowed_model_hosts
+        )
+        endpoint_key = "endpoint_url" if kind is IntegrationKind.OBJECT_STORAGE else "base_url"
+        if allowed_hosts is not None:
+            host = (urlsplit(str(config[endpoint_key])).hostname or "").lower().rstrip(".")
+            if host not in allowed_hosts:
                 raise ValueError(f"Integration endpoint host {host!r} is not in the allowlist")
         unknown = set(payload.secrets) - SECRET_FIELDS[kind]
         if unknown:

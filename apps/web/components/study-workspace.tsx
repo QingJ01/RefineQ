@@ -250,6 +250,7 @@ export function StudyWorkspace() {
         token={auth.access_token}
         locale={locale}
         onClose={() => setSection("today")}
+        onLogout={logout}
       />
     );
   }
@@ -265,6 +266,8 @@ export function StudyWorkspace() {
           onOpen={openWorkspace}
           isAdmin={auth.user.role === "admin"}
           onAdmin={() => setSection("admin")}
+          onLogout={logout}
+          onToggleLocale={() => setLocale(locale === "zh" ? "en" : "zh")}
         />
       </>
     );

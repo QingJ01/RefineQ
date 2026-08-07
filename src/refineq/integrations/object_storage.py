@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
+from refineq.integrations.endpoints import assert_safe_endpoint
 from refineq.integrations.models import IntegrationKind, IntegrationSettings
 from refineq.integrations.repository import (
     IntegrationNotConfiguredError,
@@ -23,6 +27,17 @@ from refineq.storage.json_store import validate_identifier
 class StoredObject:
     key: str
     created: bool
+    _rollback_handler: Callable[[str], None] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def rollback(self) -> None:
+        """Remove only an object created by the operation that returned this handle."""
+
+        if self.created and self._rollback_handler is not None:
+            self._rollback_handler(self.key)
 
 
 class ObjectStorage(Protocol):
@@ -49,7 +64,7 @@ def material_object_key(
     owner_id = validate_identifier(owner_id, field="owner_id")
     workspace_id = validate_identifier(workspace_id, field="workspace_id")
     material_id = validate_identifier(material_id, field="material_id")
-    extension = Path(filename).suffix.lower()
+    del filename
     return str(
         PurePosixPath(
             "users",
@@ -57,7 +72,7 @@ def material_object_key(
             "workspaces",
             workspace_id,
             "materials",
-            f"{material_id}{extension}",
+            material_id,
         )
     )
 
@@ -83,10 +98,6 @@ class LocalObjectStorage:
         )
         path = (self.data_root / Path(*PurePosixPath(key).parts)).resolve()
         path.relative_to(self.data_root)
-        if path.exists():
-            if path.read_bytes() != payload:
-                raise RuntimeError("Stored material key already contains different content")
-            return StoredObject(key=key, created=False)
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.stem}-",
@@ -99,10 +110,17 @@ class LocalObjectStorage:
                 output.write(payload)
                 output.flush()
                 os.fsync(output.fileno())
-            os.replace(temporary, path)
+            try:
+                os.link(temporary, path)
+            except FileExistsError as error:
+                if path.read_bytes() != payload:
+                    raise RuntimeError(
+                        "Stored material key already contains different content"
+                    ) from error
+                return StoredObject(key=key, created=False)
         finally:
             temporary.unlink(missing_ok=True)
-        return StoredObject(key=key, created=True)
+        return StoredObject(key=key, created=True, _rollback_handler=self.delete)
 
     def delete(self, key: str) -> None:
         path = (self.data_root / Path(*PurePosixPath(key).parts)).resolve()
@@ -111,14 +129,29 @@ class LocalObjectStorage:
 
 
 class S3ObjectStorage:
-    def __init__(self, settings: IntegrationSettings, *, client_factory=None) -> None:
+    def __init__(
+        self,
+        settings: IntegrationSettings,
+        *,
+        client_factory=None,
+        endpoint_validator: Callable[[str, bool], None] | None = None,
+    ) -> None:
         if settings.kind is not IntegrationKind.OBJECT_STORAGE or not settings.enabled:
             raise IntegrationNotConfiguredError("object storage integration is not enabled")
         self.bucket = str(settings.config["bucket"])
+        self.endpoint_url = str(settings.config["endpoint_url"])
+        self.allow_private_network = bool(settings.config.get("allow_private_network", False))
+        self._endpoint_validator = endpoint_validator or (
+            lambda url, allow_private: assert_safe_endpoint(
+                url,
+                allow_private_network=allow_private,
+                allow_transparent_proxy=True,
+            )
+        )
         factory = client_factory or boto3.client
         self.client = factory(
             service_name="s3",
-            endpoint_url=str(settings.config["endpoint_url"]),
+            endpoint_url=self.endpoint_url,
             region_name=str(settings.config["region"]),
             aws_access_key_id=settings.secrets["access_key_id"].get_secret_value(),
             aws_secret_access_key=settings.secrets["secret_access_key"].get_secret_value(),
@@ -143,18 +176,36 @@ class S3ObjectStorage:
             material_id=material_id,
             filename=filename,
         )
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=key,
-            Body=payload,
-            ContentType="application/octet-stream",
-        )
-        return StoredObject(key=key, created=True)
+        digest = sha256(payload).hexdigest()
+        self._endpoint_validator(self.endpoint_url, self.allow_private_network)
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=payload,
+                ContentType="application/octet-stream",
+                IfNoneMatch="*",
+                Metadata={"sha256": digest},
+            )
+        except ClientError as error:
+            status_code = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            error_code = error.response.get("Error", {}).get("Code")
+            if status_code != 412 and error_code not in {"PreconditionFailed", "412"}:
+                raise
+            existing = self.client.head_object(Bucket=self.bucket, Key=key)
+            if existing.get("Metadata", {}).get("sha256") != digest:
+                raise RuntimeError(
+                    "Stored material key already contains different content"
+                ) from error
+            return StoredObject(key=key, created=False, _rollback_handler=self.delete)
+        return StoredObject(key=key, created=True, _rollback_handler=self.delete)
 
     def delete(self, key: str) -> None:
+        self._endpoint_validator(self.endpoint_url, self.allow_private_network)
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
     def test_connection(self) -> None:
+        self._endpoint_validator(self.endpoint_url, self.allow_private_network)
         self.client.head_bucket(Bucket=self.bucket)
 
 

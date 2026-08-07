@@ -37,6 +37,7 @@ class PlatformModelSettingsRepository:
                     "base_url": str(settings.base_url),
                     "model": settings.model,
                     "temperature": settings.temperature,
+                    "allow_private_network": settings.allow_private_network,
                 },
                 secrets={"api_key": settings.api_key},
             ),
@@ -57,6 +58,7 @@ class PlatformModelSettingsRepository:
             model=integration.config["model"],
             temperature=integration.config.get("temperature", 0.2),
             api_key=integration.secrets["api_key"],
+            allow_private_network=bool(integration.config.get("allow_private_network", False)),
         )
         self._validate_host(settings)
         return settings

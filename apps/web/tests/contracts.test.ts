@@ -9,11 +9,38 @@ import { loadNextQuestion } from "../lib/practice-flow";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "../lib/session";
 import { clearSelectedFiles } from "../lib/upload-flow";
 import {
-  buildPlanRows,
-  evidenceTone,
-  practiceStatus,
+    buildPlanRows,
+    evidenceTone,
+    practiceStatus,
+    projectIntegrationTestResult,
 } from "../lib/view-models";
 import type { StudyPlan } from "../lib/types";
+
+
+describe("administrator integration status", () => {
+  it("projects a connection test result into the visible integration status", () => {
+    const setting = {
+      kind: "ocr" as const,
+      enabled: true,
+      configured: true,
+      config: { base_url: "https://api.openai.com/v1", model: "vision" },
+      secret_hints: { api_key: "••••test" },
+      last_test_status: null,
+      last_test_message: null,
+      last_tested_at: null,
+    };
+
+    const updated = projectIntegrationTestResult(
+      setting,
+      { kind: "ocr", status: "ok", message: "Connection succeeded" },
+      "2026-08-07T12:00:00.000Z",
+    );
+
+    expect(updated.last_test_status).toBe("ok");
+    expect(updated.last_test_message).toBe("Connection succeeded");
+    expect(updated.last_tested_at).toBe("2026-08-07T12:00:00.000Z");
+  });
+});
 
 
 describe("authentication and API errors", () => {

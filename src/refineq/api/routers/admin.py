@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from refineq.api.dependencies import AdminUser
@@ -49,10 +49,14 @@ def update_integration(
     kind: IntegrationKind,
     payload: IntegrationUpdate,
     request: Request,
+    background_tasks: BackgroundTasks,
     admin: AdminUser,
 ) -> PublicIntegrationSettings:
     try:
-        return request.app.state.integrations.save(kind, payload, actor_id=admin.id)
+        updated = request.app.state.integrations.save(kind, payload, actor_id=admin.id)
+        if kind is IntegrationKind.EMBEDDING and payload.enabled:
+            background_tasks.add_task(request.app.state.knowledge.backfill_embeddings)
+        return updated
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

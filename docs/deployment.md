@@ -22,6 +22,7 @@ Before a shared or public deployment, edit `.env` and change:
 - the matching password inside `REFINEQ_DATABASE_URL` (URL-encode special characters)
 - `REFINEQ_MODEL_ENCRYPTION_KEY`
 - `REFINEQ_DOMAIN`
+- `REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS` before enabling an S3-compatible service
 
 Generate the Fernet integration-encryption key with:
 
@@ -60,8 +61,28 @@ Sign in with that account and open “系统管理”. Configure only the servic
 3. OCR only for scanned PDFs (text PDFs/DOCX/TXT/Markdown parse locally).
 4. S3-compatible storage only when the local volume is insufficient.
 
-Every integration has a server-side connection test. Endpoints must use HTTPS and the hostname must
-appear in `REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS`; browser clients never receive saved secrets.
+Every integration has a server-side connection test. Model endpoints must use HTTPS and their
+hostnames must appear in `REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS`. S3 endpoints use the separate
+`REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS` allowlist. The API resolves endpoints again before
+outbound calls and rejects loopback, link-local, private, and reserved addresses by default.
+
+Private MinIO or model gateways require both controls:
+
+1. Add the exact hostname to the corresponding server environment allowlist.
+2. Select “允许私网地址 / Allow private network” for that integration in the administrator console.
+
+Do not enable the private-network switch for public providers. Browser clients never receive saved
+secrets. Redirect following is disabled for model-provider HTTP clients.
+
+OCR rendering is bounded independently of the upload byte limit. The defaults allow up to 50 OCR
+pages, four consecutive scanned pages per provider request, 12 million pixels per page, 80 million
+pixels per document, and 40 MiB of rendered PNG data. Tune the `REFINEQ_MATERIAL_OCR_*` variables
+only after measuring worker memory. Text pages in mixed PDFs stay local; only textless pages are sent
+to the configured vision model.
+
+When the embedding integration is enabled or updated, the API schedules a bounded background
+backfill for legacy chunks that do not have vectors. Re-saving the embedding configuration safely
+retries a previously interrupted backfill.
 
 ## Enable public HTTPS
 
@@ -83,6 +104,8 @@ Invoke-RestMethod http://localhost/api/health/ready
 
 Expected checks are `storage: ok` and `database: ok`. Then smoke-test registration, admin login,
 integration tests, automatic learning-space routing, upload, question grading, and refresh recovery.
+The repository CI additionally starts PostgreSQL with pgvector and pg_trgm to verify indexed Chinese
+lexical search, vector search, JSONB persistence, and cross-connection quota locking.
 
 ## Update
 

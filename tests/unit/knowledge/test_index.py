@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from refineq.knowledge import index as index_module
-from refineq.knowledge.index import KnowledgeIndex
+from refineq.knowledge.index import KnowledgeIndex, MaterialQuotaExceededError
 
 
 def test_search_is_isolated_by_owner_and_project(tmp_path: Path) -> None:
@@ -97,3 +97,66 @@ def test_batch_index_validates_every_document_before_replacing_any_rows(
         for result in index.search(owner_id="owner", project_id="project", query="limits")
     ] == ["existing"]
     assert index.search(owner_id="owner", project_id="project", query="derivatives") == []
+
+
+def test_quota_replacement_counts_only_the_material_delta(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="project",
+        material_id="material-1",
+        filename="old.txt",
+        text="Original limits notes.",
+        size=20,
+    )
+
+    records = index.add_documents_with_quota(
+        owner_id="owner",
+        documents=[
+            index_module.MaterialDocument(
+                project_id="project",
+                material_id="material-1",
+                filename="renamed.md",
+                text="Updated limits notes.",
+                size=25,
+            )
+        ],
+        max_count=1,
+        max_bytes=25,
+    )
+
+    assert records[0].filename == "renamed.md"
+    assert index.owner_material_usage(owner_id="owner") == (1, 25)
+
+
+def test_quota_failure_preserves_the_existing_index(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="project",
+        material_id="material-1",
+        filename="limits.txt",
+        text="Original limits notes.",
+        size=20,
+    )
+
+    with pytest.raises(MaterialQuotaExceededError):
+        index.add_documents_with_quota(
+            owner_id="owner",
+            documents=[
+                index_module.MaterialDocument(
+                    project_id="project",
+                    material_id="material-2",
+                    filename="derivatives.txt",
+                    text="New derivatives notes.",
+                    size=10,
+                )
+            ],
+            max_count=1,
+            max_bytes=100,
+        )
+
+    assert [
+        result.material_id
+        for result in index.search(owner_id="owner", project_id="project", query="limits")
+    ] == ["material-1"]

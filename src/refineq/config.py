@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     forwarded_allow_ips: str = "127.0.0.1"
     model_endpoint_allowed_hosts: str = "api.openai.com"
+    object_storage_endpoint_allowed_hosts: str = ""
     model_encryption_key: SecretStr | None = None
     material_max_count_per_user: int = Field(default=500, ge=1, le=100_000)
     material_max_bytes_per_user: int = Field(
@@ -46,6 +47,11 @@ class Settings(BaseSettings):
     material_max_docx_compression_ratio: float = Field(default=100.0, gt=1.0)
     material_max_extracted_chars: int = Field(default=2_000_000, ge=1)
     material_extraction_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    material_ocr_max_pages: int = Field(default=50, ge=1, le=500)
+    material_ocr_max_images_per_request: int = Field(default=4, ge=1, le=20)
+    material_ocr_max_page_pixels: int = Field(default=12_000_000, ge=1)
+    material_ocr_max_total_pixels: int = Field(default=80_000_000, ge=1)
+    material_ocr_max_image_bytes: int = Field(default=40 * 1024 * 1024, ge=1)
     max_workspaces_per_user: int = Field(default=100, ge=1, le=10_000)
     max_projects_per_user: int = Field(default=100, ge=1, le=10_000)
     max_agent_sessions_per_user: int = Field(default=200, ge=1, le=100_000)
@@ -101,5 +107,15 @@ class Settings(BaseSettings):
         return {
             host.strip().lower().rstrip(".")
             for host in self.model_endpoint_allowed_hosts.split(",")
+            if host.strip()
+        }
+
+    @property
+    def allowed_object_storage_hosts(self) -> set[str]:
+        """Return S3 endpoint hostnames controlled by the server operator."""
+
+        return {
+            host.strip().lower().rstrip(".")
+            for host in self.object_storage_endpoint_allowed_hosts.split(",")
             if host.strip()
         }

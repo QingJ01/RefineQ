@@ -33,6 +33,7 @@ class ModelSettings(BaseModel):
     model: str = Field(min_length=1, max_length=200)
     api_key: SecretStr = Field(min_length=1, max_length=500)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    allow_private_network: bool = False
 
     @model_validator(mode="after")
     def validate_endpoint_shape(self) -> ModelSettings:
@@ -45,7 +46,7 @@ class ModelSettings(BaseModel):
             address = ip_address(host)
         except ValueError:
             return self
-        if not address.is_global:
+        if not address.is_global and not self.allow_private_network:
             raise ValueError("model base_url must not target a non-public IP address")
         return self
 
@@ -153,6 +154,7 @@ class ModelSettingsRepository:
                 .encrypt(settings.api_key.get_secret_value().encode("utf-8"))
                 .decode("ascii"),
                 "temperature": settings.temperature,
+                "allow_private_network": settings.allow_private_network,
             },
         )
         return settings

@@ -36,7 +36,10 @@ naming_convention = {
 metadata = MetaData(naming_convention=naming_convention)
 
 json_document = JSON().with_variant(JSONB(), "postgresql")
-embedding_vector = JSON().with_variant(VECTOR(EMBEDDING_DIMENSIONS), "postgresql")
+embedding_vector = JSON(none_as_null=True).with_variant(
+    VECTOR(EMBEDDING_DIMENSIONS),
+    "postgresql",
+)
 
 
 def utc_now() -> datetime:

@@ -17,7 +17,12 @@ const t = translator("en");
 describe("focused learning components", () => {
   it("renders the four administrator-managed platform capabilities", () => {
     const html = renderToStaticMarkup(
-      <AdminConsole token="admin-token" locale="zh" onClose={() => undefined} />,
+      <AdminConsole
+        token="admin-token"
+        locale="zh"
+        onClose={() => undefined}
+        onLogout={() => undefined}
+      />,
     );
 
     expect(html).toContain('class="admin-console"');
@@ -26,7 +31,9 @@ describe("focused learning components", () => {
     expect(html).toContain("语义检索");
     expect(html).toContain("扫描识别");
     expect(html).toContain("文件存储");
+    expect(html).toContain("允许私网地址");
     expect(html.match(/data-testid="integration-card-/g)).toHaveLength(4);
+    expect(html).toContain('data-testid="admin-logout"');
   });
 
   it("presents authentication as a calm RefineQ welcome card", () => {
@@ -65,6 +72,8 @@ describe("focused learning components", () => {
         workspaces={[]}
         onResolve={() => undefined}
         onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
       />,
     );
 
@@ -74,6 +83,8 @@ describe("focused learning components", () => {
     expect(html).toContain('class="home-sidebar"');
     expect(html).toContain('class="learning-composer"');
     expect(html).toContain("RefineQ");
+    expect(html).toContain('data-testid="home-logout"');
+    expect(html).toContain('data-testid="home-language"');
   });
 
   it("renders plan sessions as a numbered study path", () => {

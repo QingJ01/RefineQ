@@ -23,7 +23,6 @@ from refineq.api.limits import (
     SlidingWindowRateLimiter,
     UploadAdmissionController,
 )
-from refineq.api.locks import KeyedAsyncLockPool
 from refineq.api.routers.admin import router as admin_router
 from refineq.api.routers.agent import router as agent_router
 from refineq.api.routers.agent import workspace_router as workspace_agent_router
@@ -72,7 +71,6 @@ def create_app(
     app.state.database = database or Database(app.state.settings.resolved_database_url)
     app.state.database.initialize()
     app.state.rate_limiter = SlidingWindowRateLimiter()
-    app.state.material_quota_locks = KeyedAsyncLockPool()
     app.state.upload_admission = UploadAdmissionController(
         max_global=app.state.settings.material_upload_max_concurrent_global,
         max_per_owner=app.state.settings.material_upload_max_concurrent_per_user,
@@ -100,6 +98,7 @@ def create_app(
         encryption_key=app.state.settings.model_encryption_key,
         key_path=app.state.settings.data_root / "system" / "integration-encryption.key",
         allowed_model_hosts=app.state.settings.allowed_model_hosts,
+        allowed_object_storage_hosts=app.state.settings.allowed_object_storage_hosts,
     )
     app.state.integration_tester = IntegrationTester(app.state.integrations)
     app.state.embedding_service = PlatformEmbeddingService(app.state.integrations)
@@ -109,7 +108,12 @@ def create_app(
     )
     app.state.ocr = OcrService(
         app.state.integrations,
+        max_pages=app.state.settings.material_ocr_max_pages,
         max_chars=app.state.settings.material_max_extracted_chars,
+        max_images_per_request=app.state.settings.material_ocr_max_images_per_request,
+        max_page_pixels=app.state.settings.material_ocr_max_page_pixels,
+        max_total_pixels=app.state.settings.material_ocr_max_total_pixels,
+        max_image_bytes=app.state.settings.material_ocr_max_image_bytes,
     )
     app.state.knowledge = KnowledgeIndex(
         app.state.database,

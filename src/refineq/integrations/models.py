@@ -26,19 +26,25 @@ class IntegrationKind(StrEnum):
 
 class SecureEndpointConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    allow_private_network: bool = False
 
     @staticmethod
     def validate_endpoint(value: HttpUrl) -> HttpUrl:
         if value.scheme != "https" or value.username or value.password or value.fragment:
             raise ValueError("integration endpoint must be a credential-free HTTPS URL")
-        host = (value.host or "").strip("[]")
+        return value
+
+    @model_validator(mode="after")
+    def validate_literal_endpoint(self) -> SecureEndpointConfig:
+        endpoint = getattr(self, "base_url", None) or getattr(self, "endpoint_url", None)
+        host = (endpoint.host or "").strip("[]")
         try:
             address = ip_address(host)
         except ValueError:
-            return value
-        if not address.is_global:
+            return self
+        if not address.is_global and not self.allow_private_network:
             raise ValueError("integration endpoint must not target a non-public IP address")
-        return value
+        return self
 
 
 class ChatConfig(SecureEndpointConfig):
@@ -102,21 +108,25 @@ def default_config(kind: IntegrationKind) -> dict[str, object]:
             "base_url": "https://api.openai.com/v1",
             "model": "",
             "temperature": 0.2,
+            "allow_private_network": False,
         },
         IntegrationKind.EMBEDDING: {
             "base_url": "https://api.openai.com/v1",
             "model": "text-embedding-3-small",
             "dimensions": 1536,
+            "allow_private_network": False,
         },
         IntegrationKind.OCR: {
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4.1-mini",
+            "allow_private_network": False,
         },
         IntegrationKind.OBJECT_STORAGE: {
             "endpoint_url": "",
             "bucket": "",
             "region": "auto",
             "addressing_style": "auto",
+            "allow_private_network": False,
         },
     }
     return dict(defaults[kind])

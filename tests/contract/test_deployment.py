@@ -79,6 +79,9 @@ def test_ci_runs_python_web_browser_and_container_contracts() -> None:
         "docker compose -f infra/compose.yml config",
     ]:
         assert command in workflow
+    assert "pgvector/pgvector:" in workflow
+    assert "REFINEQ_TEST_DATABASE_URL" in workflow
+    assert "pg_isready" in workflow
 
 
 def test_python_dependencies_are_locked_and_reused_by_ci_and_container() -> None:
@@ -119,6 +122,7 @@ def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
     required_names = {
         "REFINEQ_MODEL_ENCRYPTION_KEY",
         "REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS",
+        "REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS",
         "REFINEQ_MATERIAL_MAX_COUNT_PER_USER",
         "REFINEQ_MATERIAL_MAX_BYTES_PER_USER",
         "REFINEQ_MATERIAL_MAX_REQUEST_BYTES",
@@ -132,6 +136,11 @@ def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
         "REFINEQ_MATERIAL_MAX_DOCX_COMPRESSION_RATIO",
         "REFINEQ_MATERIAL_MAX_EXTRACTED_CHARS",
         "REFINEQ_MATERIAL_EXTRACTION_TIMEOUT_SECONDS",
+        "REFINEQ_MATERIAL_OCR_MAX_PAGES",
+        "REFINEQ_MATERIAL_OCR_MAX_IMAGES_PER_REQUEST",
+        "REFINEQ_MATERIAL_OCR_MAX_PAGE_PIXELS",
+        "REFINEQ_MATERIAL_OCR_MAX_TOTAL_PIXELS",
+        "REFINEQ_MATERIAL_OCR_MAX_IMAGE_BYTES",
         "REFINEQ_MAX_WORKSPACES_PER_USER",
         "REFINEQ_MAX_PROJECTS_PER_USER",
         "REFINEQ_MAX_AGENT_SESSIONS_PER_USER",

@@ -118,3 +118,19 @@ the report and import runs:
 refineq-migrate-postgres --data-root .\data --platform-owner-email owner@example.com --dry-run
 refineq-migrate-postgres --data-root .\data --platform-owner-email owner@example.com
 ```
+
+Imported chunks intentionally enter PostgreSQL without fabricated vectors. After configuring and
+enabling the embedding integration, RefineQ schedules a bounded background backfill. Check the API
+logs for `Embedding batch failed` warnings; these messages include only the exception type and never
+provider credentials. Re-save the embedding configuration to retry missing vectors after correcting
+the provider or network issue. Lexical retrieval remains available throughout the backfill.
+
+## Integration recovery
+
+Losing or replacing `REFINEQ_MODEL_ENCRYPTION_KEY` makes saved integration secrets unreadable. The
+API fails closed in this state and does not silently redirect S3 uploads to the local volume. Restore
+the original key from the secret store or intentionally re-enter all integration credentials.
+
+If an endpoint is rejected as non-public, confirm the hostname is in the appropriate server
+allowlist. Enable “Allow private network” only for an operator-controlled private service such as
+MinIO; do not use it to bypass a misspelled or unexpected public provider address.

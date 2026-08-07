@@ -10,6 +10,22 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17
+        env:
+          POSTGRES_DB: refineq_test
+          POSTGRES_USER: refineq
+          POSTGRES_PASSWORD: refineq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U refineq -d refineq_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      REFINEQ_TEST_DATABASE_URL: postgresql+psycopg://refineq:refineq_test@127.0.0.1:5432/refineq_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
