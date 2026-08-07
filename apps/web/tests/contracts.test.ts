@@ -213,6 +213,17 @@ describe("projectless product surface", () => {
     expect(styles).toMatch(/\.auth-form-card \.primary-action\s*\{[^}]*min-height: 46px/s);
   });
 
+  it("fills the authentication stage with composed visual surfaces", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toMatch(/\.auth-form-side\s*\{[^}]*min-height: calc\(100dvh - 32px\)[^}]*margin: 16px[^}]*border-radius: 26px/s);
+    expect(styles).toMatch(/\.auth-illustration\s*\{[^}]*width: clamp\(390px, 34vw, 500px\)/s);
+    expect(styles).toMatch(/@media \(max-width: 900px\)[\s\S]*?\.auth-form-side\s*\{[^}]*min-height: auto[^}]*margin: 0/s);
+  });
+
   it("keeps the welcome illustration decorative and desktop-only", () => {
     const styles = readFileSync(
       fileURLToPath(new URL("../app/styles.css", import.meta.url)),

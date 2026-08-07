@@ -22,6 +22,7 @@ describe("focused learning components", () => {
     expect(html).toContain('class="auth-brand"');
     expect(html).toContain("RefineQ");
     expect(html).toContain('class="auth-welcome"');
+    expect(html).toContain('class="auth-form-side"');
     expect(html).not.toContain("auth-orbit");
     expect(html).toContain('data-brand-mark="refineq-q-page"');
     expect(html).toContain('data-brand-fold="true"');
