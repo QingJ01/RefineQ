@@ -243,3 +243,72 @@ def test_blank_display_name_is_a_validation_error_not_a_server_error(tmp_path: P
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_password_reset_is_one_time_and_does_not_expose_account_lookup(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            password_reset_expose_token=True,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        _register(client, "reset@example.com")
+        missing = client.post(
+            "/auth/password-reset/request",
+            json={"email": "missing@example.com"},
+        )
+        requested = client.post(
+            "/auth/password-reset/request",
+            json={"email": "reset@example.com"},
+        )
+        assert missing.status_code == 202
+        assert missing.json()["accepted"] is True
+        assert requested.status_code == 202
+        assert requested.json()["accepted"] is True
+        token = requested.json()["reset_token"]
+        assert token
+
+        reset = client.post(
+            "/auth/password-reset/complete",
+            json={"token": token, "password": "a-brand-new-secure-password"},
+        )
+        reused = client.post(
+            "/auth/password-reset/complete",
+            json={"token": token, "password": "another-secure-password"},
+        )
+        login = client.post(
+            "/auth/login",
+            json={"email": "reset@example.com", "password": "a-brand-new-secure-password"},
+        )
+
+    assert reset.status_code == 204
+    assert reused.status_code == 400
+    assert reused.json()["error"]["code"] == "invalid_reset_token"
+    assert login.status_code == 200
+    database_file = tmp_path / "data" / "system" / "refineq.sqlite3"
+    assert token not in database_file.read_bytes().decode("utf-8", errors="ignore")
+
+
+def test_password_reset_token_expires(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    user = app.state.identity.register(
+        email="expired-reset@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    issued_at = datetime(2026, 8, 7, 10, 0, tzinfo=UTC)
+    token = app.state.identity.request_password_reset(
+        user.email,
+        now=issued_at,
+        ttl=timedelta(minutes=5),
+    )
+
+    with pytest.raises(ValueError, match="reset token"):
+        app.state.identity.reset_password(
+            token,
+            "a-brand-new-secure-password",
+            now=issued_at + timedelta(minutes=6),
+        )

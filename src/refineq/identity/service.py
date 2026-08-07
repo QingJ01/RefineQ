@@ -18,7 +18,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from refineq.database.engine import Database
-from refineq.database.schema import system_settings, users, utc_now
+from refineq.database.schema import password_reset_tokens, system_settings, users, utc_now
 from refineq.identity.models import User
 
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -43,6 +43,10 @@ class InvalidTokenError(IdentityError):
 
 class TokenExpiredError(InvalidTokenError):
     """Raised when a correctly signed token is no longer valid."""
+
+
+class InvalidResetTokenError(IdentityError, ValueError):
+    """Raised for expired, used, or unknown password reset tokens."""
 
 
 class IdentityService:
@@ -162,6 +166,80 @@ class IdentityService:
         if not valid:
             raise InvalidCredentialsError("Invalid email or password")
         return self._public_user(row)
+
+    def request_password_reset(
+        self,
+        email: str,
+        *,
+        now: datetime | None = None,
+        ttl: timedelta = timedelta(minutes=20),
+    ) -> str | None:
+        if ttl <= timedelta(0):
+            raise ValueError("password reset ttl must be positive")
+        try:
+            email = self._canonical_email(email)
+        except ValueError:
+            return None
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        with self._lock, self.database.session() as session:
+            user_id = session.scalar(select(users.c.id).where(users.c.email == email))
+            if user_id is None:
+                return None
+            token = secrets.token_urlsafe(32)
+            session.execute(
+                insert(password_reset_tokens).values(
+                    token_hash=sha256(token.encode("utf-8")).hexdigest(),
+                    user_id=user_id,
+                    expires_at=observed_at + ttl,
+                    used_at=None,
+                    created_at=observed_at,
+                )
+            )
+        return token
+
+    def reset_password(
+        self,
+        token: str,
+        password: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        password_bytes = self._validate_password(password, minimum=12)
+        token_hash = sha256(token.encode("utf-8")).hexdigest()
+        with self._lock, self.database.session() as session:
+            statement = select(password_reset_tokens).where(
+                password_reset_tokens.c.token_hash == token_hash
+            )
+            if self.database.is_postgresql:
+                statement = statement.with_for_update()
+            row = session.execute(statement).one_or_none()
+            invalid = (
+                row is None
+                or row.used_at is not None
+                or self._aware(row.expires_at) <= observed_at
+            )
+            if invalid:
+                raise InvalidResetTokenError("Invalid or expired password reset token")
+            session.execute(
+                update(users)
+                .where(users.c.id == row.user_id)
+                .values(
+                    password_hash=bcrypt.hashpw(
+                        password_bytes,
+                        bcrypt.gensalt(rounds=12),
+                    ).decode("ascii"),
+                    updated_at=observed_at,
+                )
+            )
+            session.execute(
+                update(password_reset_tokens)
+                .where(
+                    password_reset_tokens.c.user_id == row.user_id,
+                    password_reset_tokens.c.used_at.is_(None),
+                )
+                .values(used_at=observed_at)
+            )
 
     def create_or_update_admin(
         self,

@@ -63,6 +63,34 @@ class LoginRequest(BaseModel):
         return value
 
 
+class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=254)
+
+
+class PasswordResetAccepted(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accepted: bool = True
+    reset_token: str | None = None
+
+
+class PasswordResetComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=20, max_length=500)
+    password: SecretStr
+
+    @field_validator("password", mode="after")
+    @classmethod
+    def validate_password_bytes(cls, value: SecretStr) -> SecretStr:
+        size = len(value.get_secret_value().encode("utf-8"))
+        if not 12 <= size <= 72:
+            raise ValueError("password must contain 12 to 72 UTF-8 bytes")
+        return value
+
+
 class AuthResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -74,6 +74,17 @@ users = Table(
     CheckConstraint("role IN ('learner', 'admin')", name="valid_role"),
 )
 
+password_reset_tokens = Table(
+    "password_reset_tokens",
+    metadata,
+    Column("token_hash", String(64), primary_key=True),
+    Column("user_id", String(128), ForeignKey("users.id"), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("used_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=utc_now),
+)
+Index("ix_password_reset_tokens_user", password_reset_tokens.c.user_id)
+
 records = Table(
     "records",
     metadata,
@@ -165,6 +176,7 @@ ALL_TABLES = (
     schema_versions,
     system_settings,
     users,
+    password_reset_tokens,
     records,
     integration_settings,
     audit_logs,
