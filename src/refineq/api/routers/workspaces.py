@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.learning.service import LearningServiceError
@@ -15,6 +15,7 @@ from refineq.workspaces.service import (
     WorkspaceRouteResponse,
     WorkspaceServiceError,
     WorkspaceSnapshot,
+    WorkspaceUpdateRequest,
 )
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -28,8 +29,15 @@ def _raise_workspace_error(error: Exception, status_code: int, code: str) -> Non
 
 
 @router.get("", response_model=list[LearningWorkspace])
-def list_workspaces(request: Request, user: CurrentUser) -> list[LearningWorkspace]:
-    return request.app.state.workspace_service.list(user.id)
+def list_workspaces(
+    request: Request,
+    user: CurrentUser,
+    include_archived: bool = False,
+) -> list[LearningWorkspace]:
+    return request.app.state.workspace_service.list(
+        user.id,
+        include_archived=include_archived,
+    )
 
 
 @router.post("/resolve", response_model=WorkspaceRouteResponse)
@@ -64,3 +72,25 @@ def workspace_snapshot(
         return request.app.state.workspace_service.snapshot(user.id, workspace_id)
     except WorkspaceNotFoundError as error:
         _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+
+
+@router.patch("/{workspace_id}", response_model=LearningWorkspace)
+def update_workspace(
+    workspace_id: str,
+    payload: WorkspaceUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> LearningWorkspace:
+    try:
+        return request.app.state.workspace_service.update(user.id, workspace_id, payload)
+    except WorkspaceNotFoundError as error:
+        _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+
+
+@router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workspace(workspace_id: str, request: Request, user: CurrentUser) -> Response:
+    try:
+        request.app.state.workspace_service.delete(user.id, workspace_id)
+    except WorkspaceNotFoundError as error:
+        _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

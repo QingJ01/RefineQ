@@ -24,6 +24,7 @@ class LearningWorkspace(BaseModel):
     topics: list[str] = Field(min_length=1, max_length=200)
     keywords: list[str] = Field(min_length=1, max_length=200)
     routing_summary: str = Field(min_length=1, max_length=500)
+    archived: bool = False
     created_at: datetime
     last_active_at: datetime
 

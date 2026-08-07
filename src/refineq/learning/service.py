@@ -23,6 +23,7 @@ from refineq.learning.models import (
     KnowledgeType,
     LearningEvidence,
     StudyPlan,
+    StudySession,
 )
 from refineq.learning.planning import build_study_plan
 from refineq.storage.json_store import RecordNotFoundError
@@ -118,6 +119,13 @@ class AnswerResponse(BaseModel):
     grading_mode: str = "fallback"
     mastery_updated: bool = True
     replayed: bool = False
+
+
+class PlanSessionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str | None = Field(default=None, pattern=r"^(planned|completed)$")
+    planned_at: datetime | None = None
 
 
 class ProgressResponse(BaseModel):
@@ -280,6 +288,40 @@ class LearningService:
         if generated is None:
             raise LearningServiceError("Plan generation failed")
         return generated
+
+    def update_plan_session(
+        self,
+        owner_id: str,
+        project_id: str,
+        session_id: str,
+        payload: PlanSessionUpdate,
+    ):
+        self._require_project(owner_id, project_id)
+        updated = None
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal updated
+            progress = self._progress(data)
+            plan = progress.get("plan")
+            if not plan:
+                raise LearningNotSeededError("Learning plan has not been created")
+            for session in plan["sessions"]:
+                if session["id"] != session_id:
+                    continue
+                if payload.status is not None:
+                    session["status"] = payload.status
+                if payload.planned_at is not None:
+                    if payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None:
+                        raise LearningConflictError("planned_at must be timezone-aware")
+                    session["planned_at"] = payload.planned_at.astimezone(UTC).isoformat()
+                updated = deepcopy(session)
+                return data
+            raise LearningConflictError("Study session not found")
+
+        self._learning.mutate(owner_id, project_id, apply)
+        if updated is None:
+            raise LearningServiceError("Study session update failed")
+        return StudySession.model_validate(updated)
 
     @staticmethod
     def _public_question(question: dict[str, Any]) -> QuestionResponse:

@@ -309,3 +309,136 @@ def test_unsafe_workspace_identifier_returns_validation_error(tmp_path: Path) ->
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_identifier"
+
+
+def test_workspace_can_be_renamed_archived_restored_and_deleted(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习高数极限"},
+        ).json()["workspace"]
+
+        renamed = client.patch(
+            f"/workspaces/{created['id']}",
+            headers=headers,
+            json={"title": "高数冲刺", "goal": "七天掌握极限"},
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["title"] == "高数冲刺"
+        assert renamed.json()["goal"] == "七天掌握极限"
+
+        archived = client.patch(
+            f"/workspaces/{created['id']}",
+            headers=headers,
+            json={"archived": True},
+        )
+        assert archived.status_code == 200
+        assert archived.json()["archived"] is True
+        assert client.get("/workspaces", headers=headers).json() == []
+        archived_list = client.get(
+            "/workspaces?include_archived=true",
+            headers=headers,
+        )
+        assert [item["id"] for item in archived_list.json()] == [created["id"]]
+
+        restored = client.patch(
+            f"/workspaces/{created['id']}",
+            headers=headers,
+            json={"archived": False},
+        )
+        assert restored.status_code == 200
+        assert restored.json()["archived"] is False
+
+        deleted = client.delete(f"/workspaces/{created['id']}", headers=headers)
+        assert deleted.status_code == 204
+        assert client.get("/workspaces", headers=headers).json() == []
+        assert client.get(
+            f"/workspaces/{created['id']}/snapshot",
+            headers=headers,
+        ).status_code == 404
+
+
+def test_workspace_lifecycle_is_owner_scoped(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习线性代数"},
+        ).json()["workspace"]["id"]
+        bob = client.post(
+            "/auth/register",
+            json={
+                "email": "workspace-bob@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Bob",
+            },
+        ).json()
+        bob_headers = {"Authorization": f"Bearer {bob['access_token']}"}
+
+        updated = client.patch(
+            f"/workspaces/{workspace_id}",
+            headers=bob_headers,
+            json={"title": "stolen"},
+        )
+        deleted = client.delete(
+            f"/workspaces/{workspace_id}",
+            headers=bob_headers,
+        )
+
+    assert updated.status_code == 404
+    assert updated.json()["error"]["code"] == "workspace_not_found"
+    assert deleted.status_code == 404
+    assert deleted.json()["error"]["code"] == "workspace_not_found"
+
+
+def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "准备微积分考试"},
+        ).json()["workspace"]["id"]
+        original = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["plan"]
+        session = original["sessions"][0]
+
+        completed = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"status": "completed"},
+        )
+        assert completed.status_code == 200
+        assert completed.json()["status"] == "completed"
+
+        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        rescheduled = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"status": "planned", "planned_at": tomorrow.isoformat()},
+        )
+        assert rescheduled.status_code == 200
+        assert rescheduled.json()["status"] == "planned"
+        assert datetime.fromisoformat(rescheduled.json()["planned_at"]) >= tomorrow - timedelta(
+            seconds=1
+        )
+
+        restored = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["plan"]["sessions"][0]
+        assert restored == rescheduled.json()

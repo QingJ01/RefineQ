@@ -52,16 +52,47 @@ class WorkspaceRepository:
         record = self._store.read(owner_id, "workspaces", workspace_id)
         return LearningWorkspace.model_validate(record.data)
 
+    def update(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        *,
+        title: str | None = None,
+        goal: str | None = None,
+        archived: bool | None = None,
+    ) -> LearningWorkspace:
+        def apply(data: dict) -> dict:
+            if title is not None:
+                data["title"] = title.strip()
+            if goal is not None:
+                data["goal"] = goal.strip()
+            if archived is not None:
+                data["archived"] = archived
+            return data
+
+        record = self._store.mutate(owner_id, "workspaces", workspace_id, apply)
+        return LearningWorkspace.model_validate(record.data)
+
     def delete(self, owner_id: str, workspace_id: str) -> None:
         self._store.delete(owner_id, "workspaces", workspace_id)
 
-    def list(self, owner_id: str) -> list[LearningWorkspace]:
+    def list(
+        self,
+        owner_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[LearningWorkspace]:
         workspaces = [
             LearningWorkspace.model_validate(record.data)
             for record in self._store.list(owner_id, "workspaces")
         ]
+        visible = (
+            workspaces
+            if include_archived
+            else [item for item in workspaces if not item.archived]
+        )
         return sorted(
-            workspaces,
+            visible,
             key=lambda item: (item.last_active_at, item.id),
             reverse=True,
         )

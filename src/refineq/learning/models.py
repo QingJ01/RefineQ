@@ -136,6 +136,7 @@ class StudySession(BaseModel):
     topic_id: str = Field(min_length=1)
     planned_at: datetime
     minutes: int = Field(ge=5, le=480)
+    status: Literal["planned", "completed"] = "planned"
 
     _normalize_planned_at = field_validator("planned_at", mode="after")(_as_utc)
 

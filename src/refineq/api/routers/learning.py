@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from refineq.api.dependencies import CurrentUser
-from refineq.learning.models import LearningEvidence, StudyPlan
+from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
 from refineq.learning.service import (
     AnswerRequest,
     AnswerResponse,
@@ -13,6 +13,7 @@ from refineq.learning.service import (
     LearningConflictError,
     LearningNotSeededError,
     LearningServiceError,
+    PlanSessionUpdate,
     ProgressResponse,
     ProjectNotFoundError,
     QuestionResponse,
@@ -124,6 +125,28 @@ def workspace_answer(
         return request.app.state.workspace_learning_service.submit_answer(
             user.id,
             workspace_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.patch(
+    "/plan/sessions/{session_id}",
+    response_model=StudySession,
+)
+def update_workspace_plan_session(
+    workspace_id: str,
+    session_id: str,
+    payload: PlanSessionUpdate,
+    request: Request,
+    user: CurrentUser,
+) -> StudySession:
+    try:
+        return request.app.state.workspace_learning_service.update_plan_session(
+            user.id,
+            workspace_id,
+            session_id,
             payload,
         )
     except LearningServiceError as error:

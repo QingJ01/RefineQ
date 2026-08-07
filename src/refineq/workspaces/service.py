@@ -63,6 +63,14 @@ class WorkspaceRouteResponse(BaseModel):
     workspace: LearningWorkspace
 
 
+class WorkspaceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    goal: str | None = Field(default=None, min_length=1, max_length=500)
+    archived: bool | None = None
+
+
 class WorkspaceSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -178,8 +186,39 @@ class WorkspaceService:
             workspace=workspace,
         )
 
-    def list(self, owner_id: str) -> list[LearningWorkspace]:
-        return self._workspaces.list(owner_id)
+    def list(
+        self,
+        owner_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[LearningWorkspace]:
+        return self._workspaces.list(owner_id, include_archived=include_archived)
+
+    def update(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        payload: WorkspaceUpdateRequest,
+    ) -> LearningWorkspace:
+        try:
+            self._workspaces.get(owner_id, workspace_id)
+            return self._workspaces.update(
+                owner_id,
+                workspace_id,
+                title=payload.title,
+                goal=payload.goal,
+                archived=payload.archived,
+            )
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+
+    def delete(self, owner_id: str, workspace_id: str) -> None:
+        try:
+            self._workspaces.get(owner_id, workspace_id)
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+        self._learning.delete(owner_id, workspace_id)
+        self._workspaces.delete(owner_id, workspace_id)
 
     def snapshot(self, owner_id: str, workspace_id: str) -> WorkspaceSnapshot:
         try:
