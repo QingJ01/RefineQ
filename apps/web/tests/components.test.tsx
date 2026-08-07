@@ -32,6 +32,9 @@ describe("focused learning components", () => {
     expect(html).not.toContain(">R</span>");
     expect(html).toContain('class="auth-memory-track"');
     expect(html.match(/class="auth-memory-step"/g)).toHaveLength(4);
+    expect(html).toContain('class="auth-illustration"');
+    expect(html).toContain("refineq-learning-illustration.png");
+    expect(html).toMatch(/<img(?=[^>]*class="auth-illustration")(?=[^>]*aria-hidden="true")[^>]*>/);
     expect(html).toContain("目标");
     expect(html).toContain("资料");
     expect(html).toContain("练习");

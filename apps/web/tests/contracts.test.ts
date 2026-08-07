@@ -200,6 +200,16 @@ describe("projectless product surface", () => {
     expect(styles).toMatch(/\.auth-copy > p\s*\{[^}]*font-size: var\(--auth-supporting-size\)/s);
     expect(styles).toMatch(/\.auth-form-heading p\s*\{[^}]*font-size: var\(--auth-card-supporting-size\)/s);
   });
+
+  it("keeps the welcome illustration decorative and desktop-only", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toMatch(/\.auth-illustration\s*\{[^}]*pointer-events: none/s);
+    expect(styles).toMatch(/@media \(max-width: 900px\)[\s\S]*?\.auth-illustration\s*\{[^}]*display: none/s);
+  });
 });
 
 

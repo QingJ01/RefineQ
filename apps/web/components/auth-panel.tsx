@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, FileText, LockKeyhole, PencilLine, Target, TrendingUp } from "lucide-react";
+import Image from "next/image";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
@@ -57,6 +58,15 @@ export function AuthPanel({
             <span className="auth-memory-step"><span className="auth-memory-icon"><TrendingUp size={17} /></span><strong>{t("learningProgress")}</strong></span>
           </div>
         </div>
+        <Image
+          className="auth-illustration"
+          src="/assets/refineq-learning-illustration.png"
+          alt=""
+          aria-hidden="true"
+          width={1254}
+          height={1254}
+          priority
+        />
       </section>
       <section className="auth-form-card">
         <header className="auth-form-heading">

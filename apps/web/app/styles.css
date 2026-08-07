@@ -308,9 +308,27 @@ textarea:focus {
   gap: 11px;
 }
 
+.auth-brand,
+.auth-copy {
+  position: relative;
+  z-index: 1;
+}
+
 .auth-copy {
   width: min(580px, 100%);
   margin: auto 0;
+}
+
+.auth-illustration {
+  position: absolute;
+  z-index: 0;
+  right: clamp(-8px, 0.5vw, 10px);
+  bottom: 0;
+  width: clamp(300px, 28vw, 400px);
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 18px 24px rgba(42, 62, 108, 0.08));
 }
 
 .auth-copy h1 {
@@ -1400,6 +1418,14 @@ textarea:focus {
   }
 }
 
+@media (max-height: 820px) and (min-width: 901px) {
+  .auth-illustration {
+    right: -14px;
+    bottom: -10px;
+    width: 260px;
+  }
+}
+
 @media (max-width: 900px) {
   .auth-stage {
     display: block;
@@ -1419,6 +1445,10 @@ textarea:focus {
   }
 
   .auth-welcome .auth-copy {
+    display: none;
+  }
+
+  .auth-illustration {
     display: none;
   }
 
