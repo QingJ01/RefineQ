@@ -125,6 +125,123 @@ def test_upload_status_and_search_are_project_scoped(tmp_path: Path) -> None:
     assert forbidden.json()["error"]["code"] == "project_not_found"
 
 
+def test_workspace_materials_can_be_listed_downloaded_and_deleted(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "workspace-materials@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习微积分"},
+        ).json()["workspace"]["id"]
+        upload = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "limits.txt",
+                    b"Limits describe an approached value.",
+                    "text/plain",
+                )
+            },
+        )
+        material = upload.json()[0]
+
+        listed = client.get(f"/workspaces/{workspace_id}/materials", headers=headers)
+        downloaded = client.get(
+            f"/workspaces/{workspace_id}/materials/{material['id']}/download",
+            headers=headers,
+        )
+
+        assert listed.status_code == 200
+        assert [item["id"] for item in listed.json()] == [material["id"]]
+        assert downloaded.status_code == 200
+        assert downloaded.content == b"Limits describe an approached value."
+        assert 'filename="limits.txt"' in downloaded.headers["content-disposition"]
+
+        deleted = client.delete(
+            f"/workspaces/{workspace_id}/materials/{material['id']}",
+            headers=headers,
+        )
+        assert deleted.status_code == 204
+        assert client.get(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+        ).json() == []
+        missing = client.get(
+            f"/workspaces/{workspace_id}/materials/{material['id']}/download",
+            headers=headers,
+        )
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "material_not_found"
+
+
+def test_workspace_material_delete_is_owner_scoped(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        alice = _register(client, "material-alice@example.com")
+        bob = _register(client, "material-bob@example.com")
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=_headers(alice),
+            json={"intent": "学习微积分"},
+        ).json()["workspace"]["id"]
+        material_id = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=_headers(alice),
+            files={"files": ("notes.txt", b"Calculus notes", "text/plain")},
+        ).json()[0]["id"]
+
+        forbidden = client.delete(
+            f"/workspaces/{workspace_id}/materials/{material_id}",
+            headers=_headers(bob),
+        )
+
+    assert forbidden.status_code == 404
+    assert forbidden.json()["error"]["code"] == "workspace_not_found"
+
+
+def test_deleting_workspace_removes_indexed_and_original_materials(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "workspace-cleanup@example.com")
+        owner = app.state.identity.authenticate(
+            email="workspace-cleanup@example.com",
+            password="correct-horse-battery-staple",
+        )
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习微积分"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"Calculus notes", "text/plain")},
+        ).json()[0]
+        storage_key = app.state.knowledge.get_material_storage_key(
+            owner_id=owner.id,
+            project_id=workspace_id,
+            material_id=material["id"],
+        )
+        stored_path = tmp_path / "data" / storage_key
+        assert stored_path.exists()
+
+        deleted = client.delete(f"/workspaces/{workspace_id}", headers=headers)
+
+    assert deleted.status_code == 204
+    assert app.state.knowledge.list_materials(
+        owner_id=owner.id,
+        project_id=workspace_id,
+    ) == []
+    assert not stored_path.exists()
+
+
 def test_mime_mismatch_has_a_stable_error(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 

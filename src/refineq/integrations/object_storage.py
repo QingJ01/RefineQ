@@ -53,6 +53,8 @@ class ObjectStorage(Protocol):
 
     def delete(self, key: str) -> None: ...
 
+    def get(self, key: str) -> bytes: ...
+
 
 def material_object_key(
     *,
@@ -126,6 +128,11 @@ class LocalObjectStorage:
         path = (self.data_root / Path(*PurePosixPath(key).parts)).resolve()
         path.relative_to(self.data_root)
         path.unlink(missing_ok=True)
+
+    def get(self, key: str) -> bytes:
+        path = (self.data_root / Path(*PurePosixPath(key).parts)).resolve()
+        path.relative_to(self.data_root)
+        return path.read_bytes()
 
 
 class S3ObjectStorage:
@@ -204,6 +211,11 @@ class S3ObjectStorage:
         self._endpoint_validator(self.endpoint_url, self.allow_private_network)
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
+    def get(self, key: str) -> bytes:
+        self._endpoint_validator(self.endpoint_url, self.allow_private_network)
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        return response["Body"].read()
+
     def test_connection(self) -> None:
         self._endpoint_validator(self.endpoint_url, self.allow_private_network)
         self.client.head_bucket(Bucket=self.bucket)
@@ -228,3 +240,6 @@ class ConfiguredObjectStorage:
 
     def delete(self, key: str) -> None:
         self._active().delete(key)
+
+    def get(self, key: str) -> bytes:
+        return self._active().get(key)

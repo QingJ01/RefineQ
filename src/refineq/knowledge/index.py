@@ -587,6 +587,58 @@ class KnowledgeIndex:
             raise MaterialNotFoundError(material_id)
         return self._material_record(row)
 
+    def get_material_storage_key(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        material_id: str,
+    ) -> str:
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        project_id = validate_identifier(project_id, field="project_id")
+        material_id = validate_identifier(material_id, field="material_id")
+        with self.database.session() as session:
+            storage_key = session.scalar(
+                select(materials.c.storage_key).where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == project_id,
+                    materials.c.material_id == material_id,
+                )
+            )
+        if not storage_key:
+            raise MaterialNotFoundError(material_id)
+        return str(storage_key)
+
+    def delete_material(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        material_id: str,
+    ) -> str:
+        storage_key = self.get_material_storage_key(
+            owner_id=owner_id,
+            project_id=project_id,
+            material_id=material_id,
+        )
+        with self._lock_for(owner_id), self.database.session() as session:
+            scope = (
+                materials.c.owner_id == owner_id,
+                materials.c.project_id == project_id,
+                materials.c.material_id == material_id,
+            )
+            session.execute(
+                delete(material_chunks).where(
+                    material_chunks.c.owner_id == owner_id,
+                    material_chunks.c.project_id == project_id,
+                    material_chunks.c.material_id == material_id,
+                )
+            )
+            deleted = session.execute(delete(materials).where(*scope))
+            if deleted.rowcount != 1:
+                raise MaterialNotFoundError(material_id)
+        return storage_key
+
     def list_materials(
         self,
         *,

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from refineq.integrations.object_storage import ConfiguredObjectStorage
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.planning import build_study_plan
@@ -93,6 +94,7 @@ class WorkspaceService:
         learning: LearningRepository,
         learning_service: LearningService,
         knowledge: KnowledgeIndex,
+        object_storage: ConfiguredObjectStorage,
         routing: WorkspaceRoutingIntelligence | None = None,
         max_workspaces: int = 100,
     ) -> None:
@@ -100,6 +102,7 @@ class WorkspaceService:
         self._learning = learning
         self._learning_service = learning_service
         self._knowledge = knowledge
+        self._object_storage = object_storage
         self._routing = routing
         self._max_workspaces = max_workspaces
 
@@ -217,6 +220,21 @@ class WorkspaceService:
             self._workspaces.get(owner_id, workspace_id)
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
+        for material in self._knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=workspace_id,
+        ):
+            storage_key = self._knowledge.get_material_storage_key(
+                owner_id=owner_id,
+                project_id=workspace_id,
+                material_id=material.id,
+            )
+            self._object_storage.delete(storage_key)
+            self._knowledge.delete_material(
+                owner_id=owner_id,
+                project_id=workspace_id,
+                material_id=material.id,
+            )
         self._learning.delete(owner_id, workspace_id)
         self._workspaces.delete(owner_id, workspace_id)
 

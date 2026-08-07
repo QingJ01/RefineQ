@@ -143,6 +143,7 @@ def create_app(
         learning=app.state.learning,
         learning_service=app.state.workspace_learning_service,
         knowledge=app.state.knowledge,
+        object_storage=app.state.object_storage,
         routing=WorkspaceRoutingIntelligence(
             app.state.model_settings,
             learning_model_transport or OpenAICompatibleStructuredTransport(),

@@ -6,9 +6,10 @@ from dataclasses import replace
 from functools import partial
 from hashlib import sha256
 from typing import Annotated
+from urllib.parse import quote
 
 from anyio import to_thread
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.integrations.ocr import OcrError
@@ -283,6 +284,28 @@ def search_materials(
     )
 
 
+@router.get("", response_model=list[MaterialRecord])
+def list_materials(
+    project_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> list[MaterialRecord]:
+    _require_project(request, user.id, project_id)
+    return request.app.state.knowledge.list_materials(
+        owner_id=user.id,
+        project_id=project_id,
+    )
+
+
+@workspace_router.get("", response_model=list[MaterialRecord])
+def list_workspace_materials(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> list[MaterialRecord]:
+    return list_materials(workspace_id, request, user)
+
+
 @workspace_router.get("/search", response_model=list[SearchResult])
 def search_workspace_materials(
     workspace_id: str,
@@ -323,3 +346,98 @@ def workspace_material_status(
     user: CurrentUser,
 ) -> MaterialRecord:
     return material_status(workspace_id, material_id, request, user)
+
+
+def _download_material(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    record = material_status(project_id, material_id, request, user)
+    try:
+        storage_key = request.app.state.knowledge.get_material_storage_key(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+        )
+        payload = request.app.state.object_storage.get(storage_key)
+    except (MaterialNotFoundError, FileNotFoundError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from error
+    escaped = record.filename.replace('"', "")
+    disposition = f'attachment; filename="{escaped}"; filename*=UTF-8\'\'{quote(record.filename)}'
+    return Response(
+        content=payload,
+        media_type=record.content_type,
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@router.get("/{material_id}/download")
+def download_material(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _download_material(project_id, material_id, request, user)
+
+
+@workspace_router.get("/{material_id}/download")
+def download_workspace_material(
+    workspace_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _download_material(workspace_id, material_id, request, user)
+
+
+def _delete_material(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    _require_project(request, user.id, project_id)
+    try:
+        storage_key = request.app.state.knowledge.get_material_storage_key(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+        )
+        request.app.state.object_storage.delete(storage_key)
+        request.app.state.knowledge.delete_material(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+        )
+    except MaterialNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_material(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _delete_material(project_id, material_id, request, user)
+
+
+@workspace_router.delete("/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workspace_material(
+    workspace_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _delete_material(workspace_id, material_id, request, user)
