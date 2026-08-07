@@ -169,6 +169,7 @@ describe("focused learning components", () => {
           ],
         }}
         onUpdateSession={() => undefined}
+        onStartSession={() => undefined}
       />,
     );
 
@@ -178,6 +179,7 @@ describe("focused learning components", () => {
     expect(html).toContain("content-card plan-card");
     expect(html).toContain('data-testid="complete-session-session-1"');
     expect(html).toContain('data-testid="defer-session-session-1"');
+    expect(html).toContain('data-testid="start-session-session-1"');
   });
 
   it("keeps long study paths focused until the learner expands them", () => {
@@ -244,12 +246,14 @@ describe("focused learning components", () => {
           attempt_count: 4,
           plan_id: "plan-1",
         }}
+        onPracticeTopic={() => undefined}
       />,
     );
 
     expect(html).toContain("derivatives");
     expect(html).toContain("34%");
     expect(html).toContain('data-testid="progress-recommendation"');
+    expect(html).toContain('data-testid="practice-recommended-topic"');
   });
 
   it("renders source evidence in a focused disclosure drawer", () => {
@@ -277,19 +281,42 @@ describe("focused learning components", () => {
     const html = renderToStaticMarkup(
       <PracticeCard
         t={t}
-        question={{ id: "question-1", topic_id: "limits", prompt: "Explain a limit" }}
+        question={{
+          id: "question-1",
+          topic_id: "limits",
+          prompt: "Explain a limit",
+          difficulty_level: 3,
+          citations: ["notes#0"],
+          sources: [{
+            citation_id: "notes#0",
+            material_id: "material-1",
+            filename: "notes.md",
+            chunk_index: 0,
+            text: "A limit is an approached value.",
+            score: 0.91,
+          }],
+          saved: false,
+        }}
         answer=""
         result={null}
         busy={false}
+        difficulty={null}
+        savedQuestions={[]}
         onAnswerChange={() => undefined}
         onGetQuestion={() => undefined}
         onSubmit={() => undefined}
+        onDifficultyChange={() => undefined}
+        onToggleSaved={() => undefined}
       />,
     );
 
     expect(html).toContain("Explain a limit");
     expect(html).not.toContain("expected_answer");
     expect(html).toContain("content-card practice-card");
+    expect(html).toContain('data-testid="practice-difficulty"');
+    expect(html).toContain('data-testid="skip-question"');
+    expect(html).toContain('data-testid="save-question"');
+    expect(html).toContain('data-testid="practice-sources"');
   });
 
   it("renders explainable AI grading feedback", () => {
@@ -319,14 +346,26 @@ describe("focused learning components", () => {
           gaps: ["缺少形式化定义"],
           misconceptions: [],
           citations: ["notes#0"],
+          sources: [{
+            citation_id: "notes#0",
+            material_id: "material-1",
+            filename: "notes.md",
+            chunk_index: 0,
+            text: "函数极限是函数值趋近的目标。",
+            score: 0.91,
+          }],
           grading_mode: "ai",
           mastery_updated: true,
           replayed: false,
         }}
         busy={false}
+        difficulty={3}
+        savedQuestions={[]}
         onAnswerChange={() => undefined}
         onGetQuestion={() => undefined}
         onSubmit={() => undefined}
+        onDifficultyChange={() => undefined}
+        onToggleSaved={() => undefined}
       />,
     );
 
@@ -336,7 +375,8 @@ describe("focused learning components", () => {
     expect(html).toContain("缺少形式化定义");
     expect(html).toContain("难度 3");
     expect(html).toContain("AI 判分");
-    expect(html).toContain("notes#0");
+    expect(html).not.toContain("notes#0");
+    expect(html).toContain('data-testid="practice-sources"');
   });
 
   it("offers a next question after grading instead of resubmitting the old one", () => {
@@ -364,14 +404,52 @@ describe("focused learning components", () => {
           replayed: false,
         }}
         busy={false}
+        difficulty={null}
+        savedQuestions={[]}
         onAnswerChange={() => undefined}
         onGetQuestion={() => undefined}
         onSubmit={() => undefined}
+        onDifficultyChange={() => undefined}
+        onToggleSaved={() => undefined}
       />,
     );
 
     expect(html).toContain('data-testid="next-question"');
+    expect(html).toContain('data-testid="retry-topic"');
     expect(html).not.toContain('data-testid="submit-answer"');
+  });
+
+  it("renders durable saved questions as a reusable practice list", () => {
+    const html = renderToStaticMarkup(
+      <PracticeCard
+        t={t}
+        question={null}
+        answer=""
+        result={null}
+        busy={false}
+        difficulty={null}
+        savedQuestions={[{
+          id: "saved-question",
+          topic_id: "limits",
+          prompt: "Explain a one-sided limit",
+          difficulty_level: 4,
+          citations: [],
+          sources: [],
+          mode: "ai",
+          saved: true,
+          saved_at: "2026-08-07T08:00:00Z",
+        }]}
+        onAnswerChange={() => undefined}
+        onGetQuestion={() => undefined}
+        onSubmit={() => undefined}
+        onDifficultyChange={() => undefined}
+        onToggleSaved={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Explain a one-sided limit");
+    expect(html).toContain('data-testid="practice-saved-question"');
+    expect(html).toContain('data-testid="practice-saved-topic"');
   });
 
   it("renders materials from the controlled workspace snapshot", () => {

@@ -284,6 +284,67 @@ describe("recoverable client workflows", () => {
 });
 
 
+describe("targeted and saved practice API", () => {
+  it("sends topic, difficulty, and replacement intent without leaking them into paths", async () => {
+    let requestedPath = "";
+    const client = new ApiClient("/api", async (input) => {
+      requestedPath = String(input);
+      return new Response(JSON.stringify({
+        id: "question-2",
+        topic_id: "limits",
+        prompt: "Explain a limit",
+        difficulty_level: 4,
+        citations: [],
+        sources: [],
+        mode: "ai",
+        saved: false,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.getWorkspaceQuestion("token", "workspace-1", {
+      topicId: "limits",
+      difficulty: 4,
+      replace: true,
+    });
+
+    expect(requestedPath).toBe(
+      "/api/workspaces/workspace-1/learning/question?topic_id=limits&difficulty=4&replace=true",
+    );
+  });
+
+  it("persists and lists saved questions", async () => {
+    const requests: Array<{ path: string; method: string; body: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({
+        path: String(input),
+        method: init?.method ?? "GET",
+        body: String(init?.body ?? ""),
+      });
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.setWorkspaceQuestionSaved("token", "workspace-1", "question-1", true);
+    await client.listWorkspaceSavedQuestions("token", "workspace-1");
+
+    expect(requests).toEqual([
+      {
+        path: "/api/workspaces/workspace-1/learning/questions/question-1/saved",
+        method: "PUT",
+        body: JSON.stringify({ saved: true }),
+      },
+      {
+        path: "/api/workspaces/workspace-1/learning/questions/saved",
+        method: "GET",
+        body: "",
+      },
+    ]);
+  });
+});
+
+
 describe("projectless product surface", () => {
   it("does not ship the retired project wizard or call project routes", () => {
     const wizard = fileURLToPath(new URL("../components/goal-wizard.tsx", import.meta.url));

@@ -40,6 +40,7 @@ export interface WorkspaceSnapshot {
   plan: StudyPlan | null;
   evidence: LearningEvidence[];
   materials: MaterialRecord[];
+  saved_questions?: SavedPracticeQuestion[];
 }
 
 export interface StudySession {
@@ -72,7 +73,20 @@ export interface PracticeQuestion {
   prompt: string;
   difficulty_level?: number;
   citations?: string[];
+  sources?: SearchSource[];
   mode?: "ai" | "fallback";
+  saved?: boolean;
+}
+
+export interface SavedPracticeQuestion extends PracticeQuestion {
+  saved: boolean;
+  saved_at: string | null;
+}
+
+export interface PracticeRequest {
+  topicId?: string;
+  difficulty?: number;
+  replace?: boolean;
 }
 
 export interface AnswerResult {
@@ -89,6 +103,7 @@ export interface AnswerResult {
   gaps: string[];
   misconceptions: string[];
   citations: string[];
+  sources?: SearchSource[];
   grading_mode: "ai" | "fallback";
   mastery_updated: boolean;
   replayed: boolean;

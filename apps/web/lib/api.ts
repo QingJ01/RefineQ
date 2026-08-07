@@ -11,10 +11,12 @@ import type {
   IntegrationUpdateInput,
   MaterialRecord,
   PasswordResetAccepted,
+  PracticeRequest,
   PracticeQuestion,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
+  SavedPracticeQuestion,
   StudySession,
   User,
   WorkspaceRoute,
@@ -183,13 +185,43 @@ export class ApiClient {
   getWorkspaceQuestion(
     token: string,
     workspaceId: string,
+    options: PracticeRequest = {},
     signal?: AbortSignal,
   ): Promise<PracticeQuestion> {
+    const query = new URLSearchParams();
+    if (options.topicId) query.set("topic_id", options.topicId);
+    if (options.difficulty !== undefined) query.set("difficulty", String(options.difficulty));
+    if (options.replace) query.set("replace", "true");
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request(
-      `/workspaces/${workspaceId}/learning/question`,
+      `/workspaces/${workspaceId}/learning/question${suffix}`,
       { signal },
       token,
       this.longRequestTimeouts.model,
+    );
+  }
+
+  setWorkspaceQuestionSaved(
+    token: string,
+    workspaceId: string,
+    questionId: string,
+    saved: boolean,
+  ): Promise<SavedPracticeQuestion> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/questions/${questionId}/saved`,
+      { method: "PUT", body: JSON.stringify({ saved }) },
+      token,
+    );
+  }
+
+  listWorkspaceSavedQuestions(
+    token: string,
+    workspaceId: string,
+  ): Promise<SavedPracticeQuestion[]> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/questions/saved`,
+      {},
+      token,
     );
   }
 

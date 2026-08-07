@@ -39,7 +39,9 @@ import type {
   Locale,
   MaterialRecord,
   PracticeQuestion,
+  PracticeRequest,
   Progress,
+  SavedPracticeQuestion,
   StudySession,
   StudyPlan,
   SearchSource,
@@ -69,10 +71,14 @@ export function StudyWorkspace({
   const [evidence, setEvidence] = useState<LearningEvidence[]>([]);
   const [materials, setMaterials] = useState<MaterialRecord[]>([]);
   const [question, setQuestion] = useState<PracticeQuestion | null>(null);
+  const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<AnswerResult | null>(null);
+  const [practiceDifficulty, setPracticeDifficulty] = useState<number | null>(null);
   const section = initialSection;
-  const [busy, setBusy] = useState(false);
+  const [homeBusy, setHomeBusy] = useState(false);
+  const [practiceBusy, setPracticeBusy] = useState(false);
+  const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
   const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
@@ -94,6 +100,7 @@ export function StudyWorkspace({
     setPlan(snapshot.plan);
     setEvidence(snapshot.evidence);
     setMaterials(snapshot.materials);
+    setSavedQuestions(snapshot.saved_questions ?? []);
     setQuestion(null);
     setResult(null);
     setAnswer("");
@@ -189,7 +196,7 @@ export function StudyWorkspace({
     targetSection: LearningSection = "today",
   ) {
     if (!token) return;
-    setBusy(true);
+    setHomeBusy(true);
     setError("");
     try {
       const snapshot = await api.getWorkspaceSnapshot(token, target.id);
@@ -204,13 +211,13 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setHomeBusy(false);
     }
   }
 
   async function resolveIntent(intent: string) {
     if (!auth) return;
-    setBusy(true);
+    setHomeBusy(true);
     setError("");
     try {
       const route = await api.resolveWorkspace(auth.access_token, intent);
@@ -235,17 +242,17 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setHomeBusy(false);
     }
   }
 
-  async function getQuestion() {
+  async function getQuestion(request: PracticeRequest = {}) {
     if (!auth || !workspace) return;
-    setBusy(true);
+    setPracticeBusy(true);
     setError("");
     try {
       await loadNextQuestion(
-        () => api.getWorkspaceQuestion(auth.access_token, workspace.id),
+        () => api.getWorkspaceQuestion(auth.access_token, workspace.id, request),
         (nextQuestion) => {
           setQuestion(nextQuestion);
           setResult(null);
@@ -255,13 +262,13 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setPracticeBusy(false);
     }
   }
 
   async function submitAnswer() {
     if (!auth || !workspace || !question) return;
-    setBusy(true);
+    setPracticeBusy(true);
     try {
       setResult(
         await api.submitWorkspaceAnswer(
@@ -277,8 +284,46 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setPracticeBusy(false);
     }
+  }
+
+  async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean) {
+    if (!auth || !workspace) return;
+    setPracticeBusy(true);
+    setError("");
+    try {
+      const updated = await api.setWorkspaceQuestionSaved(
+        auth.access_token,
+        workspace.id,
+        target.id,
+        saved,
+      );
+      setQuestion((current) => current?.id === updated.id
+        ? { ...current, saved: updated.saved }
+        : current);
+      setSavedQuestions((current) => updated.saved
+        ? [updated, ...current.filter((item) => item.id !== updated.id)]
+        : current.filter((item) => item.id !== updated.id));
+    } catch (caught) {
+      reportError(caught);
+    } finally {
+      setPracticeBusy(false);
+    }
+  }
+
+  async function practiceTopic(topicId: string, difficulty?: number) {
+    await getQuestion({
+      topicId,
+      difficulty: difficulty ?? practiceDifficulty ?? undefined,
+      replace: question !== null,
+    });
+    window.requestAnimationFrame(() => {
+      document.getElementById("active-practice")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
   }
 
   async function uploadMaterials(files: File[], signal?: AbortSignal): Promise<MaterialRecord[]> {
@@ -343,7 +388,7 @@ export function StudyWorkspace({
     input: { title?: string; archived?: boolean },
   ) {
     if (!auth) return;
-    setBusy(true);
+    setHomeBusy(true);
     setError("");
     try {
       const updated = await api.updateWorkspace(auth.access_token, target.id, input);
@@ -353,13 +398,13 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setHomeBusy(false);
     }
   }
 
   async function deleteLearningWorkspace(target: LearningWorkspace) {
     if (!auth) return;
-    setBusy(true);
+    setHomeBusy(true);
     setError("");
     try {
       await api.deleteWorkspace(auth.access_token, target.id);
@@ -367,13 +412,13 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setHomeBusy(false);
     }
   }
 
   async function toggleArchivedWorkspaces(show: boolean) {
     if (!auth) return;
-    setBusy(true);
+    setHomeBusy(true);
     setError("");
     try {
       setWorkspaces(await api.listWorkspaces(auth.access_token, show));
@@ -381,7 +426,7 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
     } finally {
-      setBusy(false);
+      setHomeBusy(false);
     }
   }
 
@@ -390,6 +435,7 @@ export function StudyWorkspace({
     input: { status?: "planned" | "completed"; planned_at?: string },
   ) {
     if (!auth || !workspace) return;
+    setBusySessionId(session.id);
     setError("");
     try {
       const updated = await api.updateWorkspacePlanSession(
@@ -404,6 +450,8 @@ export function StudyWorkspace({
       } : current);
     } catch (caught) {
       reportError(caught);
+    } finally {
+      setBusySessionId(null);
     }
   }
 
@@ -467,7 +515,7 @@ export function StudyWorkspace({
         {error && <div className="error-banner" role="alert"><strong>{t("error")}</strong><span>{error}</span></div>}
         <LearningHome
           t={t}
-          busy={busy}
+          busy={homeBusy}
           workspaces={workspaces}
           onResolve={resolveIntent}
           onOpen={openWorkspace}
@@ -592,9 +640,29 @@ export function StudyWorkspace({
           {section === "today" && (
             <div className="today-grid">
               <div className="daily-heading"><span className="kicker">TODAY&apos;S FOCUS</span><h2>{t("today")}</h2></div>
-              <PlanTimeline plan={plan} locale={locale} t={t} onUpdateSession={updatePlanSession} />
-              <PracticeCard question={question} answer={answer} result={result} busy={busy} onAnswerChange={setAnswer} onGetQuestion={getQuestion} onSubmit={submitAnswer} t={t} />
-              <ProgressInsights progress={progress} t={t} />
+               <PlanTimeline
+                 plan={plan}
+                 locale={locale}
+                 t={t}
+                 onUpdateSession={updatePlanSession}
+                 onStartSession={(session) => practiceTopic(session.topic_id)}
+                 busySessionId={busySessionId}
+               />
+               <PracticeCard
+                 question={question}
+                 answer={answer}
+                 result={result}
+                 busy={practiceBusy}
+                 difficulty={practiceDifficulty}
+                 savedQuestions={savedQuestions}
+                 onAnswerChange={setAnswer}
+                 onGetQuestion={getQuestion}
+                 onSubmit={submitAnswer}
+                 onDifficultyChange={setPracticeDifficulty}
+                 onToggleSaved={toggleSavedQuestion}
+                 t={t}
+               />
+               <ProgressInsights progress={progress} t={t} onPracticeTopic={practiceTopic} />
             </div>
           )}
           {section === "materials" && (

@@ -7,9 +7,11 @@ import type { Progress } from "@/lib/types";
 export function ProgressInsights({
   progress,
   t,
+  onPracticeTopic,
 }: {
   progress: Progress | null;
   t: Translator;
+  onPracticeTopic?: (topicId: string) => void | Promise<void>;
 }) {
   const topics = Object.entries(progress?.mastery ?? {})
     .sort((left, right) => left[1] - right[1]);
@@ -43,6 +45,11 @@ export function ProgressInsights({
         <div className="progress-recommendation" data-testid="progress-recommendation">
           <ArrowUpRight size={17} />
           <span>{t("recommendedNext")} <strong>{recommended[0]}</strong></span>
+          <button
+            type="button"
+            data-testid="practice-recommended-topic"
+            onClick={() => void onPracticeTopic?.(recommended[0])}
+          >{t("practiceRecommended")}</button>
         </div>
       )}
     </section>

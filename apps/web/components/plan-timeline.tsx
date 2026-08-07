@@ -11,6 +11,8 @@ export function PlanTimeline({
   locale,
   t,
   onUpdateSession,
+  onStartSession,
+  busySessionId,
 }: {
   plan: StudyPlan | null;
   locale: Locale;
@@ -19,6 +21,8 @@ export function PlanTimeline({
     session: StudySession,
     input: { status?: "planned" | "completed"; planned_at?: string },
   ) => void | Promise<void>;
+  onStartSession?: (session: StudySession) => void | Promise<void>;
+  busySessionId?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -53,7 +57,15 @@ export function PlanTimeline({
             <div className="plan-session-actions">
               <button
                 type="button"
+                className="plan-start-action"
+                data-testid={`start-session-${session.id}`}
+                disabled={busySessionId === session.id}
+                onClick={() => void onStartSession?.(session)}
+              >{t("startSession")}</button>
+              <button
+                type="button"
                 data-testid={`complete-session-${session.id}`}
+                disabled={busySessionId === session.id}
                 onClick={() => void onUpdateSession?.(session, {
                   status: session.status === "completed" ? "planned" : "completed",
                 })}
@@ -61,6 +73,7 @@ export function PlanTimeline({
               <button
                 type="button"
                 data-testid={`defer-session-${session.id}`}
+                disabled={busySessionId === session.id}
                 onClick={() => void onUpdateSession?.(session, { planned_at: deferredAt.toISOString() })}
               >{t("deferSession")}</button>
             </div>
