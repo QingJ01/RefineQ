@@ -138,19 +138,20 @@ def create_app(
         app.state.learning,
         app.state.learning_intelligence,
     )
+    app.state.sessions = SessionRepository(app.state.store)
     app.state.workspace_service = WorkspaceService(
         workspaces=app.state.workspaces,
         learning=app.state.learning,
         learning_service=app.state.workspace_learning_service,
         knowledge=app.state.knowledge,
         object_storage=app.state.object_storage,
+        sessions=app.state.sessions,
         routing=WorkspaceRoutingIntelligence(
             app.state.model_settings,
             learning_model_transport or OpenAICompatibleStructuredTransport(),
         ),
         max_workspaces=app.state.settings.max_workspaces_per_user,
     )
-    app.state.sessions = SessionRepository(app.state.store)
     app.state.agent = AgentService(
         projects=app.state.projects,
         learning=app.state.learning,

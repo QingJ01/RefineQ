@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
 
@@ -45,6 +46,10 @@ class AgentSessionConflictError(AgentServiceError):
 
 class AgentSessionLimitError(AgentServiceError):
     code = "agent_session_limit"
+
+
+class AgentSessionNotFoundError(AgentServiceError):
+    code = "agent_session_not_found"
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +149,29 @@ class AgentChatResponse(BaseModel):
     sources: list[SearchResult]
 
 
+class AgentMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    role: str
+    content: str
+    citations: list[str] = Field(default_factory=list)
+
+
+class AgentSessionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    workspace_id: str
+    preview: str
+    message_count: int = Field(ge=0)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentSessionDetail(AgentSessionSummary):
+    messages: list[AgentMessage]
+
+
 class AgentService:
     def __init__(
         self,
@@ -169,6 +197,59 @@ class AgentService:
             self._projects.get(owner_id, project_id)
         except RecordNotFoundError as error:
             raise AgentProjectNotFoundError("Project not found") from error
+
+    @staticmethod
+    def _public_session(data: dict, *, include_messages: bool) -> AgentSessionDetail:
+        messages = [AgentMessage.model_validate(item) for item in data.get("messages", [])]
+        preview = next(
+            (item.content for item in reversed(messages) if item.role == "user"),
+            "",
+        )
+        created_at = datetime.fromisoformat(data["created_at"])
+        updated_at = datetime.fromisoformat(data.get("updated_at", data["created_at"]))
+        return AgentSessionDetail(
+            id=data["session_id"],
+            workspace_id=data.get("workspace_id") or data["project_id"],
+            preview=preview,
+            message_count=len(messages),
+            created_at=created_at,
+            updated_at=updated_at,
+            messages=messages if include_messages else [],
+        )
+
+    def list_sessions(self, owner_id: str, project_id: str) -> list[AgentSessionSummary]:
+        self._require_project(owner_id, project_id)
+        sessions = []
+        for record in self._sessions.list(owner_id):
+            data = record.data
+            workspace_id = data.get("workspace_id") or data.get("project_id")
+            if workspace_id != project_id or not data.get("session_id"):
+                continue
+            detail = self._public_session(data, include_messages=False)
+            sessions.append(
+                AgentSessionSummary.model_validate(detail.model_dump(exclude={"messages"}))
+            )
+        return sorted(sessions, key=lambda item: (item.updated_at, item.id), reverse=True)
+
+    def get_session(
+        self,
+        owner_id: str,
+        project_id: str,
+        session_id: str,
+    ) -> AgentSessionDetail:
+        self._require_project(owner_id, project_id)
+        try:
+            record = self._sessions.get(owner_id, session_id)
+        except RecordNotFoundError as error:
+            raise AgentSessionNotFoundError("Agent session not found") from error
+        workspace_id = record.data.get("workspace_id") or record.data.get("project_id")
+        if workspace_id != project_id:
+            raise AgentSessionNotFoundError("Agent session not found")
+        return self._public_session(record.data, include_messages=True)
+
+    def delete_session(self, owner_id: str, project_id: str, session_id: str) -> None:
+        self.get_session(owner_id, project_id, session_id)
+        self._sessions.delete(owner_id, session_id)
 
     def chat(
         self,
@@ -278,6 +359,10 @@ class AgentService:
         reply_text = _sanitize_reply(reply.text, set(available))
 
         def append_messages(data):
+            observed_at = datetime.now(UTC).isoformat()
+            data.setdefault("session_id", session_id)
+            data.setdefault("created_at", observed_at)
+            data["updated_at"] = observed_at
             data["messages"].extend(
                 [
                     {"role": "user", "content": payload.message.strip()},
@@ -314,7 +399,14 @@ class AgentService:
                     self._sessions.create(
                         owner_id,
                         session_id,
-                        append_messages({"workspace_id": project_id, "messages": [], "turns": {}}),
+                        append_messages(
+                            {
+                                "session_id": session_id,
+                                "workspace_id": project_id,
+                                "messages": [],
+                                "turns": {},
+                            }
+                        ),
                     )
                 else:
                     concurrent_workspace_id = concurrent_session.data.get(

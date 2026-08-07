@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from refineq.agent.service import (
     AgentChatRequest,
@@ -11,7 +11,10 @@ from refineq.agent.service import (
     AgentProjectNotFoundError,
     AgentServiceError,
     AgentSessionConflictError,
+    AgentSessionDetail,
     AgentSessionLimitError,
+    AgentSessionNotFoundError,
+    AgentSessionSummary,
 )
 from refineq.agent.settings import ModelNotConfiguredError
 from refineq.api.dependencies import CurrentUser
@@ -98,3 +101,77 @@ def workspace_chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             code=error.code,
         )
+
+
+@workspace_router.get("/sessions", response_model=list[AgentSessionSummary])
+def list_workspace_sessions(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> list[AgentSessionSummary]:
+    try:
+        return request.app.state.workspace_agent.list_sessions(user.id, workspace_id)
+    except AgentProjectNotFoundError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="workspace_not_found",
+        )
+
+
+@workspace_router.get("/sessions/{session_id}", response_model=AgentSessionDetail)
+def get_workspace_session(
+    workspace_id: str,
+    session_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> AgentSessionDetail:
+    try:
+        return request.app.state.workspace_agent.get_session(
+            user.id,
+            workspace_id,
+            session_id,
+        )
+    except AgentProjectNotFoundError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="workspace_not_found",
+        )
+    except AgentSessionNotFoundError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=error.code,
+        )
+
+
+@workspace_router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_workspace_session(
+    workspace_id: str,
+    session_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    try:
+        request.app.state.workspace_agent.delete_session(
+            user.id,
+            workspace_id,
+            session_id,
+        )
+    except AgentProjectNotFoundError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="workspace_not_found",
+        )
+    except AgentSessionNotFoundError as error:
+        _raise_agent_error(
+            error,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=error.code,
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -15,6 +15,7 @@ from refineq.learning.planning import build_study_plan
 from refineq.learning.service import LearningService, ProgressResponse, SeedRequest, TopicSeed
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
+from refineq.storage.sessions import SessionRepository
 from refineq.storage.workspaces import WorkspaceRepository
 from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
@@ -95,6 +96,7 @@ class WorkspaceService:
         learning_service: LearningService,
         knowledge: KnowledgeIndex,
         object_storage: ConfiguredObjectStorage,
+        sessions: SessionRepository,
         routing: WorkspaceRoutingIntelligence | None = None,
         max_workspaces: int = 100,
     ) -> None:
@@ -103,6 +105,7 @@ class WorkspaceService:
         self._learning_service = learning_service
         self._knowledge = knowledge
         self._object_storage = object_storage
+        self._sessions = sessions
         self._routing = routing
         self._max_workspaces = max_workspaces
 
@@ -236,6 +239,7 @@ class WorkspaceService:
                 material_id=material.id,
             )
         self._learning.delete(owner_id, workspace_id)
+        self._sessions.delete_for_workspace(owner_id, workspace_id)
         self._workspaces.delete(owner_id, workspace_id)
 
     def snapshot(self, owner_id: str, workspace_id: str) -> WorkspaceSnapshot:

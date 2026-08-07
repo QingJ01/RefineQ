@@ -35,6 +35,21 @@ class SessionRepository:
     def count(self, owner_id: str) -> int:
         return len(self._store.list(owner_id, "sessions"))
 
+    def list(self, owner_id: str) -> list[StoredRecord]:
+        return self._store.list(owner_id, "sessions")
+
+    def delete(self, owner_id: str, session_id: str) -> None:
+        self._store.delete(owner_id, "sessions", session_id)
+
+    def delete_for_workspace(self, owner_id: str, workspace_id: str) -> None:
+        for record in self.list(owner_id):
+            data = record.data
+            if (data.get("workspace_id") or data.get("project_id")) != workspace_id:
+                continue
+            session_id = data.get("session_id")
+            if isinstance(session_id, str):
+                self.delete(owner_id, session_id)
+
     def mutate(
         self,
         owner_id: str,

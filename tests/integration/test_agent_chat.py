@@ -511,3 +511,129 @@ def test_concurrent_retry_of_the_same_agent_turn_is_idempotent(tmp_path: Path) -
     session = app.state.sessions.get(user["user_id"], "stable-session")
     assert len(session.data["messages"]) == 2
     assert session.data["turns"]["stable-turn"]["message"] == responses[0][1]["message"]
+
+
+def test_workspace_agent_sessions_can_be_listed_restored_and_deleted(tmp_path: Path) -> None:
+    transport = FakeModelTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "session-history@example.com")
+        headers = _headers(user["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习高数导数"},
+        ).json()["workspace"]["id"]
+        _configure_model(app)
+        first = client.post(
+            f"/workspaces/{workspace_id}/agent/chat",
+            headers=headers,
+            json={"session_id": "older-session", "message": "First question"},
+        )
+        second = client.post(
+            f"/workspaces/{workspace_id}/agent/chat",
+            headers=headers,
+            json={"session_id": "newer-session", "message": "Second question"},
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+        sessions = client.get(
+            f"/workspaces/{workspace_id}/agent/sessions",
+            headers=headers,
+        )
+        assert sessions.status_code == 200
+        assert [item["id"] for item in sessions.json()] == [
+            "newer-session",
+            "older-session",
+        ]
+        assert sessions.json()[0]["message_count"] == 2
+        assert sessions.json()[0]["preview"] == "Second question"
+
+        restored = client.get(
+            f"/workspaces/{workspace_id}/agent/sessions/older-session",
+            headers=headers,
+        )
+        assert restored.status_code == 200
+        assert [item["role"] for item in restored.json()["messages"]] == [
+            "user",
+            "assistant",
+        ]
+        assert restored.json()["messages"][0]["content"] == "First question"
+
+        deleted = client.delete(
+            f"/workspaces/{workspace_id}/agent/sessions/older-session",
+            headers=headers,
+        )
+        assert deleted.status_code == 204
+        missing = client.get(
+            f"/workspaces/{workspace_id}/agent/sessions/older-session",
+            headers=headers,
+        )
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "agent_session_not_found"
+
+
+def test_workspace_agent_session_history_is_owner_scoped(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=FakeModelTransport(),
+    )
+
+    with TestClient(app) as client:
+        alice = _register(client, "session-alice@example.com")
+        bob = _register(client, "session-bob@example.com")
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=_headers(alice["token"]),
+            json={"intent": "复习高数导数"},
+        ).json()["workspace"]["id"]
+        _configure_model(app)
+        client.post(
+            f"/workspaces/{workspace_id}/agent/chat",
+            headers=_headers(alice["token"]),
+            json={"session_id": "private-session", "message": "Private question"},
+        )
+
+        forbidden = client.get(
+            f"/workspaces/{workspace_id}/agent/sessions/private-session",
+            headers=_headers(bob["token"]),
+        )
+
+    assert forbidden.status_code == 404
+    assert forbidden.json()["error"]["code"] in {
+        "workspace_not_found",
+        "agent_session_not_found",
+    }
+
+
+def test_deleting_workspace_removes_agent_sessions(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=FakeModelTransport(),
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "session-cleanup@example.com")
+        headers = _headers(user["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习高数导数"},
+        ).json()["workspace"]["id"]
+        _configure_model(app)
+        client.post(
+            f"/workspaces/{workspace_id}/agent/chat",
+            headers=headers,
+            json={"session_id": "cleanup-session", "message": "Explain derivatives"},
+        )
+        assert app.state.sessions.count(user["user_id"]) == 1
+
+        deleted = client.delete(f"/workspaces/{workspace_id}", headers=headers)
+
+    assert deleted.status_code == 204
+    assert app.state.sessions.count(user["user_id"]) == 0
