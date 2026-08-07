@@ -8,6 +8,7 @@ import {
   Plus,
   RotateCcw,
   Send,
+  Settings2,
   Square,
   Trash2,
 } from "lucide-react";
@@ -43,10 +44,14 @@ export function AgentPanel({
   token,
   workspaceId,
   t,
+  isAdmin = false,
+  onOpenSettings,
 }: {
   token: string;
   workspaceId: string;
   t: Translator;
+  isAdmin?: boolean;
+  onOpenSettings?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
@@ -62,6 +67,13 @@ export function AgentPanel({
   const [deleteTarget, setDeleteTarget] = useState<AgentSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
   const requestController = useRef<AbortController | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suggestionKeys = [
+    "agentSuggestionWeakness",
+    "agentSuggestionQuiz",
+    "agentSuggestionPlan",
+  ] as const;
 
   const loadSessions = useCallback(async () => {
     setSessions(await api.listWorkspaceAgentSessions(token, workspaceId));
@@ -82,6 +94,14 @@ export function AgentPanel({
       requestController.current?.abort();
     };
   }, [token, workspaceId, t]);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [busy, messages.length]);
+
+  useEffect(() => () => {
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+  }, []);
 
   async function sendMessage(sent: string, retry?: AgentTurn) {
     if (!sent || busy) return;
@@ -194,9 +214,14 @@ export function AgentPanel({
   }
 
   async function copyMessage(content: string, index: number) {
-    await navigator.clipboard.writeText(content);
-    setCopiedIndex(index);
-    window.setTimeout(() => setCopiedIndex(null), 1500);
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedIndex(index);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopiedIndex(null), 1500);
+    } catch {
+      setError(t("clipboardFailed"));
+    }
   }
 
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -216,9 +241,14 @@ export function AgentPanel({
         <div className="agent-heading-actions">
           <button type="button" data-testid="agent-history" className="quiet-button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((current) => !current)}><History size={15} /> {t("conversationHistory")}</button>
           <button type="button" data-testid="agent-new-conversation" className="quiet-button" onClick={newConversation}><Plus size={15} /> {t("newConversation")}</button>
-          <span data-testid="model-status" className={modelConfigured ? "agent-model-status ready" : "agent-model-status"}>
-            {modelConfigured ? "AI READY" : "ADMIN SETUP REQUIRED"}
+          <span data-testid="model-status" className={modelConfigured ? "agent-model-status ready" : modelConfigured === null ? "agent-model-status checking" : "agent-model-status"}>
+            {t(modelConfigured ? "aiReady" : modelConfigured === null ? "checkingModel" : "adminSetupRequired")}
           </span>
+          {modelConfigured === false && isAdmin && (
+            <button type="button" className="quiet-button agent-settings-link" onClick={onOpenSettings}>
+              <Settings2 size={14} /> {t("configureModel")}
+            </button>
+          )}
         </div>
       </div>
       {historyOpen && (
@@ -243,7 +273,17 @@ export function AgentPanel({
       )}
       <div className="chat-log" role="log" aria-live="polite" aria-busy={busy}>
         {messages.length === 0 && (
-          <div className="agent-empty"><Bot size={32} strokeWidth={1.2} /><p>{t("messagePlaceholder")}</p></div>
+          <div className="agent-empty">
+            <Bot size={32} strokeWidth={1.2} />
+            <p>{t("messagePlaceholder")}</p>
+            <div className="agent-suggestions">
+              {suggestionKeys.map((key) => (
+                <button key={key} type="button" data-testid="agent-suggestion" onClick={() => setMessage(t(key))}>
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {messages.map((item, index) => (
           <article key={`${item.role}-${index}`} className={`chat-message ${item.role}`}>
@@ -258,6 +298,7 @@ export function AgentPanel({
           </article>
         ))}
         {busy && <div className="agent-thinking" role="status"><span /><span /><span /> {t("agentThinking")}</div>}
+        <div ref={logEndRef} aria-hidden="true" />
       </div>
       <form className="chat-composer" onSubmit={send}>
         <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} />
@@ -267,7 +308,7 @@ export function AgentPanel({
           <button className="primary-action" disabled={!message.trim()}>{t("send")} <Send size={17} /></button>
         )}
       </form>
-      {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} onClose={() => setSelectedSources([])} />}
+      {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} t={t} onClose={() => setSelectedSources([])} />}
       <ConfirmDialog
         open={deleteTarget !== null}
         title={t("deleteConversation")}

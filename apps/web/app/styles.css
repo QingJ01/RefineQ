@@ -1862,6 +1862,22 @@ textarea:focus {
   list-style: none;
 }
 
+.upload-queue-block {
+  display: grid;
+  gap: 7px;
+}
+
+.clear-upload-queue {
+  min-height: 32px;
+  justify-self: end;
+  border: 0;
+  background: transparent;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 650;
+}
+
 .upload-queue li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1948,12 +1964,37 @@ textarea:focus {
 }
 
 .material-search-results li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 12px;
-  padding: 12px;
+  overflow: hidden;
   border-radius: 10px;
   background: var(--accent-soft);
+}
+
+.material-search-results li > button {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.material-search-results li > button:hover {
+  background: rgba(42, 99, 232, 0.06);
+}
+
+.material-search-results li > button > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.material-search-results em {
+  color: var(--accent);
+  font-size: 9px;
+  font-style: normal;
 }
 
 .material-search-results strong,
@@ -1966,11 +2007,37 @@ textarea:focus {
 }
 
 .material-search-results p {
-  grid-column: 1 / -1;
   margin: 0;
   color: var(--muted-strong);
   font-size: 10px;
   line-height: 1.6;
+}
+
+.material-search-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.material-search-summary button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.material-search-empty {
+  margin-top: 10px;
 }
 
 .material-empty {
@@ -1987,9 +2054,50 @@ textarea:focus {
   font-size: 12px;
 }
 
-.material-list li > div:first-child {
+.material-record-copy {
   display: grid;
   gap: 4px;
+}
+
+.material-metadata {
+  margin-top: 3px;
+  color: var(--muted-strong);
+  font-size: 9px;
+}
+
+.material-metadata summary {
+  width: fit-content;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.material-metadata dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 8px 0 0;
+}
+
+.material-metadata dl > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.material-metadata dt {
+  color: var(--muted);
+}
+
+.material-metadata dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .material-actions {
@@ -2104,6 +2212,15 @@ textarea:focus {
 .agent-model-status.ready {
   background: var(--success-soft);
   color: var(--success);
+}
+
+.agent-model-status.checking {
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+}
+
+.agent-settings-link {
+  color: var(--accent);
 }
 
 .admin-console {
@@ -2770,6 +2887,34 @@ textarea:focus {
   color: var(--accent);
 }
 
+.agent-suggestions {
+  width: min(520px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.agent-suggestions button {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 620;
+  transition: border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.agent-suggestions button:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
 .chat-message {
   width: fit-content;
   max-width: 78%;
@@ -2988,6 +3133,21 @@ textarea:focus {
   margin: 24px 0 0;
   padding: 0;
   list-style: none;
+}
+
+.source-drawer-empty {
+  min-height: 260px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.source-drawer-empty p {
+  margin: 0;
+  font-size: 11px;
 }
 
 .source-drawer li {
@@ -3521,6 +3681,27 @@ textarea:focus {
     align-items: flex-start;
     flex-direction: column;
     gap: 5px;
+  }
+
+  .material-record-copy,
+  .material-actions {
+    width: 100%;
+  }
+
+  .material-metadata dl {
+    grid-template-columns: 1fr;
+  }
+
+  .material-actions {
+    justify-content: flex-end;
+  }
+
+  .agent-suggestions {
+    display: grid;
+  }
+
+  .agent-suggestions button {
+    min-height: 40px;
   }
 
   .settings-strip {

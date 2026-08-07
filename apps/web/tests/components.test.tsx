@@ -282,6 +282,7 @@ describe("focused learning components", () => {
     const html = renderToStaticMarkup(
       <SourceDrawer
         title="Evidence sources"
+        t={t}
         onClose={() => undefined}
         sources={[{
           citation_id: "notes#0",
@@ -294,9 +295,19 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain("notes#0");
+    expect(html).not.toContain("notes#0");
     expect(html).toContain("notes.md");
     expect(html).toContain('role="dialog"');
+    expect(html).toContain("91% match");
+  });
+
+  it("renders a localized empty source disclosure", () => {
+    const html = renderToStaticMarkup(
+      <SourceDrawer title="Evidence sources" t={t} sources={[]} onClose={() => undefined} />,
+    );
+
+    expect(html).toContain("No source excerpts are available");
+    expect(html).toContain('aria-label="Close"');
   });
 
   it("never renders an expected answer in the practice card", () => {
@@ -478,6 +489,7 @@ describe("focused learning components", () => {
     const html = renderToStaticMarkup(
       <MaterialDropzone
         t={t}
+        locale="en"
         materials={[{
           id: "material-1",
           filename: "limits.txt",
@@ -500,6 +512,9 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="material-search"');
     expect(html).toContain('data-testid="material-download-material-1"');
     expect(html).toContain('data-testid="material-delete-material-1"');
+    expect(html).toContain('data-testid="material-metadata-material-1"');
+    expect(html).toContain("12 B");
+    expect(html).toContain("text/plain");
   });
 
   it("renders the learning Agent with a focused chat composer", () => {
@@ -511,5 +526,7 @@ describe("focused learning components", () => {
     expect(html).toContain('class="chat-composer"');
     expect(html).toContain('data-testid="agent-new-conversation"');
     expect(html).toContain('data-testid="agent-history"');
+    expect(html).toContain('data-testid="agent-suggestion"');
+    expect(html).toContain("Checking model");
   });
 });

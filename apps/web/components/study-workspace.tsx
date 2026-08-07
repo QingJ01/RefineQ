@@ -668,8 +668,9 @@ export function StudyWorkspace({
           {section === "materials" && (
             <MaterialDropzone
               key={workspace.id}
-              t={t}
-              materials={materials}
+               t={t}
+               locale={locale}
+               materials={materials}
               onUpload={uploadMaterials}
               onSearch={searchMaterials}
               onDownload={downloadMaterial}
@@ -677,7 +678,15 @@ export function StudyWorkspace({
             />
           )}
           {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
-          {section === "coach" && <AgentPanel token={auth.access_token} workspaceId={workspace.id} t={t} />}
+          {section === "coach" && (
+            <AgentPanel
+              token={auth.access_token}
+              workspaceId={workspace.id}
+              t={t}
+              isAdmin={auth.user.role === "admin"}
+              onOpenSettings={() => router.push("/admin/integrations/chat")}
+            />
+          )}
         </section>
       </section>
     </main>

@@ -239,6 +239,7 @@ export function PracticeCard({
         <SourceDrawer
           title={t("sources")}
           sources={selectedSources}
+          t={t}
           onClose={() => setSelectedSources([])}
         />
       )}

@@ -532,6 +532,31 @@ describe("recoverable material and Agent interactions", () => {
     expect(agentSource).toContain("listWorkspaceAgentSessions");
     expect(agentSource).toContain("SourceDrawer");
   });
+
+  it("ships complete material search states and Agent guidance", () => {
+    const materialSource = readFileSync(
+      fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
+      "utf8",
+    );
+    const agentSource = readFileSync(
+      fileURLToPath(new URL("../components/agent-panel.tsx", import.meta.url)),
+      "utf8",
+    );
+    const drawerSource = readFileSync(
+      fileURLToPath(new URL("../components/source-drawer.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(materialSource).toContain('data-testid="material-search-empty"');
+    expect(materialSource).toContain('data-testid="clear-material-search"');
+    expect(materialSource).toContain('data-testid="clear-upload-queue"');
+    expect(materialSource).toContain("SourceDrawer");
+    expect(agentSource).toContain('data-testid="agent-suggestion"');
+    expect(agentSource).toContain("scrollIntoView");
+    expect(agentSource).toContain("onOpenSettings");
+    expect(drawerSource).toContain("focusable");
+    expect(drawerSource).not.toContain("source.citation_id");
+  });
 });
 
 describe("safe authentication and administration", () => {
