@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Archive,
   ArchiveRestore,
+  Check,
   Clock3,
   History,
   Languages,
@@ -13,10 +14,12 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Translator } from "@/lib/i18n";
 import type { LearningWorkspace } from "@/lib/types";
 
@@ -54,11 +57,43 @@ export function LearningHome({
   onToggleLocale: () => void;
 }) {
   const [intent, setIntent] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<LearningWorkspace | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!intent.trim()) return;
     await onResolve(intent.trim());
+  }
+
+  async function submitRename(event: FormEvent, workspace: LearningWorkspace) {
+    event.preventDefault();
+    const title = renameValue.trim();
+    if (!title || title === workspace.title) {
+      setRenamingId(null);
+      return;
+    }
+    setRenaming(true);
+    try {
+      await onUpdate?.(workspace, { title });
+      setRenamingId(null);
+    } finally {
+      setRenaming(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await onDelete?.(deleteTarget);
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -134,21 +169,45 @@ export function LearningHome({
             {workspaces.length === 0 ? <div className="empty-note">{t(showArchived ? "noArchivedWorkspaces" : "noRecentWorkspaces")}</div> : <div className="recent-grid">
               {workspaces.map((workspace) => (
                 <article className={workspace.archived ? "recent-card archived" : "recent-card"} key={workspace.id}>
-                  <button className="recent-card-open" onClick={() => onOpen(workspace)} disabled={workspace.archived}>
-                    <span>{workspace.subject}</span>
-                    <strong>{workspace.title}</strong>
-                    <p>{workspace.goal}</p>
-                    {workspace.archived && <small>{t("archived")}</small>}
-                    <ArrowRight size={16} />
-                  </button>
+                  {renamingId === workspace.id ? (
+                    <form
+                      className="workspace-rename-form"
+                      data-testid="workspace-rename-form"
+                      onSubmit={(event) => void submitRename(event, workspace)}
+                    >
+                      <span>{workspace.subject}</span>
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        maxLength={200}
+                        aria-label={t("renameWorkspace")}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setRenamingId(null);
+                        }}
+                      />
+                      <div>
+                        <button type="submit" aria-label={t("saveRename")} disabled={renaming || !renameValue.trim()}><Check size={15} /></button>
+                        <button type="button" aria-label={t("cancelRename")} disabled={renaming} onClick={() => setRenamingId(null)}><X size={15} /></button>
+                      </div>
+                    </form>
+                  ) : (
+                    <button className="recent-card-open" onClick={() => onOpen(workspace)} disabled={workspace.archived}>
+                      <span>{workspace.subject}</span>
+                      <strong>{workspace.title}</strong>
+                      <p>{workspace.goal}</p>
+                      {workspace.archived && <small>{t("archived")}</small>}
+                      <ArrowRight size={16} />
+                    </button>
+                  )}
                   <div className="recent-card-actions" aria-label={`${workspace.title} actions`}>
                     <button
                       type="button"
                       data-testid={`workspace-rename-${workspace.id}`}
                       aria-label={`${t("renameWorkspace")} ${workspace.title}`}
                       onClick={() => {
-                        const title = window.prompt(t("renameWorkspace"), workspace.title)?.trim();
-                        if (title && title !== workspace.title) void onUpdate?.(workspace, { title });
+                        setRenamingId(workspace.id);
+                        setRenameValue(workspace.title);
                       }}
                     ><Pencil size={14} /></button>
                     <button
@@ -161,9 +220,7 @@ export function LearningHome({
                       type="button"
                       data-testid={`workspace-delete-${workspace.id}`}
                       aria-label={`${t("deleteWorkspace")} ${workspace.title}`}
-                      onClick={() => {
-                        if (window.confirm(t("deleteWorkspaceConfirm"))) void onDelete?.(workspace);
-                      }}
+                      onClick={() => setDeleteTarget(workspace)}
                     ><Trash2 size={14} /></button>
                   </div>
                 </article>
@@ -171,6 +228,17 @@ export function LearningHome({
             </div>}
           </section>
       </section>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={deleteTarget ? `${t("deleteWorkspace")} · ${deleteTarget.title}` : t("deleteWorkspace")}
+        description={t("deleteWorkspaceConfirm")}
+        confirmLabel={t("deleteWorkspace")}
+        cancelLabel={t("cancel")}
+        tone="danger"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </main>
   );
 }

@@ -11,12 +11,34 @@ import { PlanTimeline } from "../components/plan-timeline";
 import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
 import { SourceDrawer } from "../components/source-drawer";
+import { ConfirmDialog } from "../components/confirm-dialog";
 import { translator } from "../lib/i18n";
 
 
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders a reusable accessible confirmation dialog", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmDialog
+        open
+        title="Delete material?"
+        description="This also removes its search index."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        tone="danger"
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('data-testid="confirm-dialog-confirm"');
+    expect(html).toContain('data-testid="confirm-dialog-cancel"');
+    expect(html).toContain("Delete material?");
+  });
+
   it("renders a concise administrator overview without full configuration forms", () => {
     const html = renderToStaticMarkup(
       <AdminConsole

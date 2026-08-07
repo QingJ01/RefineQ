@@ -553,6 +553,26 @@ describe("safe authentication and administration", () => {
     expect(adminSource).toContain("saveAndTest");
     expect(adminSource).toContain("loadError");
   });
+
+  it("uses application dialogs and inline editing instead of browser prompts", () => {
+    const paths = [
+      "../components/learning-home.tsx",
+      "../components/material-dropzone.tsx",
+      "../components/agent-panel.tsx",
+      "../components/admin-console.tsx",
+    ];
+    const sources = paths.map((path) => readFileSync(
+      fileURLToPath(new URL(path, import.meta.url)),
+      "utf8",
+    ));
+
+    for (const source of sources) {
+      expect(source).not.toContain("window.prompt");
+      expect(source).not.toContain("window.confirm");
+    }
+    expect(sources[0]).toContain("workspace-rename-form");
+    expect(sources.every((source) => source.includes("ConfirmDialog"))).toBe(true);
+  });
 });
 
 describe("accessible application shell", () => {

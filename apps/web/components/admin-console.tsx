@@ -22,6 +22,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api, ApiError } from "@/lib/api";
 import type {
   AdminOverview,
@@ -102,6 +103,8 @@ const copy = {
     saveTest: "保存并测试",
     unsavedWarning: "当前配置尚未保存，确定离开并丢弃更改吗？",
     unsaved: "有未保存的更改",
+    stay: "继续编辑",
+    discard: "丢弃并离开",
     loadFailed: "配置读取失败，为避免覆盖已有设置，编辑已锁定。",
     reload: "重新读取",
   },
@@ -156,6 +159,8 @@ const copy = {
     saveTest: "Save and test",
     unsavedWarning: "This configuration has unsaved changes. Leave and discard them?",
     unsaved: "Unsaved changes",
+    stay: "Keep editing",
+    discard: "Discard and leave",
     loadFailed: "Settings failed to load. Editing is locked to avoid overwriting saved configuration.",
     reload: "Reload settings",
   },
@@ -422,6 +427,7 @@ function IntegrationCard({
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const isDirty = enabled !== setting.enabled
     || JSON.stringify(config) !== JSON.stringify(setting.config)
     || Object.values(secrets).some((value) => value.length > 0);
@@ -433,7 +439,10 @@ function IntegrationCard({
       const target = event.target as Element | null;
       const link = target?.closest("a[href]") as HTMLAnchorElement | null;
       if (!link || link.target === "_blank" || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (!window.confirm(c.unsavedWarning)) event.preventDefault();
+      const destination = new URL(link.href, window.location.href);
+      if (destination.origin !== window.location.origin || destination.hash && destination.pathname === window.location.pathname) return;
+      event.preventDefault();
+      setPendingHref(destination.href);
     };
     window.addEventListener("beforeunload", beforeunload);
     document.addEventListener("click", guardNavigation, true);
@@ -674,6 +683,18 @@ function IntegrationCard({
         </footer>
         </fieldset>
       </form>
+      <ConfirmDialog
+        open={pendingHref !== null}
+        title={c.unsaved}
+        description={c.unsavedWarning}
+        confirmLabel={c.discard}
+        cancelLabel={c.stay}
+        tone="danger"
+        onConfirm={() => {
+          if (pendingHref) window.location.assign(pendingHref);
+        }}
+        onCancel={() => setPendingHref(null)}
+      />
     </article>
   );
 }

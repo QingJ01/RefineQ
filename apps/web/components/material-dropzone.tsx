@@ -12,6 +12,7 @@ import {
 import { DragEvent, FormEvent, useRef, useState } from "react";
 
 import type { Translator } from "@/lib/i18n";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { MaterialRecord, SearchSource } from "@/lib/types";
 import {
   clearSelectedFiles,
@@ -51,6 +52,8 @@ export function MaterialDropzone({
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchSource[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<MaterialRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function patchQueue(id: string, patch: Partial<UploadItem>) {
     setQueue((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -131,6 +134,17 @@ export function MaterialDropzone({
     }
   }
 
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await onDelete?.(deleteTarget);
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <section className="content-card materials-card">
       <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><FileStack size={24} strokeWidth={1.4} /></div>
@@ -184,14 +198,29 @@ export function MaterialDropzone({
               <div><span>{material.filename}</span><em>{material.chunk_count} chunks · {t("uploaded")}</em></div>
               <div className="material-actions">
                 <button type="button" data-testid={`material-download-${material.id}`} aria-label={`${t("download")} ${material.filename}`} onClick={() => void onDownload?.(material)}><Download size={15} /></button>
-                <button type="button" data-testid={`material-delete-${material.id}`} aria-label={`${t("deleteMaterial")} ${material.filename}`} onClick={() => {
-                  if (window.confirm(t("deleteMaterialConfirm"))) void onDelete?.(material);
-                }}><Trash2 size={15} /></button>
+                <button
+                  type="button"
+                  data-testid={`material-delete-${material.id}`}
+                  aria-label={`${t("deleteMaterial")} ${material.filename}`}
+                  disabled={deleting && deleteTarget?.id === material.id}
+                  onClick={() => setDeleteTarget(material)}
+                ><Trash2 size={15} /></button>
               </div>
             </li>
           ))}
         </ul>
       )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={deleteTarget ? `${t("deleteMaterial")} · ${deleteTarget.filename}` : t("deleteMaterial")}
+        description={t("deleteMaterialConfirm")}
+        confirmLabel={t("deleteMaterial")}
+        cancelLabel={t("cancel")}
+        tone="danger"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </section>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { SourceDrawer } from "@/components/source-drawer";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api, ApiError } from "@/lib/api";
 import type { Translator } from "@/lib/i18n";
 import type { AgentMessage, AgentSessionSummary, SearchSource } from "@/lib/types";
@@ -58,6 +59,8 @@ export function AgentPanel({
   const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AgentSessionSummary | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
   const requestController = useRef<AbortController | null>(null);
 
   const loadSessions = useCallback(async () => {
@@ -170,13 +173,23 @@ export function AgentPanel({
   }
 
   async function deleteSession(id: string) {
-    if (!window.confirm(t("deleteConversationConfirm"))) return;
     try {
       await api.deleteWorkspaceAgentSession(token, workspaceId, id);
       setSessions((current) => current.filter((item) => item.id !== id));
       if (id === sessionId) newConversation();
     } catch (caught) {
       setError(errorMessage(caught, t));
+    }
+  }
+
+  async function confirmDeleteSession() {
+    if (!deleteTarget) return;
+    setDeletingSession(true);
+    try {
+      await deleteSession(deleteTarget.id);
+      setDeleteTarget(null);
+    } finally {
+      setDeletingSession(false);
     }
   }
 
@@ -213,7 +226,7 @@ export function AgentPanel({
           {sessions.length === 0 ? <p>{t("noConversations")}</p> : sessions.map((session) => (
             <div key={session.id} className={session.id === sessionId ? "active" : ""}>
               <button type="button" onClick={() => void openSession(session.id)}><strong>{session.preview}</strong><span>{session.message_count} {t("messages")}</span></button>
-              <button type="button" aria-label={t("deleteConversation")} onClick={() => void deleteSession(session.id)}><Trash2 size={14} /></button>
+              <button type="button" aria-label={t("deleteConversation")} onClick={() => setDeleteTarget(session)}><Trash2 size={14} /></button>
             </div>
           ))}
         </aside>
@@ -255,6 +268,17 @@ export function AgentPanel({
         )}
       </form>
       {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} onClose={() => setSelectedSources([])} />}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t("deleteConversation")}
+        description={t("deleteConversationConfirm")}
+        confirmLabel={t("deleteConversation")}
+        cancelLabel={t("cancel")}
+        tone="danger"
+        busy={deletingSession}
+        onConfirm={confirmDeleteSession}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </section>
   );
 }

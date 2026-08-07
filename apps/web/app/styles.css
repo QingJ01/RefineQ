@@ -123,7 +123,8 @@ h3 {
 }
 
 .primary-action,
-.secondary-action {
+.secondary-action,
+.danger-action {
   min-height: 42px;
   display: inline-flex;
   align-items: center;
@@ -152,6 +153,7 @@ h3 {
 
 .primary-action:active:not(:disabled),
 .secondary-action:active:not(:disabled),
+.danger-action:active:not(:disabled),
 .composer-send:active:not(:disabled) {
   transform: translateY(0) scale(0.985);
 }
@@ -168,6 +170,7 @@ h3 {
 
 .primary-action:disabled,
 .secondary-action:disabled,
+.danger-action:disabled,
 .composer-send:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -185,6 +188,18 @@ h3 {
 .secondary-action:hover:not(:disabled) {
   border-color: #bfc2c9;
   background: var(--surface-soft);
+}
+
+.danger-action {
+  border-color: #c94646;
+  background: #c94646;
+  color: #fff;
+  box-shadow: 0 5px 14px rgba(166, 43, 43, 0.14);
+}
+
+.danger-action:hover:not(:disabled) {
+  background: #ad3838;
+  transform: translateY(-1px);
 }
 
 .quiet-button,
@@ -869,6 +884,49 @@ textarea:focus {
 .recent-card-actions button:hover {
   background: rgba(42, 99, 232, 0.08);
   color: var(--accent);
+}
+
+.workspace-rename-form {
+  min-height: 126px;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 18px 18px 42px;
+}
+
+.workspace-rename-form input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--accent-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.workspace-rename-form > div {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-rename-form button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.workspace-rename-form button:last-child {
+  background: var(--surface-soft);
+  color: var(--muted-strong);
 }
 
 /* Learning workspace shell */
@@ -2794,6 +2852,91 @@ textarea:focus {
 
 @keyframes agent-pulse {
   to { opacity: 0.25; transform: translateY(-3px); }
+}
+
+.confirm-dialog-backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(23, 24, 28, 0.34);
+  backdrop-filter: blur(4px);
+  animation: dialog-backdrop-in 160ms ease both;
+}
+
+.confirm-dialog {
+  position: relative;
+  width: min(420px, 100%);
+  padding: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 28px 80px rgba(27, 35, 54, 0.22);
+  text-align: center;
+  animation: dialog-panel-in 180ms ease both;
+}
+
+.confirm-dialog-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  cursor: pointer;
+}
+
+.confirm-dialog-mark {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 16px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 700 20px/1 var(--font-display);
+}
+
+.confirm-dialog-danger .confirm-dialog-mark {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+.confirm-dialog p {
+  margin: 10px auto 0;
+  max-width: 34em;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.confirm-dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 24px;
+}
+
+@keyframes dialog-backdrop-in {
+  from { opacity: 0; }
+}
+
+@keyframes dialog-panel-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
 }
 
 .source-drawer-backdrop {
