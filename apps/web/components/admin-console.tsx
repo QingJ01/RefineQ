@@ -2,11 +2,15 @@
 
 import {
   ArrowLeft,
+  ArrowRight,
   BrainCircuit,
   Check,
   Database,
   FileScan,
+  Gauge,
   HardDrive,
+  Languages,
+  LayoutDashboard,
   LoaderCircle,
   LogOut,
   PlugZap,
@@ -14,6 +18,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
@@ -47,8 +52,8 @@ type IntegrationDefinition = {
 
 const copy = {
   zh: {
-    title: "平台控制台",
-    subtitle: "集中管理学习 Agent 的数据库、模型、识别与文件能力。密钥只在服务端加密保存。",
+    title: "系统设置",
+    subtitle: "查看平台运行状态，并按需配置学习 Agent 使用的外部能力。",
     back: "返回学习空间",
     users: "注册用户",
     database: "业务数据库",
@@ -66,10 +71,38 @@ const copy = {
     secretHint: "留空会继续使用当前密钥",
     loading: "正在读取平台状态…",
     logout: "退出登录",
+    overview: "系统概览",
+    integrations: "能力配置",
+    configure: "打开配置",
+    backOverview: "返回概览",
+    language: "English",
+    encrypted: "密钥由服务端加密保存",
+    systemStatus: "运行状态",
+    nextAction: "下一步",
+    allReady: "核心能力已经就绪",
+    allReadyDescription: "当前没有需要处理的配置问题。你仍可从左侧随时检查或调整服务。",
+    completeSetup: "完成配置",
+    retrySetup: "检查连接",
+    setupProgress: "配置进度",
+    principles: "运行原则",
+    localParsing: "本地解析优先",
+    localParsingDescription: "PDF、DOCX、TXT 与 Markdown 优先在本地提取内容。",
+    encryptedDescription: "浏览器不会读取已经保存的完整密钥。",
+    onDemand: "按需调用",
+    onDemandDescription: "未启用的外部服务不会产生请求或调用成本。",
+    serviceStatus: "服务状态",
+    serviceStatusDescription: "只有启用后，学习 Agent 才会调用这项能力。",
+    basicSettings: "基础配置",
+    basicSettingsDescription: "设置服务地址、模型以及运行参数。",
+    credentials: "访问凭据",
+    credentialsDescription: "凭据提交后只在服务端加密保存。",
+    networkSecurity: "网络安全",
+    networkSecurityDescription: "默认阻止访问私网地址，降低服务端请求伪造风险。",
+    networkWarning: "仅在明确使用可信内网服务时开启私网访问。",
   },
   en: {
-    title: "Platform console",
-    subtitle: "Manage the learning Agent database, models, recognition, and files in one place.",
+    title: "System settings",
+    subtitle: "Review platform health and configure the external services used by the learning Agent.",
     back: "Back to learning",
     users: "Registered users",
     database: "Application database",
@@ -87,6 +120,34 @@ const copy = {
     secretHint: "Leave blank to keep the current secret",
     loading: "Loading platform status…",
     logout: "Sign out",
+    overview: "Overview",
+    integrations: "Integrations",
+    configure: "Open settings",
+    backOverview: "Back to overview",
+    language: "中文",
+    encrypted: "Secrets are encrypted on the server",
+    systemStatus: "System status",
+    nextAction: "Next action",
+    allReady: "Core capabilities are ready",
+    allReadyDescription: "There are no configuration issues to resolve. You can still review any service from the sidebar.",
+    completeSetup: "Complete setup",
+    retrySetup: "Check connection",
+    setupProgress: "Setup progress",
+    principles: "Operating principles",
+    localParsing: "Local parsing first",
+    localParsingDescription: "PDF, DOCX, TXT, and Markdown content is extracted locally first.",
+    encryptedDescription: "The browser never receives a complete saved secret.",
+    onDemand: "On-demand calls",
+    onDemandDescription: "Disabled external services make no requests and incur no usage cost.",
+    serviceStatus: "Service status",
+    serviceStatusDescription: "The learning Agent can only call this capability when it is enabled.",
+    basicSettings: "Basic settings",
+    basicSettingsDescription: "Set the service endpoint, model, and runtime parameters.",
+    credentials: "Credentials",
+    credentialsDescription: "Credentials are encrypted and stored only on the server.",
+    networkSecurity: "Network security",
+    networkSecurityDescription: "Private-network access is blocked by default to reduce SSRF risk.",
+    networkWarning: "Only enable private-network access for a service you explicitly trust.",
   },
 } as const;
 
@@ -343,7 +404,6 @@ function IntegrationCard({
   onChange: (setting: PublicIntegrationSettings) => void;
 }) {
   const c = copy[locale];
-  const Icon = definition.icon;
   const [enabled, setEnabled] = useState(setting.enabled);
   const [config, setConfig] = useState(setting.config);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -399,17 +459,51 @@ function IntegrationCard({
     }));
   }
 
+  function renderConfigField(field: FieldDefinition) {
+    return (
+      <label key={field.key}>
+        <span>{field.label}</span>
+        {field.type === "select" || field.type === "boolean" ? (
+          <select
+            value={String(config[field.key] ?? "")}
+            onChange={(event) => updateConfig(field, event.target.value)}
+          >
+            {field.options?.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type={field.type === "number" ? "number" : "text"}
+            step={field.key === "temperature" ? "0.1" : undefined}
+            value={String(config[field.key] ?? "")}
+            placeholder={field.placeholder}
+            onChange={(event) => updateConfig(field, event.target.value)}
+            required
+          />
+        )}
+      </label>
+    );
+  }
+
+  const basicFields = definition.configFields.filter(
+    (field) => field.key !== "allow_private_network",
+  );
+  const networkFields = definition.configFields.filter(
+    (field) => field.key === "allow_private_network",
+  );
+
   return (
     <article
       className={`integration-card integration-${definition.kind}`}
       data-testid={`integration-card-${definition.kind}`}
     >
       <form onSubmit={save}>
-        <header className="integration-card-header">
-          <div className="integration-icon"><Icon size={23} /></div>
+        <section className="admin-service-control">
           <div>
-            <span className="kicker">{definition.eyebrow}</span>
-            <h2>{definition.title}</h2>
+            <span className="kicker">SERVICE CONTROL</span>
+            <h2>{c.serviceStatus}</h2>
+            <p>{c.serviceStatusDescription}</p>
           </div>
           <label className="integration-switch">
             <input
@@ -419,62 +513,76 @@ function IntegrationCard({
             />
             <span>{enabled ? c.active : c.inactive}</span>
           </label>
-        </header>
-        <p className="integration-description">{definition.description}</p>
-        <div className="integration-health-row">
-          <span className={setting.configured ? "healthy" : "waiting"}>
-            {setting.configured ? <Check size={13} /> : <TriangleAlert size={13} />}
-            {setting.configured ? c.ready : c.missing}
-          </span>
-          {setting.last_test_status && (
-            <span className={setting.last_test_status === "ok" ? "healthy" : "failed"}>
-              <PlugZap size={13} /> {setting.last_test_message}
+          <div className="integration-health-row">
+            <span className={setting.configured ? "healthy" : "waiting"}>
+              {setting.configured ? <Check size={13} /> : <TriangleAlert size={13} />}
+              {setting.configured ? c.ready : c.missing}
             </span>
-          )}
-        </div>
-        <div className="integration-fields">
-          {definition.configFields.map((field) => (
-            <label key={field.key}>
-              <span>{field.label}</span>
-              {field.type === "select" || field.type === "boolean" ? (
-                <select
-                  value={String(config[field.key] ?? "")}
-                  onChange={(event) => updateConfig(field, event.target.value)}
-                >
-                  {field.options?.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type={field.type === "number" ? "number" : "text"}
-                  step={field.key === "temperature" ? "0.1" : undefined}
-                  value={String(config[field.key] ?? "")}
-                  placeholder={field.placeholder}
-                  onChange={(event) => updateConfig(field, event.target.value)}
-                  required
-                />
-              )}
-            </label>
-          ))}
-          {definition.secretFields.map((field) => (
-            <label key={field.key}>
-              <span>
-                {field.label}
-                {setting.secret_hints[field.key] && <em>{setting.secret_hints[field.key]}</em>}
+            {setting.last_test_status && (
+              <span className={setting.last_test_status === "ok" ? "healthy" : "failed"}>
+                <PlugZap size={13} /> {setting.last_test_message}
               </span>
-              <input
-                type="password"
-                value={secrets[field.key] ?? ""}
-                placeholder={c.secretHint}
-                onChange={(event) => setSecrets((current) => ({
-                  ...current,
-                  [field.key]: event.target.value,
-                }))}
-              />
-            </label>
-          ))}
-        </div>
+            )}
+          </div>
+        </section>
+
+        <section className="admin-form-section" data-testid="admin-form-section-basic">
+          <header className="admin-form-section-header">
+            <span>01</span>
+            <div>
+              <h3>{c.basicSettings}</h3>
+              <p>{c.basicSettingsDescription}</p>
+            </div>
+          </header>
+          <div className="integration-fields">
+            {basicFields.map(renderConfigField)}
+          </div>
+        </section>
+
+        <section className="admin-form-section" data-testid="admin-form-section-credentials">
+          <header className="admin-form-section-header">
+            <span>02</span>
+            <div>
+              <h3>{c.credentials}</h3>
+              <p>{c.credentialsDescription}</p>
+            </div>
+          </header>
+          <div className="integration-fields integration-secret-fields">
+            {definition.secretFields.map((field) => (
+              <label key={field.key}>
+                <span>
+                  {field.label}
+                  {setting.secret_hints[field.key] && <em>{setting.secret_hints[field.key]}</em>}
+                </span>
+                <input
+                  type="password"
+                  value={secrets[field.key] ?? ""}
+                  placeholder={c.secretHint}
+                  onChange={(event) => setSecrets((current) => ({
+                    ...current,
+                    [field.key]: event.target.value,
+                  }))}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className="admin-form-section" data-testid="admin-form-section-network">
+          <header className="admin-form-section-header">
+            <span>03</span>
+            <div>
+              <h3>{c.networkSecurity}</h3>
+              <p>{c.networkSecurityDescription}</p>
+            </div>
+          </header>
+          <div className="integration-fields integration-network-fields">
+            {networkFields.map(renderConfigField)}
+          </div>
+          <p className="admin-network-note">
+            <TriangleAlert size={14} /> {c.networkWarning}
+          </p>
+        </section>
         {(notice || error) && (
           <p className={error ? "integration-notice error" : "integration-notice"} role="status">
             {error || notice}
@@ -503,13 +611,15 @@ function IntegrationCard({
 export function AdminConsole({
   token,
   locale,
-  onClose,
+  activeKind,
   onLogout,
+  onToggleLocale,
 }: {
   token: string;
   locale: Locale;
-  onClose: () => void;
+  activeKind?: IntegrationKind;
   onLogout: () => void;
+  onToggleLocale: () => void;
 }) {
   const c = copy[locale];
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -540,53 +650,201 @@ export function AdminConsole({
     )));
   }
 
+  const localizedDefinitions = definitions[locale];
+  const activeDefinition = activeKind
+    ? localizedDefinitions.find((definition) => definition.kind === activeKind)
+    : undefined;
+  const configuredCount = integrations.filter((integration) => integration.configured).length;
+  const effectiveConfiguredCount = overview?.integrations_configured ?? configuredCount;
+  const nextSetting = integrations.find((integration) => integration.last_test_status === "failed")
+    ?? integrations.find((integration) => !integration.configured);
+  const nextDefinition = nextSetting
+    ? localizedDefinitions.find((definition) => definition.kind === nextSetting.kind)
+    : undefined;
+
   return (
     <main className="admin-console">
-      <header className="admin-topbar">
-        <div className="admin-brand"><BrandMark size={34} /><BrandName /></div>
-        <div className="admin-topbar-actions">
-          <button className="quiet-button" onClick={onClose}>
-            <ArrowLeft size={16} /> {c.back}
-          </button>
-          <button data-testid="admin-logout" className="quiet-button" onClick={onLogout}>
-            <LogOut size={16} /> {c.logout}
-          </button>
-        </div>
-      </header>
-      <section className="admin-stage">
-        <div className="admin-hero">
-          <div>
-            <span className="kicker">REFINEQ / SYSTEM CONTROL</span>
-            <h1>{c.title}</h1>
-            <p>{c.subtitle}</p>
+      <div className="admin-shell">
+        <aside className="admin-sidebar">
+          <Link className="admin-brand" href="/" aria-label="RefineQ">
+            <BrandMark size={34} />
+            <BrandName />
+          </Link>
+          <nav className="admin-nav" aria-label={c.title}>
+            <Link className={!activeKind ? "active" : ""} href="/admin">
+              <LayoutDashboard size={18} />
+              <span>{c.overview}</span>
+            </Link>
+            <span className="admin-nav-label">{c.integrations}</span>
+            {localizedDefinitions.map(({ kind, icon: Icon, title }) => {
+              const setting = byKind.get(kind);
+              return (
+              <Link
+                key={kind}
+                className={activeKind === kind ? "active" : ""}
+                href={`/admin/integrations/${kind}`}
+              >
+                <Icon size={18} />
+                <span>{title}</span>
+                <i
+                  className={`admin-nav-status ${setting?.configured ? "ready" : ""}`}
+                  aria-label={setting?.configured ? c.ready : c.missing}
+                />
+              </Link>
+              );
+            })}
+          </nav>
+          <div className="admin-sidebar-actions">
+            <button className="quiet-button" onClick={onToggleLocale}>
+              <Languages size={16} /> {c.language}
+            </button>
+            <button data-testid="admin-logout" className="quiet-button" onClick={onLogout}>
+              <LogOut size={16} /> {c.logout}
+            </button>
           </div>
-          <div className="admin-security-note">
-            <ShieldCheck size={22} />
-            <span>SERVER-SIDE ENCRYPTION</span>
-          </div>
-        </div>
-        {error && <div className="error-banner" role="alert">{error}</div>}
-        <section className="admin-summary" aria-label={c.loading}>
-          <article><span>{c.users}</span><strong>{overview?.users ?? "—"}</strong></article>
-          <article><span>{c.database}</span><strong>{overview?.database ?? "—"}</strong></article>
-          <article><span>{c.vector}</span><strong>{overview?.pgvector ? "pgvector" : "fallback"}</strong></article>
-          <article><span>{c.configured}</span><strong>{overview?.integrations_configured ?? 0}/4</strong></article>
+        </aside>
+
+        <section className="admin-main">
+          <header className="admin-page-header">
+            <div>
+              <span className="kicker">
+                {activeDefinition ? activeDefinition.eyebrow : "REFINEQ / SETTINGS"}
+              </span>
+              <h1>{activeDefinition?.title ?? c.title}</h1>
+              <p>{activeDefinition?.description ?? c.subtitle}</p>
+            </div>
+          </header>
+
+          {error && <div className="error-banner" role="alert">{error}</div>}
+
+          {activeDefinition && activeKind ? (
+            <div className="admin-integration-detail" data-testid="admin-integration-detail">
+              <Link className="admin-detail-back" href="/admin">
+                <ArrowLeft size={15} /> {c.backOverview}
+              </Link>
+              <IntegrationCard
+                key={`${activeKind}-${byKind.get(activeKind)?.enabled}-${JSON.stringify(
+                  byKind.get(activeKind)?.config,
+                )}`}
+                token={token}
+                definition={activeDefinition}
+                setting={byKind.get(activeKind) ?? defaults[0]}
+                locale={locale}
+                onChange={updateIntegration}
+              />
+            </div>
+          ) : (
+            <div className="admin-overview" data-testid="admin-overview">
+              <section
+                className="admin-system-status"
+                data-testid="admin-system-status"
+                aria-label={c.loading}
+              >
+                <header>
+                  <span className="kicker">SYSTEM HEALTH</span>
+                  <h2>{c.systemStatus}</h2>
+                </header>
+                <article>
+                  <Database size={17} />
+                  <div>
+                  <span>{c.users}</span>
+                  <strong>{overview?.users ?? "—"}</strong>
+                  </div>
+                </article>
+                <article>
+                  <HardDrive size={17} />
+                  <div>
+                  <span>{c.database}</span>
+                  <strong>{overview?.database ?? "—"}</strong>
+                  </div>
+                </article>
+                <article>
+                  <Gauge size={17} />
+                  <div>
+                  <span>{c.vector}</span>
+                  <strong>{overview ? (overview.pgvector ? "pgvector" : "fallback") : "—"}</strong>
+                  </div>
+                </article>
+                <article>
+                  <PlugZap size={17} />
+                  <div>
+                  <span>{c.configured}</span>
+                  <strong>{effectiveConfiguredCount}/4</strong>
+                  </div>
+                </article>
+              </section>
+
+              <div className="admin-overview-grid">
+                <section className="admin-next-action" data-testid="admin-next-action">
+                  <div>
+                    <span className="kicker">NEXT ACTION</span>
+                    <h2>{c.nextAction}</h2>
+                  </div>
+                  {nextDefinition && nextSetting ? (
+                    <div className="admin-next-action-body">
+                      <span className="admin-next-action-icon">
+                        <nextDefinition.icon size={22} />
+                      </span>
+                      <div>
+                        <h3>
+                          {nextSetting.last_test_status === "failed"
+                            ? `${c.retrySetup}：${nextDefinition.title}`
+                            : `${c.completeSetup}：${nextDefinition.title}`}
+                        </h3>
+                        <p>
+                          {nextSetting.last_test_status === "failed" && nextSetting.last_test_message
+                            ? nextSetting.last_test_message
+                            : nextDefinition.description}
+                        </p>
+                      </div>
+                      <Link
+                        className="primary-action"
+                        href={`/admin/integrations/${nextDefinition.kind}`}
+                      >
+                        {c.configure} <ArrowRight size={15} />
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="admin-next-action-body is-ready">
+                      <span className="admin-next-action-icon"><Check size={22} /></span>
+                      <div>
+                        <h3>{c.allReady}</h3>
+                        <p>{c.allReadyDescription}</p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="admin-setup-progress">
+                    <span>{c.setupProgress}</span>
+                    <strong>{effectiveConfiguredCount}/4</strong>
+                    <div><i style={{ width: `${effectiveConfiguredCount * 25}%` }} /></div>
+                  </div>
+                </section>
+
+                <aside className="admin-principles" data-testid="admin-principles">
+                  <div>
+                    <span className="kicker">GUARDRAILS</span>
+                    <h2>{c.principles}</h2>
+                  </div>
+                  <ul>
+                    <li>
+                      <FileScan size={17} />
+                      <span><strong>{c.localParsing}</strong><small>{c.localParsingDescription}</small></span>
+                    </li>
+                    <li>
+                      <ShieldCheck size={17} />
+                      <span><strong>{c.encrypted}</strong><small>{c.encryptedDescription}</small></span>
+                    </li>
+                    <li>
+                      <PlugZap size={17} />
+                      <span><strong>{c.onDemand}</strong><small>{c.onDemandDescription}</small></span>
+                    </li>
+                  </ul>
+                </aside>
+              </div>
+            </div>
+          )}
         </section>
-        <section className="integration-grid">
-          {definitions[locale].map((definition) => (
-            <IntegrationCard
-              key={`${definition.kind}-${byKind.get(definition.kind)?.enabled}-${JSON.stringify(
-                byKind.get(definition.kind)?.config,
-              )}`}
-              token={token}
-              definition={definition}
-              setting={byKind.get(definition.kind) ?? defaults[0]}
-              locale={locale}
-              onChange={updateIntegration}
-            />
-          ))}
-        </section>
-      </section>
+      </div>
     </main>
   );
 }

@@ -29,6 +29,18 @@ def test_server_defaults_are_loopback_safe(monkeypatch) -> None:
     assert settings.port == 8000
 
 
+def test_default_model_allowlist_includes_supported_public_providers(monkeypatch) -> None:
+    monkeypatch.delenv("REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert {
+        "api.openai.com",
+        "api.deepseek.com",
+        "api.siliconflow.cn",
+    } <= settings.allowed_model_hosts
+
+
 def test_model_encryption_key_is_validated_at_startup(monkeypatch) -> None:
     monkeypatch.setenv("REFINEQ_MODEL_ENCRYPTION_KEY", "not-a-fernet-key")
 

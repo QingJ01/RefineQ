@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import fitz
 from openai import DefaultHttpxClient, OpenAI
 
@@ -69,11 +71,19 @@ class IntegrationTester:
                     timeout=15.0,
                     http_client=DefaultHttpxClient(follow_redirects=False),
                 )
-                client.embeddings.create(
+                response = client.embeddings.create(
                     model=str(integration.config["model"]),
                     input=["RefineQ connection test"],
-                    dimensions=int(integration.config["dimensions"]),
                 )
+                expected_dimensions = int(integration.config["dimensions"])
+                vector = list(response.data[0].embedding)
+                if len(vector) != expected_dimensions or not all(
+                    math.isfinite(value) for value in vector
+                ):
+                    raise RuntimeError(
+                        "Embedding provider returned an invalid vector; "
+                        f"expected {expected_dimensions} dimensions"
+                    )
             elif kind is IntegrationKind.OCR:
                 response = self.vision_transport.recognize(
                     settings=integration,

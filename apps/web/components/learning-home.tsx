@@ -56,7 +56,11 @@ export function LearningHome({
         <div className="home-nav-item active"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></div>
         <div className="home-nav-item"><History size={19} /><span>{t("recentLearning")}</span></div>
         {isAdmin && (
-          <button className="home-nav-item home-admin-link" onClick={onAdmin}>
+          <button
+            data-testid="home-admin"
+            className="home-nav-item home-admin-link"
+            onClick={onAdmin}
+          >
             <Settings2 size={19} /><span>平台控制台</span>
           </button>
         )}

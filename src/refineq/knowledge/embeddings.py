@@ -7,6 +7,7 @@ from typing import Protocol
 
 from openai import DefaultHttpxClient, OpenAI
 
+from refineq.database.schema import EMBEDDING_DIMENSIONS
 from refineq.integrations.endpoints import assert_safe_endpoint
 from refineq.integrations.models import IntegrationKind
 from refineq.integrations.repository import (
@@ -44,7 +45,6 @@ class PlatformEmbeddingService:
         response = client.embeddings.create(
             model=str(integration.config["model"]),
             input=texts,
-            dimensions=dimensions,
         )
         ordered = sorted(response.data, key=lambda item: item.index)
         vectors = [list(item.embedding) for item in ordered]
@@ -55,4 +55,7 @@ class PlatformEmbeddingService:
             for vector in vectors
         ):
             raise RuntimeError("Embedding provider returned invalid vectors")
-        return vectors
+        return [
+            vector + [0.0] * (EMBEDDING_DIMENSIONS - len(vector))
+            for vector in vectors
+        ]

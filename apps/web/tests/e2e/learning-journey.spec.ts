@@ -1,4 +1,42 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+
 import { expect, test } from "@playwright/test";
+
+
+const webRoot = path.resolve(__dirname, "../..");
+const repositoryRoot = path.resolve(webRoot, "../..");
+const python = process.env.REFINEQ_PYTHON ?? (
+  process.platform === "win32"
+    ? path.join(repositoryRoot, ".venv", "Scripts", "python.exe")
+    : "python"
+);
+const adminEmail = `admin-e2e-${Date.now()}@example.com`;
+const adminPassword = "correct-horse-battery-staple";
+
+test.beforeAll(() => {
+  execFileSync(
+    python,
+    [
+      path.join(repositoryRoot, "scripts", "create_admin.py"),
+      "--email",
+      adminEmail,
+      "--display-name",
+      "E2E Administrator",
+      "--data-root",
+      path.join(webRoot, ".playwright-data"),
+    ],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        PYTHONPATH: path.join(repositoryRoot, "src"),
+        REFINEQ_ADMIN_PASSWORD: adminPassword,
+      },
+      stdio: "pipe",
+    },
+  );
+});
 
 
 test("learner completes and restores a projectless study journey", async ({ page }) => {
@@ -101,4 +139,52 @@ test("learner completes and restores a projectless study journey", async ({ page
     );
     await expect(page.getByTestId("agent-retry")).toBeVisible();
   });
+});
+
+
+test("administrator routes survive direct navigation, refresh, and browser history", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("email").fill(adminEmail);
+  await page.getByTestId("password").fill(adminPassword);
+  await page.getByTestId("auth-submit").click();
+  await expect(page.getByTestId("learning-intent")).toBeVisible();
+
+  await page.getByTestId("home-admin").click();
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page.getByTestId("admin-overview")).toBeVisible();
+  await expect(page.getByTestId("admin-system-status")).toBeVisible();
+  await expect(page.getByTestId("admin-next-action")).toBeVisible();
+  await expect(page.getByTestId("admin-principles")).toBeVisible();
+
+  await page.locator('.admin-nav a[href="/admin/integrations/chat"]').click();
+  await expect(page).toHaveURL(/\/admin\/integrations\/chat$/);
+  await expect(page.getByTestId("integration-card-chat")).toBeVisible();
+  await expect(page.getByTestId("admin-form-section-basic")).toBeVisible();
+  await expect(page.getByTestId("admin-form-section-credentials")).toBeVisible();
+  await expect(page.getByTestId("admin-form-section-network")).toBeVisible();
+  await expect(page.locator('[data-testid^="integration-card-"]')).toHaveCount(1);
+
+  await page.reload();
+  await expect(page.getByTestId("admin-integration-detail")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page.getByTestId("admin-overview")).toBeVisible();
+});
+
+
+test("learner cannot stay on an administrator route", async ({ page }) => {
+  const uniqueEmail = `route-learner-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Route learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill(adminPassword);
+  await page.getByTestId("auth-submit").click();
+  await expect(page.getByTestId("learning-intent")).toBeVisible();
+
+  await page.goto("/admin");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("learning-intent")).toBeVisible();
 });

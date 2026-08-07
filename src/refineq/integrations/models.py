@@ -58,7 +58,7 @@ class ChatConfig(SecureEndpointConfig):
 class EmbeddingConfig(SecureEndpointConfig):
     base_url: HttpUrl = "https://api.openai.com/v1"
     model: str = Field(min_length=1, max_length=200)
-    dimensions: Literal[1536] = 1536
+    dimensions: Literal[1024, 1536] = 1536
 
     _secure_url = field_validator("base_url")(SecureEndpointConfig.validate_endpoint)
 

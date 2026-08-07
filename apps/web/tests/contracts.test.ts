@@ -43,6 +43,26 @@ describe("administrator integration status", () => {
 });
 
 
+describe("administrator routing", () => {
+  it("uses real overview and integration detail routes instead of workspace section state", () => {
+    const adminPage = fileURLToPath(new URL("../app/admin/page.tsx", import.meta.url));
+    const integrationPage = fileURLToPath(
+      new URL("../app/admin/integrations/[kind]/page.tsx", import.meta.url),
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(adminPage)).toBe(true);
+    expect(existsSync(integrationPage)).toBe(true);
+    expect(workspaceSource).toContain('router.push("/admin")');
+    expect(workspaceSource).not.toContain('section === "admin"');
+    expect(workspaceSource).not.toContain('"coach" | "admin"');
+  });
+});
+
+
 describe("authentication and API errors", () => {
   it("sends platform integration changes only to administrator endpoints", async () => {
     let requestedPath = "";

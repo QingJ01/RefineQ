@@ -15,25 +15,44 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
-  it("renders the four administrator-managed platform capabilities", () => {
+  it("renders a concise administrator overview without full configuration forms", () => {
     const html = renderToStaticMarkup(
       <AdminConsole
         token="admin-token"
         locale="zh"
-        onClose={() => undefined}
         onLogout={() => undefined}
+        onToggleLocale={() => undefined}
       />,
     );
 
     expect(html).toContain('class="admin-console"');
-    expect(html).toContain("平台控制台");
-    expect(html).toContain("模型推理");
-    expect(html).toContain("语义检索");
-    expect(html).toContain("扫描识别");
-    expect(html).toContain("文件存储");
-    expect(html).toContain("允许私网地址");
-    expect(html.match(/data-testid="integration-card-/g)).toHaveLength(4);
+    expect(html).toContain('data-testid="admin-overview"');
+    expect(html).toContain('data-testid="admin-system-status"');
+    expect(html).toContain('data-testid="admin-next-action"');
+    expect(html).toContain('data-testid="admin-principles"');
+    expect(html).not.toContain('data-testid="admin-integration-link-');
+    expect(html).not.toContain('data-testid="integration-card-');
     expect(html).toContain('data-testid="admin-logout"');
+  });
+
+  it("renders only the selected integration on a detail route", () => {
+    const html = renderToStaticMarkup(
+      <AdminConsole
+        token="admin-token"
+        locale="en"
+        activeKind="chat"
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="admin-integration-detail"');
+    expect(html).toContain('data-testid="integration-card-chat"');
+    expect(html).toContain('data-testid="admin-form-section-basic"');
+    expect(html).toContain('data-testid="admin-form-section-credentials"');
+    expect(html).toContain('data-testid="admin-form-section-network"');
+    expect(html.match(/data-testid="integration-card-/g)).toHaveLength(1);
+    expect(html).not.toContain('data-testid="integration-card-embedding"');
   });
 
   it("presents authentication as a calm RefineQ welcome card", () => {

@@ -86,6 +86,26 @@ def test_blank_secret_updates_preserve_existing_credentials(tmp_path) -> None:
     assert loaded.secrets["api_key"].get_secret_value() == "embedding-secret"
 
 
+def test_bge_m3_native_embedding_dimension_is_accepted(tmp_path) -> None:
+    repository, admin_id = _repository(tmp_path)
+
+    saved = repository.save(
+        IntegrationKind.EMBEDDING,
+        IntegrationUpdate(
+            enabled=True,
+            config={
+                "base_url": "https://api.siliconflow.cn/v1",
+                "model": "BAAI/bge-m3",
+                "dimensions": 1024,
+            },
+            secrets={"api_key": "embedding-secret"},
+        ),
+        actor_id=admin_id,
+    )
+
+    assert saved.config["dimensions"] == 1024
+
+
 def test_every_configuration_change_creates_a_secret_free_audit_entry(tmp_path) -> None:
     repository, admin_id = _repository(tmp_path)
 

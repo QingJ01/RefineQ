@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     forwarded_allow_ips: str = "127.0.0.1"
-    model_endpoint_allowed_hosts: str = "api.openai.com"
+    model_endpoint_allowed_hosts: str = "api.openai.com,api.deepseek.com,api.siliconflow.cn"
     object_storage_endpoint_allowed_hosts: str = ""
     model_encryption_key: SecretStr | None = None
     material_max_count_per_user: int = Field(default=500, ge=1, le=100_000)

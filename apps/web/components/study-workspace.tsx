@@ -10,10 +10,10 @@ import {
   Settings2,
   Sparkles,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { AgentPanel } from "@/components/agent-panel";
-import { AdminConsole } from "@/components/admin-console";
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
 import { EvidenceLedger } from "@/components/evidence-ledger";
@@ -43,9 +43,10 @@ import type {
 } from "@/lib/types";
 
 
-type Section = "today" | "materials" | "evidence" | "coach" | "admin";
+type Section = "today" | "materials" | "evidence" | "coach";
 
 export function StudyWorkspace() {
+  const router = useRouter();
   const [locale, setLocale] = useState<Locale>("zh");
   const t = useMemo(() => translator(locale), [locale]);
   const [restoring, setRestoring] = useState(true);
@@ -244,16 +245,6 @@ export function StudyWorkspace() {
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
   if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
-  if (auth.user.role === "admin" && section === "admin") {
-    return (
-      <AdminConsole
-        token={auth.access_token}
-        locale={locale}
-        onClose={() => setSection("today")}
-        onLogout={logout}
-      />
-    );
-  }
   if (!workspace) {
     return (
       <>
@@ -265,7 +256,7 @@ export function StudyWorkspace() {
           onResolve={resolveIntent}
           onOpen={openWorkspace}
           isAdmin={auth.user.role === "admin"}
-          onAdmin={() => setSection("admin")}
+          onAdmin={() => router.push("/admin")}
           onLogout={logout}
           onToggleLocale={() => setLocale(locale === "zh" ? "en" : "zh")}
         />
@@ -281,7 +272,6 @@ export function StudyWorkspace() {
     { id: "materials", icon: Archive },
     { id: "evidence", icon: NotebookTabs },
     { id: "coach", icon: Bot },
-    ...(auth.user.role === "admin" ? [{ id: "admin" as const, icon: Settings2 }] : []),
   ];
 
   return (
@@ -298,12 +288,22 @@ export function StudyWorkspace() {
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
               onClick={() => setSection(id)}
-              aria-label={id === "admin" ? "管理" : t(id)}
+              aria-label={t(id)}
             >
               <Icon size={19} />
-              <span>{id === "admin" ? "管理" : t(id)}</span>
+              <span>{t(id)}</span>
             </button>
           ))}
+          {auth.user.role === "admin" && (
+            <button
+              data-testid="nav-admin"
+              onClick={() => router.push("/admin")}
+              aria-label="管理"
+            >
+              <Settings2 size={19} />
+              <span>管理</span>
+            </button>
+          )}
         </nav>
         <div className="sidebar-learning">
           <span className="kicker">CURRENT LEARNING</span>

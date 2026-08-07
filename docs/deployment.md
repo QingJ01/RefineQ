@@ -66,6 +66,12 @@ hostnames must appear in `REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS`. S3 endpoints us
 `REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS` allowlist. The API resolves endpoints again before
 outbound calls and rejects loopback, link-local, private, and reserved addresses by default.
 
+Embedding providers may return either 1024-dimensional vectors (for example `BAAI/bge-m3`) or
+1536-dimensional vectors. RefineQ validates the provider's native dimension and zero-pads 1024
+dimensions to the PostgreSQL `vector(1536)` storage width. Zero padding preserves cosine similarity
+while allowing both model families to share the same pgvector schema. The provider request omits the
+optional `dimensions` parameter because not every OpenAI-compatible endpoint accepts it.
+
 Private MinIO or model gateways require both controls:
 
 1. Add the exact hostname to the corresponding server environment allowlist.
