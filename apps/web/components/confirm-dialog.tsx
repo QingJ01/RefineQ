@@ -69,6 +69,7 @@ export function ConfirmDialog({
   return (
     <div
       className="confirm-dialog-backdrop"
+      data-testid="confirm-dialog"
       onMouseDown={(event) => {
         if (event.currentTarget === event.target && !busy) onCancel();
       }}

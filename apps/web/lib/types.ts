@@ -62,6 +62,7 @@ export interface StudyPlan {
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
+  topics: Record<string, string>;
   diagnostic_count: number;
   attempt_count: number;
   plan_id: string | null;

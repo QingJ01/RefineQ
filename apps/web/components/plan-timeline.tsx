@@ -13,6 +13,7 @@ export function PlanTimeline({
   onUpdateSession,
   onStartSession,
   busySessionId,
+  topicLabels = {},
 }: {
   plan: StudyPlan | null;
   locale: Locale;
@@ -23,13 +24,14 @@ export function PlanTimeline({
   ) => void | Promise<void>;
   onStartSession?: (session: StudySession) => void | Promise<void>;
   busySessionId?: string | null;
+  topicLabels?: Record<string, string>;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   if (!plan) {
     return <div className="empty-note">{t("noPlan")}</div>;
   }
-  const rows = buildPlanRows(plan, locale === "zh" ? "zh-CN" : "en-US");
+  const rows = buildPlanRows(plan, locale === "zh" ? "zh-CN" : "en-US", topicLabels);
   const visibleRows = expanded ? rows : rows.slice(0, 7);
   return (
     <section className="content-card plan-card" aria-labelledby="plan-heading">

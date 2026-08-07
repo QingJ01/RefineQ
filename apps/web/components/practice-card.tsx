@@ -104,7 +104,7 @@ export function PracticeCard({
           {t("getQuestion")} <ArrowRight size={18} />
         </button>
       ) : !result ? (
-        <div className="question-sheet">
+        <div className="question-sheet" data-question-id={question.id}>
           <div className="practice-meta">
             <span className="topic-label">{question.topic_id}</span>
             {question.difficulty_level ? <span>{t("difficulty")} {question.difficulty_level}</span> : null}

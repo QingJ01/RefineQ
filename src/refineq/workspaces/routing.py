@@ -17,6 +17,12 @@ _SUBJECT_HINTS: dict[str, tuple[str, ...]] = {
         "代数",
         "geometry",
         "calculus",
+        "limit",
+        "limits",
+        "derivative",
+        "derivatives",
+        "integral",
+        "integrals",
         "math",
     ),
     "language": (
@@ -73,6 +79,47 @@ _LOW_INFORMATION = {
     "study",
 }
 
+_ENGLISH_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "be",
+    "for",
+    "from",
+    "have",
+    "i",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "on",
+    "the",
+    "to",
+    "two",
+    "want",
+    "with",
+    "exam",
+    "review",
+    "today",
+    "week",
+    "weeks",
+}
+
+_BROAD_SUBJECT_TERMS = {
+    "calculus",
+    "math",
+    "mathematics",
+    "language",
+    "english",
+    "programming",
+    "coding",
+    "science",
+    "humanities",
+}
+
 
 def _normalized(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().casefold())
@@ -90,14 +137,24 @@ def _subject(intent: str) -> str:
 
 def _keywords(intent: str) -> list[str]:
     normalized = _normalized(intent)
-    keywords = set(re.findall(r"[a-z][a-z0-9+#.-]{1,30}", normalized))
+    keywords = {
+        word
+        for word in re.findall(r"[a-z][a-z0-9+#.-]{1,30}", normalized)
+        if word not in _ENGLISH_STOPWORDS
+    }
     for hints in _SUBJECT_HINTS.values():
-        keywords.update(hint for hint in hints if hint in normalized)
+        keywords.update(hint for hint in hints if not hint.isascii() and hint in normalized)
     if not keywords:
         compact = re.sub(r"[，。！？、,.!?\s]", "", intent.strip())
         if compact and compact not in _LOW_INFORMATION:
             keywords.add(compact[:30])
-    return sorted(keywords)
+    return sorted(keywords, key=lambda item: (normalized.find(item), item))
+
+
+def _topics(subject: str, keywords: list[str], title: str) -> list[str]:
+    candidates = [item for item in keywords if item != subject]
+    specific = [item for item in candidates if item not in _BROAD_SUBJECT_TERMS]
+    return (specific or candidates or [title])[:3]
 
 
 def _suggested_title(intent: str, subject: str) -> str:
@@ -184,12 +241,11 @@ def route_workspace(
         )
 
     title = _suggested_title(intent, subject)
-    topic = next((item for item in keywords if item not in {subject}), title)
     return WorkspaceRoutingDecision(
         action="created",
         title=title,
         subject=subject,
-        topics=[topic],
+        topics=_topics(subject, keywords, title),
         keywords=keywords or [title],
         confidence=0.92 if subject != "general" else 0.72,
         reason="当前内容与已有学习方向差异明显，建立新的学习空间。",

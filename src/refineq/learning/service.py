@@ -148,6 +148,7 @@ class ProgressResponse(BaseModel):
     workspace_id: str
     goal: str
     mastery: dict[str, float]
+    topics: dict[str, str]
     diagnostic_count: int
     attempt_count: int
     plan_id: str | None = None
@@ -187,6 +188,10 @@ class LearningService:
             mastery={
                 topic_id: BKTState.model_validate(state).p_mastery
                 for topic_id, state in progress["bkt_states"].items()
+            },
+            topics={
+                topic_id: str(topic.get("name") or topic_id)
+                for topic_id, topic in progress["topics"].items()
             },
             diagnostic_count=len(progress["diagnostic_runs"]),
             attempt_count=len(data["attempts"]),

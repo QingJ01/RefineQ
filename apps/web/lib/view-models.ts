@@ -15,11 +15,15 @@ export interface PlanRow {
   minutesLabel: string;
 }
 
-export function buildPlanRows(plan: StudyPlan, locale: string): PlanRow[] {
+export function buildPlanRows(
+  plan: StudyPlan,
+  locale: string,
+  topicLabels: Record<string, string> = {},
+): PlanRow[] {
   return plan.sessions.map((session, index) => ({
     id: session.id,
     sequence: index + 1,
-    topic: session.topic_id,
+    topic: topicLabels[session.topic_id] ?? session.topic_id,
     dateLabel: new Intl.DateTimeFormat(locale, {
       month: "short",
       day: "numeric",

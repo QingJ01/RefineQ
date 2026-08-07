@@ -116,3 +116,15 @@ def test_broad_programming_subject_does_not_merge_different_languages() -> None:
     assert decision.action == "created"
     assert decision.workspace_id is None
     assert decision.title.startswith("Rust")
+
+
+def test_english_exam_goal_uses_meaningful_topics_instead_of_stopwords() -> None:
+    decision = route_workspace(
+        "I have a calculus exam in two weeks and want to review limits today",
+        [],
+    )
+
+    assert decision.subject == "mathematics"
+    assert decision.topics[0] == "limits"
+    assert "and" not in decision.keywords
+    assert "exam" not in decision.topics

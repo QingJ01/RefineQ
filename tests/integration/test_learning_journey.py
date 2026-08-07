@@ -133,6 +133,7 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert progress.status_code == 200
         assert progress.json()["attempt_count"] == 1
         assert progress.json()["mastery"]["chain-rule"] > 0.0
+        assert progress.json()["topics"] == {"chain-rule": "Chain Rule"}
         assert evidence.status_code == 200
         assert {item["kind"] for item in evidence.json()} == {"attempt", "diagnostic"}
 

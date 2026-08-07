@@ -669,10 +669,10 @@ describe("learning view models", () => {
   };
 
   it("turns plan sessions into numbered timeline rows", () => {
-    const rows = buildPlanRows(plan, "en-US");
+    const rows = buildPlanRows(plan, "en-US", { limits: "Function limits" });
 
     expect(rows.map((row) => row.sequence)).toEqual([1, 2]);
-    expect(rows[0].topic).toBe("limits");
+    expect(rows[0].topic).toBe("Function limits");
     expect(rows[0].minutesLabel).toBe("45 min");
   });
 

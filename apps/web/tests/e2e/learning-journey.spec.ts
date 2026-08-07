@@ -70,6 +70,8 @@ test("learner completes and restores a projectless study journey", async ({ page
     await expect(page.locator(".plan-session")).toHaveCount(7);
 
     const firstSession = page.locator(".plan-session").first();
+    await expect(firstSession.locator(".plan-topic strong")).toContainText(/limits/i);
+    await expect(firstSession.locator(".plan-topic strong")).not.toContainText("topic_");
     await firstSession.locator('[data-testid^="complete-session-"]').click();
     await expect(firstSession).toHaveClass(/completed/);
     await firstSession.locator('[data-testid^="complete-session-"]').click();
@@ -125,8 +127,27 @@ test("learner completes and restores a projectless study journey", async ({ page
 
   await test.step("answer a generated question and record grading evidence", async () => {
     await page.getByTestId("nav-today").click();
-    await page.getByTestId("get-question").click();
+    await page.getByTestId("practice-difficulty").selectOption("4");
+    await page.locator(".plan-session").first().locator('[data-testid^="start-session-"]').click();
     await expect(page.locator(".question-sheet h3")).toBeVisible();
+    await expect(page.locator(".question-sheet .practice-meta")).toContainText("4");
+    const firstQuestionId = await page.locator(".question-sheet").getAttribute("data-question-id");
+    expect(firstQuestionId).toBeTruthy();
+
+    await page.getByTestId("practice-sources").click();
+    await expect(page.getByRole("dialog")).toContainText("calculus-notes.txt");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+
+    await page.getByTestId("save-question").click();
+    await expect(page.getByTestId("save-question")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("practice-saved-question")).toHaveCount(1);
+
+    await page.getByTestId("skip-question").click();
+    await expect(page.locator(".question-sheet")).not.toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
     await page
       .getByTestId("practice-answer")
       .fill(
@@ -136,7 +157,7 @@ test("learner completes and restores a projectless study journey", async ({ page
     await expect(page.locator(".practice-result")).toContainText(/评分|Score/);
     await expect(page.locator(".progress-stats")).toContainText("1");
 
-    await page.getByTestId("next-question").click();
+    await page.getByTestId("retry-topic").click();
     await expect(page.getByTestId("practice-answer")).toBeVisible();
     await page
       .getByTestId("practice-answer")
@@ -155,6 +176,8 @@ test("learner completes and restores a projectless study journey", async ({ page
   await test.step("restore the same space and material after refresh", async () => {
     await page.reload();
     await expect(page.locator(".workspace-header h1")).toHaveText(workspaceTitle);
+    await page.getByTestId("nav-today").click();
+    await expect(page.getByTestId("practice-saved-question")).toHaveCount(1);
     await page.getByTestId("nav-materials").click();
     await expect(page).toHaveURL(/\/materials$/);
     await expect(page.locator(".material-list").getByText("calculus-notes.txt")).toBeVisible();
@@ -174,6 +197,20 @@ test("learner completes and restores a projectless study journey", async ({ page
     await expect(page.getByTestId("agent-history")).toBeVisible();
     await page.locator(".chat-composer textarea").focus();
     await page.screenshot({ path: testInfo.outputPath("learning-desktop.png"), fullPage: true });
+  });
+
+  await test.step("confirm before deleting a study material", async () => {
+    await page.getByTestId("nav-materials").click();
+    const material = page.locator(".material-list").getByText("calculus-notes.txt");
+    await page.getByTestId(/material-delete-/).click();
+    await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(material).toBeVisible();
+
+    await page.getByTestId(/material-delete-/).click();
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await expect(material).toBeHidden();
+    await expect(page.getByTestId("confirm-dialog")).toBeHidden();
   });
 
   await test.step("archive and restore the learning space", async () => {
@@ -217,16 +254,20 @@ test("administrator routes survive direct navigation, refresh, and browser histo
   const savedModel = await modelInput.inputValue();
   await modelInput.fill(`${savedModel || "demo"}-dirty`);
   await expect(page.getByText(/Unsaved changes|未保存/)).toBeVisible();
-  page.once("dialog", (dialog) => dialog.dismiss());
   await page.locator('.admin-nav a[href="/admin"]').click();
+  await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+  await page.getByTestId("confirm-dialog-cancel").click();
   await expect(page).toHaveURL(/\/admin\/integrations\/chat$/);
-  await modelInput.fill(savedModel);
 
+  await page.locator('.admin-nav a[href="/admin"]').click();
+  await page.getByTestId("confirm-dialog-confirm").click();
+  await expect(page).toHaveURL(/\/admin$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/admin\/integrations\/chat$/);
+  await expect(page.getByTestId("admin-integration-detail")).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("admin-integration-detail")).toBeVisible();
-  await page.goBack();
-  await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByTestId("admin-overview")).toBeVisible();
 });
 
 
@@ -271,4 +312,14 @@ test("learner cannot stay on an administrator route", async ({ page }) => {
   await page.goto("/admin");
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId("learning-intent")).toBeVisible();
+});
+
+
+test("unknown routes offer a direct way back to learning", async ({ page }) => {
+  await page.goto("/this-learning-route-does-not-exist");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("学习路径");
+  const homeLink = page.getByRole("link", { name: "返回学习首页" });
+  await expect(homeLink).toHaveAttribute("href", "/");
+  await homeLink.click();
+  await expect(page).toHaveURL(/\/$/);
 });

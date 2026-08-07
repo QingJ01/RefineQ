@@ -647,6 +647,7 @@ export function StudyWorkspace({
                  onUpdateSession={updatePlanSession}
                  onStartSession={(session) => practiceTopic(session.topic_id)}
                  busySessionId={busySessionId}
+                 topicLabels={progress?.topics}
                />
                <PracticeCard
                  question={question}
@@ -662,7 +663,12 @@ export function StudyWorkspace({
                  onToggleSaved={toggleSavedQuestion}
                  t={t}
                />
-               <ProgressInsights progress={progress} t={t} onPracticeTopic={practiceTopic} />
+               <ProgressInsights
+                 progress={progress}
+                 t={t}
+                 onPracticeTopic={practiceTopic}
+                 topicLabels={progress?.topics}
+               />
             </div>
           )}
           {section === "materials" && (

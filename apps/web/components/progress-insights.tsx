@@ -8,10 +8,12 @@ export function ProgressInsights({
   progress,
   t,
   onPracticeTopic,
+  topicLabels = {},
 }: {
   progress: Progress | null;
   t: Translator;
   onPracticeTopic?: (topicId: string) => void | Promise<void>;
+  topicLabels?: Record<string, string>;
 }) {
   const topics = Object.entries(progress?.mastery ?? {})
     .sort((left, right) => left[1] - right[1]);
@@ -33,8 +35,8 @@ export function ProgressInsights({
       <div className="topic-mastery-list">
         {topics.map(([topic, mastery]) => (
           <div key={topic} className="topic-mastery-row">
-            <span>{topic}</span>
-            <div role="progressbar" aria-label={topic} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mastery * 100)}>
+            <span>{topicLabels[topic] ?? topic}</span>
+            <div role="progressbar" aria-label={topicLabels[topic] ?? topic} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mastery * 100)}>
               <i style={{ width: `${Math.round(mastery * 100)}%` }} />
             </div>
             <strong>{Math.round(mastery * 100)}%</strong>
@@ -44,7 +46,7 @@ export function ProgressInsights({
       {recommended && (
         <div className="progress-recommendation" data-testid="progress-recommendation">
           <ArrowUpRight size={17} />
-          <span>{t("recommendedNext")} <strong>{recommended[0]}</strong></span>
+          <span>{t("recommendedNext")} <strong>{topicLabels[recommended[0]] ?? recommended[0]}</strong></span>
           <button
             type="button"
             data-testid="practice-recommended-topic"
