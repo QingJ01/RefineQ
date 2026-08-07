@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from refineq.knowledge.index import SearchResult
 from refineq.learning.bkt import DEFAULT_BKT, update_bkt
 from refineq.learning.difficulty import update_difficulty
 from refineq.learning.evidence import create_evidence, stable_id
@@ -89,6 +90,7 @@ class QuestionResponse(BaseModel):
     prompt: str
     difficulty_level: int = Field(default=2, ge=1, le=5)
     citations: list[str] = Field(default_factory=list)
+    sources: list[SearchResult] = Field(default_factory=list)
     mode: str = "fallback"
 
 
@@ -116,6 +118,7 @@ class AnswerResponse(BaseModel):
     gaps: list[str] = Field(default_factory=list)
     misconceptions: list[str] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
+    sources: list[SearchResult] = Field(default_factory=list)
     grading_mode: str = "fallback"
     mastery_updated: bool = True
     replayed: bool = False
@@ -210,6 +213,8 @@ class LearningService:
                 "diagnostic_runs": [],
                 "evidence": [],
                 "pending_question": None,
+                "question_sequence": 0,
+                "question_history": {},
                 "plan": None,
             }
             return data
@@ -324,23 +329,41 @@ class LearningService:
         return StudySession.model_validate(updated)
 
     @staticmethod
-    def _public_question(question: dict[str, Any]) -> QuestionResponse:
+    def _question_sources(question: dict[str, Any]) -> list[SearchResult]:
+        grading = question.get("grading")
+        if not isinstance(grading, dict):
+            return []
+        return [SearchResult.model_validate(source) for source in grading.get("sources", [])]
+
+    @classmethod
+    def _public_question(cls, question: dict[str, Any]) -> QuestionResponse:
         return QuestionResponse(
             id=question["id"],
             topic_id=question["topic_id"],
             prompt=question["prompt"],
             difficulty_level=question.get("difficulty_level", 2),
             citations=question.get("citations", []),
+            sources=cls._question_sources(question),
             mode=question.get("mode", "fallback"),
         )
 
-    def next_question(self, owner_id: str, project_id: str) -> QuestionResponse:
+    def next_question(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        topic_id: str | None = None,
+        difficulty_level: int | None = None,
+        replace_pending: bool = False,
+    ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
         current = self._learning.get(owner_id, project_id)
         progress = self._progress(current.data)
-        if progress.get("pending_question"):
+        if progress.get("pending_question") and not replace_pending:
             return self._public_question(progress["pending_question"])
-        topic_id = min(
+        if topic_id is not None and topic_id not in progress["topics"]:
+            raise LearningConflictError("Unknown practice topic")
+        topic_id = topic_id or min(
             progress["topics"],
             key=lambda candidate: (
                 BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
@@ -349,7 +372,7 @@ class LearningService:
         )
         topic = progress["topics"][topic_id]
         mastery = BKTState.model_validate(progress["bkt_states"][topic_id]).p_mastery
-        difficulty_level = DifficultyState.model_validate(
+        selected_difficulty = difficulty_level or DifficultyState.model_validate(
             progress["difficulty_states"][topic_id]
         ).level
         if self._intelligence is not None:
@@ -359,23 +382,16 @@ class LearningService:
                 topic_id=topic_id,
                 topic_name=topic["name"],
                 mastery=mastery,
-                difficulty_level=difficulty_level,
+                difficulty_level=selected_difficulty,
             )
         else:
             generated = fallback_question(
                 topic_id=topic_id,
                 topic_name=topic["name"],
-                difficulty_level=difficulty_level,
+                difficulty_level=selected_difficulty,
                 sources=[],
             )
-        question_id = stable_id(
-            "question",
-            project_id,
-            topic_id,
-            str(len(current.data["attempts"])),
-        )
         proposed = {
-            "id": question_id,
             "topic_id": topic_id,
             "prompt": generated.prompt,
             "expected_answer": generated.expected_answer,
@@ -389,8 +405,19 @@ class LearningService:
         def store_once(data: dict[str, Any]) -> dict[str, Any]:
             nonlocal selected
             inner_progress = self._progress(data)
-            selected = inner_progress.get("pending_question") or proposed
+            if inner_progress.get("pending_question") and not replace_pending:
+                selected = inner_progress["pending_question"]
+                return data
+            history = inner_progress.setdefault("question_history", {})
+            sequence = int(inner_progress.get("question_sequence", len(history)))
+            question_id = stable_id("question", project_id, topic_id, str(sequence))
+            while question_id in history:
+                sequence += 1
+                question_id = stable_id("question", project_id, topic_id, str(sequence))
+            selected = {"id": question_id, **proposed}
+            inner_progress["question_sequence"] = sequence + 1
             inner_progress["pending_question"] = selected
+            history[question_id] = deepcopy(selected)
             return data
 
         self._learning.mutate(owner_id, project_id, store_once)
@@ -503,6 +530,11 @@ class LearningService:
                 "gaps": grade.gaps,
                 "misconceptions": grade.misconceptions,
                 "citations": grade.citations,
+                "sources": [
+                    source.model_dump(mode="json")
+                    for source in self._question_sources(question)
+                    if source.citation_id in grade.citations
+                ],
                 "grading_mode": grade.mode,
                 "mastery_updated": grade.mastery_evidence,
             }

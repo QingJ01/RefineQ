@@ -98,6 +98,16 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         question = question_response.json()
         assert question["mode"] == "ai"
         assert question["citations"] == ["material-1#0"]
+        assert question["sources"] == [
+            {
+                "citation_id": "material-1#0",
+                "material_id": "material-1",
+                "filename": "limits.txt",
+                "chunk_index": 0,
+                "text": "函数极限是自变量趋近某点时函数值趋近的目标。",
+                "score": question["sources"][0]["score"],
+            }
+        ]
         assert "expected_answer" not in question_response.text
         assert "rubric" not in question_response.text
 
@@ -119,6 +129,8 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         assert grade["strengths"] == ["准确说明趋近"]
         assert grade["gaps"] == ["可以补充形式化定义"]
         assert grade["grading_mode"] == "ai"
+        assert grade["sources"][0]["citation_id"] == "material-1#0"
+        assert "expected_answer" not in answer.text
 
         replay = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
@@ -173,3 +185,56 @@ def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) 
     assert answer.json()["is_correct"] is False
     assert answer.json()["mastery_updated"] is False
     assert after == before
+
+
+def test_workspace_practice_can_replace_a_question_at_a_chosen_difficulty(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "targeted-practice@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Targeted Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习高数函数极限"},
+        ).json()["workspace"]["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        topic_id = next(iter(snapshot["progress"]["mastery"]))
+
+        first = client.get(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            params={"topic_id": topic_id, "difficulty": 1},
+        )
+        replacement = client.get(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            params={"topic_id": topic_id, "difficulty": 5, "replace": "true"},
+        )
+        invalid_topic = client.get(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            params={"topic_id": "unknown-topic", "replace": "true"},
+        )
+
+    assert first.status_code == 200
+    assert first.json()["topic_id"] == topic_id
+    assert first.json()["difficulty_level"] == 1
+    assert replacement.status_code == 200
+    assert replacement.json()["topic_id"] == topic_id
+    assert replacement.json()["difficulty_level"] == 5
+    assert replacement.json()["id"] != first.json()["id"]
+    assert invalid_topic.status_code == 409
+    assert invalid_topic.json()["error"]["code"] == "learning_conflict"

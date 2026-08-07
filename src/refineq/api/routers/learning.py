@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
@@ -75,9 +75,22 @@ def create_plan(project_id: str, request: Request, user: CurrentUser) -> StudyPl
 
 
 @router.get("/question", response_model=QuestionResponse)
-def question(project_id: str, request: Request, user: CurrentUser) -> QuestionResponse:
+def question(
+    project_id: str,
+    request: Request,
+    user: CurrentUser,
+    topic_id: str | None = None,
+    difficulty: int | None = Query(default=None, ge=1, le=5),
+    replace: bool = False,
+) -> QuestionResponse:
     try:
-        return request.app.state.learning_service.next_question(user.id, project_id)
+        return request.app.state.learning_service.next_question(
+            user.id,
+            project_id,
+            topic_id=topic_id,
+            difficulty_level=difficulty,
+            replace_pending=replace,
+        )
     except LearningServiceError as error:
         _raise_api_error(error)
 
@@ -87,11 +100,17 @@ def workspace_question(
     workspace_id: str,
     request: Request,
     user: CurrentUser,
+    topic_id: str | None = None,
+    difficulty: int | None = Query(default=None, ge=1, le=5),
+    replace: bool = False,
 ) -> QuestionResponse:
     try:
         return request.app.state.workspace_learning_service.next_question(
             user.id,
             workspace_id,
+            topic_id=topic_id,
+            difficulty_level=difficulty,
+            replace_pending=replace,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
