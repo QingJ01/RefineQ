@@ -45,6 +45,7 @@ export default defineConfig({
         REFINEQ_DATA_ROOT: testDataRoot,
         REFINEQ_HOST: "127.0.0.1",
         REFINEQ_PORT: "8000",
+        REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN: "true",
       },
       url: "http://127.0.0.1:8000/health/live",
       reuseExistingServer: !process.env.CI,
@@ -56,7 +57,6 @@ export default defineConfig({
       env: {
         ...process.env,
         REFINEQ_API_ORIGIN: "http://127.0.0.1:8000",
-        REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN: "true",
       },
       url: "http://127.0.0.1:3000",
       reuseExistingServer: !process.env.CI,

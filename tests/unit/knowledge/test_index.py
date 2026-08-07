@@ -5,9 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
+from refineq.database.schema import material_chunks
 from refineq.knowledge import index as index_module
-from refineq.knowledge.index import KnowledgeIndex, MaterialQuotaExceededError
+from refineq.knowledge.index import (
+    KnowledgeIndex,
+    MaterialQuotaExceededError,
+    _postgres_cosine_distance,
+)
+
+
+def test_postgres_vector_distance_uses_a_vector_typed_expression() -> None:
+    distance = _postgres_cosine_distance(material_chunks.c.embedding, [1.0, 0.0])
+
+    statement = select(distance.label("distance"))
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "material_chunks.embedding <=>" in compiled
+    assert "CAST(" not in compiled
+    assert "<=>" in compiled
 
 
 def test_search_is_isolated_by_owner_and_project(tmp_path: Path) -> None:

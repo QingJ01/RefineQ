@@ -716,6 +716,26 @@ describe("accessible application shell", () => {
     expect(configSource).toContain("frame-ancestors 'none'");
     expect(configSource).toContain("X-Content-Type-Options");
     expect(configSource).toContain("Referrer-Policy");
+    expect(configSource).toContain('process.env.NODE_ENV === "development"');
+    expect(configSource).toContain("'unsafe-eval'");
+  });
+
+  it("exposes reset tokens only to the isolated browser-test API process", () => {
+    const configSource = readFileSync(
+      fileURLToPath(new URL("../playwright.config.ts", import.meta.url)),
+      "utf8",
+    );
+    const backendStart = configSource.indexOf('command: `"${python}" -m uvicorn');
+    const frontendStart = configSource.indexOf('command: "npm run dev');
+
+    expect(backendStart).toBeGreaterThanOrEqual(0);
+    expect(frontendStart).toBeGreaterThan(backendStart);
+    expect(configSource.slice(backendStart, frontendStart)).toContain(
+      'REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN: "true"',
+    );
+    expect(configSource.slice(frontendStart)).not.toContain(
+      "REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN",
+    );
   });
 });
 

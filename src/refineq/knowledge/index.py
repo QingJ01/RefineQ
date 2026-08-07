@@ -21,6 +21,7 @@ from sqlalchemy import (
     literal_column,
     or_,
     select,
+    type_coerce,
     update,
 )
 from sqlalchemy import (
@@ -28,11 +29,20 @@ from sqlalchemy import (
 )
 
 from refineq.database.engine import Database
-from refineq.database.schema import material_chunks, materials
+from refineq.database.schema import EMBEDDING_DIMENSIONS, material_chunks, materials
 from refineq.knowledge.embeddings import Embedder
 from refineq.storage.json_store import validate_identifier
 
 logger = logging.getLogger(__name__)
+
+
+def _postgres_cosine_distance(column: object, query_embedding: list[float]):
+    """Apply pgvector operators when shared metadata uses a SQLite JSON fallback."""
+
+    from pgvector.sqlalchemy import VECTOR
+
+    vector_column = type_coerce(column, VECTOR(EMBEDDING_DIMENSIONS))
+    return vector_column.cosine_distance(query_embedding)
 
 
 class MaterialRecord(BaseModel):
@@ -510,7 +520,10 @@ class KnowledgeIndex:
                     for row in lexical_rows
                 }
                 if query_embedding is not None:
-                    distance = material_chunks.c.embedding.cosine_distance(query_embedding)
+                    distance = _postgres_cosine_distance(
+                        material_chunks.c.embedding,
+                        query_embedding,
+                    )
                     semantic_rows = session.execute(
                         select(material_chunks, (1 - distance).label("semantic_score"))
                         .where(*scope, material_chunks.c.embedding.is_not(None))
