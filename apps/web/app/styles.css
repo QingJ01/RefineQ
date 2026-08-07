@@ -347,60 +347,6 @@ textarea:focus {
   text-wrap: pretty;
 }
 
-.auth-memory-track {
-  position: relative;
-  width: min(500px, 100%);
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 42px;
-  padding: 18px 16px 16px;
-  border: 1px solid rgba(42, 99, 232, 0.09);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow: 0 18px 42px rgba(42, 62, 108, 0.055);
-  backdrop-filter: blur(10px);
-}
-
-.auth-memory-track::before {
-  content: "";
-  position: absolute;
-  top: 35px;
-  right: 64px;
-  left: 64px;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(42, 99, 232, 0.28), rgba(255, 173, 115, 0.6));
-}
-
-.auth-memory-step {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  justify-items: center;
-  gap: 9px;
-  color: var(--muted-strong);
-  font-size: 12px;
-}
-
-.auth-memory-icon {
-  width: 34px;
-  height: 34px;
-  display: inline-grid;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #dce5f8;
-  border-radius: 11px;
-  background: #f7faff;
-  color: var(--accent);
-  box-shadow: 0 5px 12px rgba(42, 99, 232, 0.08);
-}
-
-.auth-memory-step:last-child .auth-memory-icon {
-  border-color: #f7d9c5;
-  background: var(--apricot-soft);
-  color: #bd652d;
-}
-
 .auth-form-card {
   align-self: center;
   justify-self: center;

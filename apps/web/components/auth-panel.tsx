@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, FileText, LockKeyhole, PencilLine, Target, TrendingUp } from "lucide-react";
+import { ArrowRight, LockKeyhole } from "lucide-react";
 import Image from "next/image";
 import { FormEvent, useState } from "react";
 
@@ -51,12 +51,6 @@ export function AuthPanel({
           <span className="kicker">PERSONAL LEARNING AGENT</span>
           <h1>{t("authPrompt")}</h1>
           <p>{t("authSubline")}</p>
-          <div className="auth-memory-track" aria-label={t("learningMemoryPath")}>
-            <span className="auth-memory-step"><span className="auth-memory-icon"><Target size={17} /></span><strong>{t("learningGoal")}</strong></span>
-            <span className="auth-memory-step"><span className="auth-memory-icon"><FileText size={17} /></span><strong>{t("materials")}</strong></span>
-            <span className="auth-memory-step"><span className="auth-memory-icon"><PencilLine size={17} /></span><strong>{t("practice")}</strong></span>
-            <span className="auth-memory-step"><span className="auth-memory-icon"><TrendingUp size={17} /></span><strong>{t("learningProgress")}</strong></span>
-          </div>
         </div>
         <Image
           className="auth-illustration"

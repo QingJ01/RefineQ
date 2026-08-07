@@ -209,6 +209,8 @@ describe("projectless product surface", () => {
 
     expect(styles).toMatch(/\.auth-illustration\s*\{[^}]*pointer-events: none/s);
     expect(styles).toMatch(/@media \(max-width: 900px\)[\s\S]*?\.auth-illustration\s*\{[^}]*display: none/s);
+    expect(styles).not.toContain(".auth-memory-track");
+    expect(styles).not.toContain(".auth-memory-step");
   });
 });
 
