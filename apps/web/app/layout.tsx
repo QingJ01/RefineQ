@@ -7,7 +7,7 @@ import type { Metadata } from "next";
 const description = "自动理解学习目标，用计划、练习、资料和证据陪你持续进步。";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
+  metadataBase: new URL(process.env.REFINEQ_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   applicationName: "RefineQ",
   title: {
     default: "RefineQ · 个人学习 Agent",

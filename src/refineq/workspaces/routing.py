@@ -109,6 +109,12 @@ _ENGLISH_STOPWORDS = {
 }
 
 _BROAD_SUBJECT_TERMS = {
+    "数学",
+    "高数",
+    "微积分",
+    "英语",
+    "编程",
+    "科学",
     "calculus",
     "math",
     "mathematics",

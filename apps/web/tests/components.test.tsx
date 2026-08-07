@@ -264,6 +264,7 @@ describe("focused learning components", () => {
         progress={{
           goal: "Pass calculus",
           mastery: { limits: 0.72, derivatives: 0.34 },
+          topics: { limits: "Function limits", derivatives: "Derivatives" },
           diagnostic_count: 1,
           attempt_count: 4,
           plan_id: "plan-1",
@@ -272,7 +273,7 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain("derivatives");
+    expect(html).toContain("Derivatives");
     expect(html).toContain("34%");
     expect(html).toContain('data-testid="progress-recommendation"');
     expect(html).toContain('data-testid="practice-recommended-topic"');
