@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from refineq.api.dependencies import require_admin
 from refineq.database.engine import Database
 from refineq.identity.models import User
-from refineq.identity.service import IdentityService
+from refineq.identity.service import IdentityService, InvalidTokenError
 from refineq.operations.admin import ensure_admin
 
 
@@ -48,7 +48,7 @@ def test_admin_dependency_rejects_learners_and_accepts_admins() -> None:
     assert require_admin(admin) == admin
 
 
-def test_existing_token_observes_a_live_admin_promotion(tmp_path) -> None:
+def test_admin_promotion_with_password_change_revokes_existing_token(tmp_path) -> None:
     identity = _identity(tmp_path)
     learner = identity.register(
         email="owner@example.com",
@@ -66,7 +66,9 @@ def test_existing_token_observes_a_live_admin_promotion(tmp_path) -> None:
 
     assert promoted.created is False
     assert promoted.user.role == "admin"
-    assert identity.verify_token(token).role == "admin"
+    with pytest.raises(InvalidTokenError):
+        identity.verify_token(token)
+    assert identity.verify_token(identity.issue_token(promoted.user)).role == "admin"
 
 
 def test_admin_bootstrap_is_idempotent_and_resets_the_requested_password(tmp_path) -> None:

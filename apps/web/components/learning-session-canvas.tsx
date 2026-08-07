@@ -163,13 +163,21 @@ export function LearningSessionCanvas({
   const steps = buildSessionSteps(learningMode, locale);
   const stage = sessionStage(question, result);
   const activeIndex = stage === "learn" ? 1 : stage === "practice" ? 2 : 3;
-  const topic = progress?.topics
-    ? Object.values(progress.topics)[0] ?? workspace.topics[0] ?? workspace.title
+  const nextSession = useMemo(
+    () => plan?.sessions.find((item) => item.status !== "completed"),
+    [plan],
+  );
+  const activeTopicId = question?.topic_id ?? nextSession?.topic_id;
+  const topic = activeTopicId
+    ? progress?.topics?.[activeTopicId] ?? activeTopicId
     : workspace.topics[0] ?? workspace.title;
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const sourceRecords = materials.slice(0, 2);
   const taskSources = result?.sources?.length ? result.sources : question?.sources ?? [];
-  const nextSession = useMemo(() => plan?.sessions.find((item) => item.status !== "completed"), [plan]);
+  const nextReview = result?.next_review_at
+    ?? plan?.sessions.find(
+      (item) => item.activity === "review" && item.status !== "completed",
+    )?.planned_at;
   const isSaved = question
     ? Boolean(question.saved || savedQuestions.some((saved) => saved.id === question.id))
     : false;
@@ -305,7 +313,15 @@ export function LearningSessionCanvas({
               </div>
               <div className="session-review-note">
                 <Clock3 size={17} />
-                <div><strong>{text.review}</strong><span>{text.reviewHint}</span></div>
+                <div>
+                  <strong>{text.review}</strong>
+                  <span>{nextReview
+                    ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }).format(new Date(nextReview))
+                    : text.reviewHint}</span>
+                </div>
               </div>
               <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
                 {text.next} <ArrowRight size={18} />
@@ -330,7 +346,7 @@ export function LearningSessionCanvas({
           <SessionCoach locale={locale} onAsk={onAskCoach} />
           <section className="session-next-review">
             <Clock3 size={18} />
-            <div><span>{text.review}</span><strong>{nextSession ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", weekday: "short" }).format(new Date(nextSession.planned_at)) : text.reviewHint}</strong></div>
+            <div><span>{text.review}</span><strong>{nextReview ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", weekday: "short" }).format(new Date(nextReview)) : text.reviewHint}</strong></div>
           </section>
         </aside>
       </div>

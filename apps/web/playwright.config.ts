@@ -56,6 +56,7 @@ export default defineConfig({
       env: {
         ...process.env,
         REFINEQ_API_ORIGIN: "http://127.0.0.1:8000",
+        REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN: "true",
       },
       url: "http://127.0.0.1:3000",
       reuseExistingServer: !process.env.CI,

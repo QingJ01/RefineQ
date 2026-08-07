@@ -111,8 +111,7 @@ def fallback_question(
             f"分析“{topic_name}”，并区分表面诉求与底层需求。"
         ),
         LearningMode.PROJECT: (
-            f"围绕“{topic_name}”产出一份可执行的最小方案，写清目标、约束、"
-            "行动步骤和验证标准。"
+            f"围绕“{topic_name}”产出一份可执行的最小方案，写清目标、约束、行动步骤和验证标准。"
         ),
         LearningMode.EXAM: (
             f"请在不查答案的情况下完成“{topic_name}”模拟作答：先给出结论，"
@@ -175,7 +174,9 @@ def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
     english_words = re.findall(r"[a-z0-9+#.-]{3,}", normalized_answer)
     chinese_characters = re.findall(r"[\u4e00-\u9fff]", normalized_answer)
     compact_length = len(re.sub(r"\s+", "", normalized_answer))
-    substantive = (compact_length >= 40 and len(english_words) >= 8) or (
+    english_diversity = len(set(english_words)) / max(1, len(english_words))
+    lexically_varied = len(english_words) < 12 or english_diversity >= 0.45
+    substantive = (compact_length >= 40 and len(english_words) >= 8 and lexically_varied) or (
         compact_length >= 20 and len(chinese_characters) >= 20
     )
 
@@ -196,6 +197,8 @@ def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
     mastery_evidence = substantive and concept_present
     score = (25 if substantive else 0) + (45 if concept_present else 0)
     score += 30 if example_present else 0
+    if not lexically_varied:
+        score = min(score, question.pass_score - 1)
     strengths = ["回答包含可核对的核心概念。"] if concept_present else []
     if substantive:
         strengths.append("回答具备足够的解释细节。")

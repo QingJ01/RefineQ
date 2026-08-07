@@ -86,9 +86,10 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert plan.status_code == 200
         assert len(plan.json()["sessions"]) == 4
 
-        question_response = client.get(
+        question_response = client.post(
             f"/projects/{project_id}/learning/question",
             headers=alice_headers,
+            json={"request_id": "journey-question-1"},
         )
         assert question_response.status_code == 200
         question = question_response.json()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,8 +22,8 @@ from refineq.learning.models import (
     BKTState,
     DifficultyState,
     KnowledgeType,
-    LearningMode,
     LearningEvidence,
+    LearningMode,
     StudyPlan,
     StudySession,
 )
@@ -31,6 +31,10 @@ from refineq.learning.planning import build_study_plan
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
+
+MAX_QUESTION_HISTORY = 200
+MAX_SAVED_QUESTIONS = 100
+MAX_QUESTION_REQUESTS = 100
 
 
 class LearningServiceError(RuntimeError):
@@ -47,6 +51,10 @@ class LearningNotSeededError(LearningServiceError):
 
 class LearningConflictError(LearningServiceError):
     code = "learning_conflict"
+
+
+class QuestionNotFoundError(LearningServiceError):
+    code = "question_not_found"
 
 
 class TopicSeed(BaseModel):
@@ -107,6 +115,19 @@ class QuestionSaveRequest(BaseModel):
     saved: bool
 
 
+class QuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    topic_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+    )
+    difficulty: int | None = Field(default=None, ge=1, le=5)
+    mode: LearningMode = LearningMode.CONCEPT
+    replace: bool = False
+
+
 class AnswerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -134,6 +155,7 @@ class AnswerResponse(BaseModel):
     sources: list[SearchResult] = Field(default_factory=list)
     grading_mode: str = "fallback"
     mastery_updated: bool = True
+    next_review_at: datetime | None = None
     replayed: bool = False
 
 
@@ -234,6 +256,7 @@ class LearningService:
                 "question_sequence": 0,
                 "question_history": {},
                 "saved_questions": {},
+                "question_requests": {},
                 "plan": None,
             }
             return data
@@ -265,9 +288,7 @@ class LearningService:
                     state,
                     is_correct=result.is_correct,
                 ).model_dump(mode="json")
-                topic_name = str(
-                    progress["topics"][result.topic_id].get("name") or result.topic_id
-                )
+                topic_name = str(progress["topics"][result.topic_id].get("name") or result.topic_id)
                 evidence = create_evidence(
                     kind="diagnostic",
                     source_id=f"{project_id}:{payload.diagnostic_id}:{result.topic_id}",
@@ -385,82 +406,124 @@ class LearningService:
         difficulty_level: int | None = None,
         learning_mode: LearningMode = LearningMode.CONCEPT,
         replace_pending: bool = False,
+        request_id: str | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
-        current = self._learning.get(owner_id, project_id)
-        progress = self._progress(current.data)
-        if progress.get("pending_question") and not replace_pending:
-            pending = progress["pending_question"]
-            return self._public_question(
-                pending,
-                saved_at=progress.get("saved_questions", {}).get(pending["id"]),
+        with self._learning.question_transaction(owner_id, project_id):
+            current = self._learning.get(owner_id, project_id)
+            progress = self._progress(current.data)
+            history = progress.setdefault("question_history", {})
+            requests = progress.setdefault("question_requests", {})
+            if request_id and request_id in requests:
+                replay = history.get(requests[request_id])
+                if replay is not None:
+                    return self._public_question(
+                        replay,
+                        saved_at=progress.get("saved_questions", {}).get(replay["id"]),
+                    )
+            if progress.get("pending_question") and not replace_pending:
+                pending = progress["pending_question"]
+                return self._public_question(
+                    pending,
+                    saved_at=progress.get("saved_questions", {}).get(pending["id"]),
+                )
+            if topic_id is not None and topic_id not in progress["topics"]:
+                raise LearningConflictError("Unknown practice topic")
+            selected_topic_id = topic_id or min(
+                progress["topics"],
+                key=lambda candidate: (
+                    BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
+                    candidate,
+                ),
             )
-        if topic_id is not None and topic_id not in progress["topics"]:
-            raise LearningConflictError("Unknown practice topic")
-        topic_id = topic_id or min(
-            progress["topics"],
-            key=lambda candidate: (
-                BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
-                candidate,
-            ),
-        )
-        topic = progress["topics"][topic_id]
-        mastery = BKTState.model_validate(progress["bkt_states"][topic_id]).p_mastery
-        selected_difficulty = difficulty_level or DifficultyState.model_validate(
-            progress["difficulty_states"][topic_id]
-        ).level
-        if self._intelligence is not None:
-            generated = self._intelligence.generate_question(
-                owner_id=owner_id,
-                workspace_id=project_id,
-                topic_id=topic_id,
-                topic_name=topic["name"],
-                mastery=mastery,
-                difficulty_level=selected_difficulty,
-                learning_mode=learning_mode,
+            topic = progress["topics"][selected_topic_id]
+            mastery = BKTState.model_validate(progress["bkt_states"][selected_topic_id]).p_mastery
+            selected_difficulty = (
+                difficulty_level
+                or DifficultyState.model_validate(
+                    progress["difficulty_states"][selected_topic_id]
+                ).level
             )
-        else:
-            generated = fallback_question(
-                topic_id=topic_id,
-                topic_name=topic["name"],
-                difficulty_level=selected_difficulty,
-                sources=[],
-                learning_mode=learning_mode,
-            )
-        proposed = {
-            "topic_id": topic_id,
-            "prompt": generated.prompt,
-            "expected_answer": generated.expected_answer,
-            "difficulty_level": generated.difficulty_level,
-            "learning_mode": generated.learning_mode.value,
-            "citations": generated.citations,
-            "mode": generated.mode,
-            "grading": generated.model_dump(mode="json"),
-        }
-        selected: dict[str, Any] | None = None
+            if self._intelligence is not None:
+                generated = self._intelligence.generate_question(
+                    owner_id=owner_id,
+                    workspace_id=project_id,
+                    topic_id=selected_topic_id,
+                    topic_name=topic["name"],
+                    mastery=mastery,
+                    difficulty_level=selected_difficulty,
+                    learning_mode=learning_mode,
+                )
+            else:
+                generated = fallback_question(
+                    topic_id=selected_topic_id,
+                    topic_name=topic["name"],
+                    difficulty_level=selected_difficulty,
+                    sources=[],
+                    learning_mode=learning_mode,
+                )
+            proposed = {
+                "topic_id": selected_topic_id,
+                "prompt": generated.prompt,
+                "expected_answer": generated.expected_answer,
+                "difficulty_level": generated.difficulty_level,
+                "learning_mode": generated.learning_mode.value,
+                "citations": generated.citations,
+                "mode": generated.mode,
+                "grading": generated.model_dump(mode="json"),
+            }
+            selected: dict[str, Any] | None = None
 
-        def store_once(data: dict[str, Any]) -> dict[str, Any]:
-            nonlocal selected
-            inner_progress = self._progress(data)
-            if inner_progress.get("pending_question") and not replace_pending:
-                selected = inner_progress["pending_question"]
+            def store_once(data: dict[str, Any]) -> dict[str, Any]:
+                nonlocal selected
+                inner_progress = self._progress(data)
+                inner_history = inner_progress.setdefault("question_history", {})
+                sequence = int(inner_progress.get("question_sequence", len(inner_history)))
+                question_id = stable_id("question", project_id, selected_topic_id, str(sequence))
+                while question_id in inner_history:
+                    sequence += 1
+                    question_id = stable_id(
+                        "question", project_id, selected_topic_id, str(sequence)
+                    )
+                selected = {"id": question_id, **proposed}
+                inner_progress["question_sequence"] = sequence + 1
+                inner_progress["pending_question"] = selected
+                inner_history[question_id] = deepcopy(selected)
+                saved = inner_progress.setdefault("saved_questions", {})
+                while len(inner_history) > MAX_QUESTION_HISTORY:
+                    removable = next(
+                        (
+                            candidate
+                            for candidate in inner_history
+                            if candidate != question_id and candidate not in saved
+                        ),
+                        None,
+                    )
+                    if removable is None:
+                        raise LearningConflictError("Practice history limit reached")
+                    inner_history.pop(removable, None)
+                if request_id:
+                    inner_requests = inner_progress.setdefault("question_requests", {})
+                    inner_requests[request_id] = question_id
+                    while len(inner_requests) > MAX_QUESTION_REQUESTS:
+                        inner_requests.pop(next(iter(inner_requests)))
                 return data
-            history = inner_progress.setdefault("question_history", {})
-            sequence = int(inner_progress.get("question_sequence", len(history)))
-            question_id = stable_id("question", project_id, topic_id, str(sequence))
-            while question_id in history:
-                sequence += 1
-                question_id = stable_id("question", project_id, topic_id, str(sequence))
-            selected = {"id": question_id, **proposed}
-            inner_progress["question_sequence"] = sequence + 1
-            inner_progress["pending_question"] = selected
-            history[question_id] = deepcopy(selected)
-            return data
 
-        self._learning.mutate(owner_id, project_id, store_once)
-        if selected is None:
-            raise LearningServiceError("Question generation failed")
-        return self._public_question(selected)
+            self._learning.mutate(owner_id, project_id, store_once)
+            if selected is None:
+                raise LearningServiceError("Question generation failed")
+            return self._public_question(selected)
+
+    def pending_question(self, owner_id: str, project_id: str) -> QuestionResponse:
+        self._require_project(owner_id, project_id)
+        progress = self._progress(self._learning.get(owner_id, project_id).data)
+        pending = progress.get("pending_question")
+        if pending is None:
+            raise QuestionNotFoundError("No pending practice question")
+        return self._public_question(
+            pending,
+            saved_at=progress.get("saved_questions", {}).get(pending["id"]),
+        )
 
     def set_question_saved(
         self,
@@ -485,6 +548,11 @@ class LearningService:
                 raise LearningConflictError("Practice question not found")
             saved_questions = progress.setdefault("saved_questions", {})
             if payload.saved:
+                if (
+                    question_id not in saved_questions
+                    and len(saved_questions) >= MAX_SAVED_QUESTIONS
+                ):
+                    raise LearningConflictError("Saved question limit reached")
                 saved_at = saved_questions.get(question_id) or datetime.now(UTC).isoformat()
                 saved_questions[question_id] = saved_at
             else:
@@ -563,9 +631,10 @@ class LearningService:
             grade = fallback_grade(generated, payload.answer)
         result: dict[str, Any] | None = None
         replayed = False
+        next_review_at: datetime | None = None
 
         def grade_once(data: dict[str, Any]) -> dict[str, Any]:
-            nonlocal replayed, result
+            nonlocal next_review_at, replayed, result
             progress = self._progress(data)
             if payload.attempt_id in data["attempts"]:
                 replayed = True
@@ -597,6 +666,7 @@ class LearningService:
                 if grade.mastery_evidence
                 else current_difficulty
             )
+            observed_at = datetime.now(UTC)
             evidence = create_evidence(
                 kind="attempt",
                 source_id=payload.attempt_id,
@@ -604,7 +674,7 @@ class LearningService:
                     f"Completed a {learning_mode} learning task for {topic_name}; "
                     f"the response {'met' if is_correct else 'did not yet meet'} the rubric."
                 ),
-                observed_at=datetime.now(UTC),
+                observed_at=observed_at,
                 details={
                     "topic_id": topic_id,
                     "question_id": payload.question_id,
@@ -619,6 +689,23 @@ class LearningService:
                     "mastery_updated": grade.mastery_evidence,
                 },
             )
+            raw_plan = progress.get("plan")
+            if raw_plan:
+                candidate_review_at = observed_at + timedelta(days=3 if is_correct else 1)
+                exam_at = datetime.fromisoformat(progress["exam_at"])
+                if candidate_review_at < exam_at:
+                    review_session = StudySession(
+                        id=stable_id("review", project_id, payload.attempt_id),
+                        topic_id=topic_id,
+                        planned_at=candidate_review_at,
+                        minutes=min(30, int(progress["daily_minutes"])),
+                        activity="review",
+                    )
+                    if not any(item["id"] == review_session.id for item in raw_plan["sessions"]):
+                        raw_plan["sessions"].append(review_session.model_dump(mode="json"))
+                        raw_plan["sessions"].sort(key=lambda item: item["planned_at"])
+                    next_review_at = review_session.planned_at
+
             result = {
                 "attempt_id": payload.attempt_id,
                 "question_id": payload.question_id,
@@ -640,6 +727,9 @@ class LearningService:
                 ],
                 "grading_mode": grade.mode,
                 "mastery_updated": grade.mastery_evidence,
+                "next_review_at": (
+                    next_review_at.isoformat() if next_review_at is not None else None
+                ),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")

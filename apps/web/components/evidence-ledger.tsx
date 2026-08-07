@@ -43,6 +43,27 @@ function displayValue(value: unknown) {
   return Array.isArray(value) ? value.join(" · ") : String(value);
 }
 
+function localizedSummary(item: LearningEvidence, locale: Locale) {
+  if (locale !== "zh") return item.summary;
+  if (item.kind === "attempt") {
+    const modeNames: Record<string, string> = {
+      concept: "概念",
+      case: "案例",
+      project: "项目",
+      exam: "考试",
+    };
+    const rawMode = typeof item.details.learning_mode === "string"
+      ? item.details.learning_mode
+      : "";
+    const mode = modeNames[rawMode] ?? "当前";
+    return `完成一次${mode}学习任务；回答${item.details.is_correct ? "达到" : "暂未达到"}本次标准。`;
+  }
+  if (item.kind === "diagnostic") {
+    return `完成一次初始诊断；表现${item.details.is_correct ? "达到" : "暂未达到"}当前标准。`;
+  }
+  return item.summary;
+}
+
 
 export function EvidenceLedger({
   evidence,
@@ -83,7 +104,7 @@ export function EvidenceLedger({
               <div className="ledger-mark" aria-hidden="true" />
               <div>
                 <span className="evidence-kind">{detailCopy[locale][item.kind]}</span>
-                <p>{item.summary}</p>
+                <p>{localizedSummary(item, locale)}</p>
                 {visibleDetails.length > 0 && (
                   <details className="evidence-details">
                     <summary>{t("viewDetails")}</summary>

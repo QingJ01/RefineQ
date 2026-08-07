@@ -144,6 +144,16 @@ def test_product_and_operations_goals_become_capability_workspaces() -> None:
     assert "活动复盘" in operations.topics
 
 
+def test_subject_hints_do_not_confuse_academic_phrases_with_business_domains() -> None:
+    vectors = route_workspace("Learn cross product vectors", [])
+    optimization = route_workspace("Study operations research optimization", [])
+    biology = route_workspace("Explain biological growth in cells", [])
+
+    assert vectors.subject == "mathematics"
+    assert optimization.subject == "research"
+    assert biology.subject == "science"
+
+
 def test_writing_and_research_goals_are_first_class_capabilities() -> None:
     writing = route_workspace("Improve structured writing and argumentation", [])
     research = route_workspace("Learn research synthesis and literature review", [])

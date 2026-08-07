@@ -11,7 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
@@ -85,6 +85,8 @@ export function StudyWorkspace({
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
   const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const questionRequestIdRef = useRef<string | null>(null);
+  const attemptIdRef = useRef<string | null>(null);
 
   function reportError(caught: unknown) {
     setError(
@@ -103,17 +105,30 @@ export function StudyWorkspace({
     setEvidence(snapshot.evidence);
     setMaterials(snapshot.materials);
     setSavedQuestions(snapshot.saved_questions ?? []);
-    setLearningMode(inferLearningMode(snapshot.workspace.subject, snapshot.workspace.goal));
+    const activeQuestion = snapshot.active_question ?? null;
+    setLearningMode(
+      activeQuestion?.learning_mode
+      ?? inferLearningMode(snapshot.workspace.subject, snapshot.workspace.goal),
+    );
     setCoachSessionId(undefined);
-    setQuestion(null);
-    setResult(null);
-    setAnswer("");
+    setQuestion(activeQuestion);
+    setResult(snapshot.last_answer ?? null);
+    const draftKey = activeQuestion
+      ? `refineq.practice-draft:${snapshot.workspace.id}:${activeQuestion.id}`
+      : null;
+    setAnswer(
+      snapshot.last_answer || !draftKey
+        ? ""
+        : window.sessionStorage.getItem(draftKey) ?? "",
+    );
+    questionRequestIdRef.current = null;
+    attemptIdRef.current = null;
   }
 
   useEffect(() => {
     let active = true;
     async function restore() {
-      const saved = loadLearningSession(window.localStorage);
+      const saved = loadLearningSession(window.sessionStorage);
       if (!saved) {
         if (active) setRestoring(false);
         return;
@@ -139,7 +154,7 @@ export function StudyWorkspace({
           const snapshot = await api.getWorkspaceSnapshot(saved.token, selected.id);
           if (!active) return;
           applySnapshot(snapshot);
-          saveLearningSession(window.localStorage, {
+          saveLearningSession(window.sessionStorage, {
             token: saved.token,
             workspaceId: selected.id,
             locale: saved.locale ?? "zh",
@@ -164,7 +179,7 @@ export function StudyWorkspace({
       } catch (caught) {
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
-          clearLearningSession(window.localStorage);
+          clearLearningSession(window.sessionStorage);
         } else {
           setError(caught instanceof Error ? caught.message : "Unable to restore the learning session");
         }
@@ -189,7 +204,7 @@ export function StudyWorkspace({
   async function authenticated(response: AuthResponse) {
     setAuth(response);
     setError("");
-    saveLearningSession(window.localStorage, {
+    saveLearningSession(window.sessionStorage, {
       token: response.access_token,
       locale,
       home: !initialWorkspaceId,
@@ -215,7 +230,7 @@ export function StudyWorkspace({
     try {
       const snapshot = await api.getWorkspaceSnapshot(token, target.id);
       applySnapshot(snapshot);
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token,
         workspaceId: target.id,
         locale,
@@ -235,7 +250,7 @@ export function StudyWorkspace({
     setError("");
     try {
       const route = await api.resolveWorkspace(auth.access_token, intent);
-      const saved = loadLearningSession(window.localStorage);
+      const saved = loadLearningSession(window.sessionStorage);
       const previousId = workspace?.id ?? saved?.workspaceId ?? null;
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
       applySnapshot(snapshot);
@@ -246,7 +261,7 @@ export function StudyWorkspace({
         previousWorkspaceId: previousId === route.workspace.id ? null : previousId,
       }));
       setWorkspaces(await api.listWorkspaces(auth.access_token));
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token: auth.access_token,
         workspaceId: route.workspace.id,
         locale,
@@ -264,16 +279,25 @@ export function StudyWorkspace({
     if (!auth || !workspace) return;
     setPracticeBusy(true);
     setError("");
+    questionRequestIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     try {
       await loadNextQuestion(
-        () => api.getWorkspaceQuestion(auth.access_token, workspace.id, {
+        () => api.createWorkspaceQuestion(auth.access_token, workspace.id, {
+          requestId: questionRequestIdRef.current ?? undefined,
           learningMode,
           ...request,
         }),
         (nextQuestion) => {
+          if (question) {
+            window.sessionStorage.removeItem(
+              `refineq.practice-draft:${workspace.id}:${question.id}`,
+            );
+          }
           setQuestion(nextQuestion);
           setResult(null);
           setAnswer("");
+          questionRequestIdRef.current = null;
+          attemptIdRef.current = null;
         },
       );
     } catch (caught) {
@@ -286,18 +310,24 @@ export function StudyWorkspace({
   async function submitAnswer() {
     if (!auth || !workspace || !question) return;
     setPracticeBusy(true);
+    attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     try {
-      setResult(
-        await api.submitWorkspaceAnswer(
+      const graded = await api.submitWorkspaceAnswer(
           auth.access_token,
           workspace.id,
           question.id,
           answer,
-        ),
+          attemptIdRef.current,
+        );
+      setResult(graded);
+      attemptIdRef.current = null;
+      window.sessionStorage.removeItem(
+        `refineq.practice-draft:${workspace.id}:${question.id}`,
       );
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
       setProgress(snapshot.progress);
       setEvidence(snapshot.evidence);
+      setPlan(snapshot.plan);
     } catch (caught) {
       reportError(caught);
     } finally {
@@ -330,6 +360,8 @@ export function StudyWorkspace({
   }
 
   async function practiceTopic(topicId: string, difficulty?: number) {
+    if (!workspace) return;
+    router.push(learningPath(workspace.id, "today"));
     await getQuestion({
       topicId,
       difficulty,
@@ -409,6 +441,14 @@ export function StudyWorkspace({
       message,
       coachSessionId,
       crypto.randomUUID(),
+      undefined,
+      {
+        learning_mode: learningMode,
+        stage: result ? "reflect" : question ? "practice" : "learn",
+        question: question?.prompt,
+        draft: answer || undefined,
+        feedback: result?.feedback,
+      },
     );
     setCoachSessionId(reply.session_id);
     return reply;
@@ -509,7 +549,7 @@ export function StudyWorkspace({
   }
 
   function logout() {
-    clearLearningSession(window.localStorage);
+    clearLearningSession(window.sessionStorage);
     setAuth(null);
     setWorkspace(null);
     setWorkspaces([]);
@@ -520,7 +560,7 @@ export function StudyWorkspace({
     setRoute(null);
     setPreviousWorkspaceId(null);
     if (auth) {
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token: auth.access_token,
         workspaceId: workspace?.id,
         locale,
@@ -535,7 +575,7 @@ export function StudyWorkspace({
     const next = locale === "zh" ? "en" : "zh";
     setLocale(next);
     if (auth) {
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token: auth.access_token,
         workspaceId: workspace?.id,
         locale: next,
@@ -678,7 +718,15 @@ export function StudyWorkspace({
               learningMode={learningMode}
               savedQuestions={savedQuestions}
               onLearningModeChange={changeLearningMode}
-              onAnswerChange={setAnswer}
+              onAnswerChange={(value) => {
+                setAnswer(value);
+                if (question) {
+                  window.sessionStorage.setItem(
+                    `refineq.practice-draft:${workspace.id}:${question.id}`,
+                    value,
+                  );
+                }
+              }}
               onStartTask={() => getQuestion({ learningMode })}
               onSubmit={submitAnswer}
               onNextTask={() => getQuestion({ learningMode, replace: true })}

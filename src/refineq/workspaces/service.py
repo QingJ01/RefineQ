@@ -13,8 +13,10 @@ from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.planning import build_study_plan
 from refineq.learning.service import (
+    AnswerResponse,
     LearningService,
     ProgressResponse,
+    QuestionResponse,
     SavedQuestionResponse,
     SeedRequest,
     TopicSeed,
@@ -27,7 +29,6 @@ from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.routing import route_workspace
-
 
 DEFAULT_CAPABILITY_HORIZON_DAYS = 7
 
@@ -91,6 +92,8 @@ class WorkspaceSnapshot(BaseModel):
     evidence: list[LearningEvidence]
     materials: list[MaterialRecord]
     saved_questions: list[SavedQuestionResponse] = Field(default_factory=list)
+    active_question: QuestionResponse | None = None
+    last_answer: AnswerResponse | None = None
 
 
 def _topic_id(name: str) -> str:
@@ -265,6 +268,21 @@ class WorkspaceService:
         learning_record = self._learning.get(owner_id, workspace_id)
         raw_plan = learning_record.data["progress"].get("plan")
         plan = StudyPlan.model_validate(raw_plan) if raw_plan else None
+        raw_progress = learning_record.data["progress"]
+        pending = raw_progress.get("pending_question")
+        attempts = learning_record.data.get("attempts", {})
+        raw_answer = next(reversed(attempts.values()), None) if attempts else None
+        active_raw = pending
+        if active_raw is None and raw_answer is not None:
+            active_raw = raw_progress.get("question_history", {}).get(raw_answer.get("question_id"))
+        active_question = (
+            self._learning_service._public_question(
+                active_raw,
+                saved_at=raw_progress.get("saved_questions", {}).get(active_raw["id"]),
+            )
+            if active_raw is not None
+            else None
+        )
         return WorkspaceSnapshot(
             workspace=workspace,
             progress=progress,
@@ -275,4 +293,10 @@ class WorkspaceService:
                 project_id=workspace_id,
             ),
             saved_questions=self._learning_service.saved_questions(owner_id, workspace_id),
+            active_question=active_question,
+            last_answer=(
+                AnswerResponse.model_validate({**raw_answer, "replayed": False})
+                if pending is None and raw_answer is not None
+                else None
+            ),
         )

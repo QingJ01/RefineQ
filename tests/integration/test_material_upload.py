@@ -166,10 +166,13 @@ def test_workspace_materials_can_be_listed_downloaded_and_deleted(tmp_path: Path
             headers=headers,
         )
         assert deleted.status_code == 204
-        assert client.get(
-            f"/workspaces/{workspace_id}/materials",
-            headers=headers,
-        ).json() == []
+        assert (
+            client.get(
+                f"/workspaces/{workspace_id}/materials",
+                headers=headers,
+            ).json()
+            == []
+        )
         missing = client.get(
             f"/workspaces/{workspace_id}/materials/{material['id']}/download",
             headers=headers,
@@ -204,6 +207,40 @@ def test_workspace_material_delete_is_owner_scoped(tmp_path: Path) -> None:
     assert forbidden.json()["error"]["code"] == "workspace_not_found"
 
 
+def test_failed_material_index_delete_restores_the_original_object(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token = _register(client, "delete-compensation@example.com")
+        project_id = _project(client, token)
+        uploaded = client.post(
+            f"/projects/{project_id}/materials",
+            headers=_headers(token),
+            files={"files": ("notes.txt", b"Durable notes", "text/plain")},
+        ).json()[0]
+
+        def fail_delete(**kwargs):
+            del kwargs
+            raise RuntimeError("index unavailable")
+
+        monkeypatch.setattr(app.state.knowledge, "delete_material", fail_delete)
+        failed = client.delete(
+            f"/projects/{project_id}/materials/{uploaded['id']}",
+            headers=_headers(token),
+        )
+        restored = client.get(
+            f"/projects/{project_id}/materials/{uploaded['id']}/download",
+            headers=_headers(token),
+        )
+
+    assert failed.status_code == 500
+    assert restored.status_code == 200
+    assert restored.content == b"Durable notes"
+
+
 def test_deleting_workspace_removes_indexed_and_original_materials(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
@@ -235,10 +272,13 @@ def test_deleting_workspace_removes_indexed_and_original_materials(tmp_path: Pat
         deleted = client.delete(f"/workspaces/{workspace_id}", headers=headers)
 
     assert deleted.status_code == 204
-    assert app.state.knowledge.list_materials(
-        owner_id=owner.id,
-        project_id=workspace_id,
-    ) == []
+    assert (
+        app.state.knowledge.list_materials(
+            owner_id=owner.id,
+            project_id=workspace_id,
+        )
+        == []
+    )
     assert not stored_path.exists()
 
 

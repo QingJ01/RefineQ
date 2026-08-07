@@ -74,9 +74,9 @@ def test_study_plan_and_session_ids_are_stable() -> None:
     assert {session.topic_id for session in first.sessions} == {"limits", "derivatives"}
     assert [session.activity for session in first.sessions] == [
         "learn",
+        "learn",
         "practice",
-        "apply",
-        "review",
+        "practice",
     ]
 
 

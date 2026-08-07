@@ -23,6 +23,9 @@ _SUBJECT_HINTS: dict[str, tuple[str, ...]] = {
         "derivatives",
         "integral",
         "integrals",
+        "cross product",
+        "vector",
+        "vectors",
         "math",
     ),
     "language": (
@@ -183,9 +186,23 @@ def _normalized(value: str) -> str:
 
 def _subject(intent: str) -> str:
     normalized = _normalized(intent)
+    if re.search(r"\boperations research\b", normalized):
+        return "research"
+    if re.search(r"\bbiological growth\b", normalized):
+        return "science"
+
+    def includes(hint: str) -> bool:
+        if not hint.isascii():
+            return hint in normalized
+        return bool(
+            re.search(
+                rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9])",
+                normalized,
+            )
+        )
+
     scores = {
-        subject: sum(hint in normalized for hint in hints)
-        for subject, hints in _SUBJECT_HINTS.items()
+        subject: sum(includes(hint) for hint in hints) for subject, hints in _SUBJECT_HINTS.items()
     }
     selected, score = max(scores.items(), key=lambda item: item[1])
     return selected if score else "general"

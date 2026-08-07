@@ -42,6 +42,8 @@ export interface WorkspaceSnapshot {
   evidence: LearningEvidence[];
   materials: MaterialRecord[];
   saved_questions?: SavedPracticeQuestion[];
+  active_question?: PracticeQuestion | null;
+  last_answer?: AnswerResult | null;
 }
 
 export interface StudySession {
@@ -88,6 +90,7 @@ export interface SavedPracticeQuestion extends PracticeQuestion {
 }
 
 export interface PracticeRequest {
+  requestId?: string;
   topicId?: string;
   learningMode?: LearningMode;
   difficulty?: number;
@@ -111,7 +114,16 @@ export interface AnswerResult {
   sources?: SearchSource[];
   grading_mode: "ai" | "fallback";
   mastery_updated: boolean;
+  next_review_at?: string | null;
   replayed: boolean;
+}
+
+export interface AgentSessionContext {
+  learning_mode: LearningMode;
+  stage: "learn" | "practice" | "reflect";
+  question?: string;
+  draft?: string;
+  feedback?: string;
 }
 
 export type EvidenceKind =

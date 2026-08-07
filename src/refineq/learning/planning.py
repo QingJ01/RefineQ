@@ -53,7 +53,7 @@ def build_study_plan(
     for day_offset in range(available_days):
         planned_at = start_at + timedelta(days=day_offset)
         topic_id = topics[day_offset % len(topics)]
-        activity = ACTIVITY_SEQUENCE[day_offset % len(ACTIVITY_SEQUENCE)]
+        activity = ACTIVITY_SEQUENCE[(day_offset // len(topics)) % len(ACTIVITY_SEQUENCE)]
         sessions.append(
             StudySession(
                 id=stable_id("session", plan_id, planned_at.date().isoformat(), topic_id),

@@ -292,6 +292,57 @@ def test_password_reset_is_one_time_and_does_not_expose_account_lookup(tmp_path:
     assert token not in database_file.read_bytes().decode("utf-8", errors="ignore")
 
 
+def test_password_reset_token_is_hidden_by_default_for_every_email(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    with TestClient(app) as client:
+        _register(client, "hidden-reset@example.com")
+        existing = client.post(
+            "/auth/password-reset/request",
+            json={"email": "hidden-reset@example.com"},
+        )
+        missing = client.post(
+            "/auth/password-reset/request",
+            json={"email": "missing-reset@example.com"},
+        )
+
+    assert existing.status_code == 202
+    assert missing.status_code == 202
+    assert existing.json() == missing.json() == {"accepted": True, "reset_token": None}
+
+
+def test_password_reset_revokes_access_tokens_issued_before_password_change(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            data_root=tmp_path / "data",
+            password_reset_expose_token=True,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        registered = _register(client, "revoked-after-reset@example.com")
+        old_token = registered["access_token"]
+        reset_token = client.post(
+            "/auth/password-reset/request",
+            json={"email": "revoked-after-reset@example.com"},
+        ).json()["reset_token"]
+        reset = client.post(
+            "/auth/password-reset/complete",
+            json={"token": reset_token, "password": "a-brand-new-secure-password"},
+        )
+        stale = client.get(
+            "/auth/me",
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+
+    assert reset.status_code == 204
+    assert stale.status_code == 401
+    assert stale.json()["error"]["code"] == "unauthorized"
+
+
 def test_password_reset_token_expires(tmp_path: Path) -> None:
     app = _app(tmp_path)
     user = app.state.identity.register(

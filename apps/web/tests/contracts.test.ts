@@ -265,6 +265,41 @@ describe("authentication and API errors", () => {
     });
     vi.useRealTimers();
   });
+
+  it("sends current learning state to the session coach", async () => {
+    let body = "";
+    const client = new ApiClient("/api", async (_input, init) => {
+      body = String(init?.body);
+      return new Response(JSON.stringify({
+        session_id: "coach-1",
+        message: "Try a smaller step",
+        citations: [],
+        sources: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.chatWorkspace(
+      "token",
+      "workspace-1",
+      "Help me",
+      "coach-1",
+      "turn-1",
+      undefined,
+      {
+        learning_mode: "project",
+        stage: "practice",
+        question: "Build a prototype",
+        draft: "My first step",
+      },
+    );
+
+    expect(JSON.parse(body).session_context).toEqual({
+      learning_mode: "project",
+      stage: "practice",
+      question: "Build a prototype",
+      draft: "My first step",
+    });
+  });
 });
 
 
@@ -294,8 +329,10 @@ describe("recoverable client workflows", () => {
 describe("targeted and saved practice API", () => {
   it("sends topic, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
-    const client = new ApiClient("/api", async (input) => {
+    let requestedInit: RequestInit | undefined;
+    const client = new ApiClient("/api", async (input, init) => {
       requestedPath = String(input);
+      requestedInit = init;
       return new Response(JSON.stringify({
         id: "question-2",
         topic_id: "limits",
@@ -308,16 +345,23 @@ describe("targeted and saved practice API", () => {
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     });
 
-    await client.getWorkspaceQuestion("token", "workspace-1", {
+    await client.createWorkspaceQuestion("token", "workspace-1", {
+      requestId: "question-request-1",
       topicId: "limits",
       learningMode: "case",
       difficulty: 4,
       replace: true,
     });
 
-    expect(requestedPath).toBe(
-      "/api/workspaces/workspace-1/learning/question?topic_id=limits&difficulty=4&mode=case&replace=true",
-    );
+    expect(requestedPath).toBe("/api/workspaces/workspace-1/learning/question");
+    expect(requestedInit?.method).toBe("POST");
+    expect(JSON.parse(String(requestedInit?.body))).toEqual({
+      request_id: "question-request-1",
+      topic_id: "limits",
+      difficulty: 4,
+      mode: "case",
+      replace: true,
+    });
   });
 
   it("persists and lists saved questions", async () => {
@@ -468,6 +512,14 @@ describe("persistent personal learning session", () => {
 
     expect(loadLearningSession(storage)).toBeNull();
   });
+
+  it("keeps bearer tokens out of persistent local storage", () => {
+    const sources = ["../components/study-workspace.tsx", "../components/admin-route.tsx"]
+      .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"));
+
+    expect(sources.every((source) => source.includes("window.sessionStorage"))).toBe(true);
+    expect(sources.every((source) => !source.includes("window.localStorage"))).toBe(true);
+  });
 });
 
 
@@ -585,6 +637,8 @@ describe("safe authentication and administration", () => {
     expect(adminSource).toContain("isDirty");
     expect(adminSource).toContain("saveAndTest");
     expect(adminSource).toContain("loadError");
+    expect(authSource).not.toContain("localStorage");
+    expect(adminSource).not.toContain("localStorage");
   });
 
   it("uses application dialogs and inline editing instead of browser prompts", () => {
@@ -650,6 +704,18 @@ describe("accessible application shell", () => {
     expect(layoutSource).toContain("openGraph");
     expect(layoutSource).toContain("twitter");
     expect(layoutSource).toContain("icons");
+  });
+
+  it("sets browser security headers for every web route", () => {
+    const configSource = readFileSync(
+      fileURLToPath(new URL("../next.config.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(configSource).toContain("Content-Security-Policy");
+    expect(configSource).toContain("frame-ancestors 'none'");
+    expect(configSource).toContain("X-Content-Type-Options");
+    expect(configSource).toContain("Referrer-Policy");
   });
 });
 

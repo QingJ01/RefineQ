@@ -215,9 +215,7 @@ class IdentityService:
                 statement = statement.with_for_update()
             row = session.execute(statement).one_or_none()
             invalid = (
-                row is None
-                or row.used_at is not None
-                or self._aware(row.expires_at) <= observed_at
+                row is None or row.used_at is not None or self._aware(row.expires_at) <= observed_at
             )
             if invalid:
                 raise InvalidResetTokenError("Invalid or expired password reset token")
@@ -305,10 +303,20 @@ class IdentityService:
     def issue_token(self, user: User, *, now: datetime | None = None) -> str:
         now = (now or datetime.now(UTC)).astimezone(UTC)
         expires_at = now + self._token_ttl
+        with self.database.session() as session:
+            password_hash = session.scalar(
+                select(users.c.password_hash).where(
+                    users.c.id == user.id,
+                    users.c.email == user.email,
+                )
+            )
+        if not password_hash:
+            raise InvalidTokenError("Invalid access token")
         return jwt.encode(
             {
                 "sub": user.id,
                 "email": user.email,
+                "credential": sha256(str(password_hash).encode("utf-8")).hexdigest(),
                 "iat": int(now.timestamp()),
                 "exp": int(expires_at.timestamp()),
             },
@@ -361,11 +369,17 @@ class IdentityService:
             raise TokenExpiredError("Access token has expired")
         email = payload.get("email")
         subject = payload.get("sub")
+        credential = payload.get("credential")
+        if not isinstance(credential, str):
+            raise InvalidTokenError("Invalid access token")
         with self.database.session() as session:
             row = session.execute(
                 select(users).where(users.c.id == subject, users.c.email == email)
             ).one_or_none()
-        if row is None:
+        if row is None or not secrets.compare_digest(
+            credential,
+            sha256(row.password_hash.encode("utf-8")).hexdigest(),
+        ):
             raise InvalidTokenError("Invalid access token")
         return self._public_user(row)
 

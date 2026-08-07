@@ -388,10 +388,13 @@ def test_workspace_can_be_renamed_archived_restored_and_deleted(tmp_path: Path) 
         deleted = client.delete(f"/workspaces/{created['id']}", headers=headers)
         assert deleted.status_code == 204
         assert client.get("/workspaces", headers=headers).json() == []
-        assert client.get(
-            f"/workspaces/{created['id']}/snapshot",
-            headers=headers,
-        ).status_code == 404
+        assert (
+            client.get(
+                f"/workspaces/{created['id']}/snapshot",
+                headers=headers,
+            ).status_code
+            == 404
+        )
 
 
 def test_workspace_lifecycle_is_owner_scoped(tmp_path: Path) -> None:
@@ -486,9 +489,10 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             headers=headers,
             json={"intent": "准备微积分考试"},
         ).json()["workspace"]["id"]
-        question = client.get(
+        question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
+            json={"request_id": "saved-question-1"},
         ).json()
 
         saved = client.put(
@@ -512,6 +516,7 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             },
         )
         assert answer.status_code == 200
+        assert answer.json()["next_review_at"]
 
         listed = client.get(
             f"/workspaces/{workspace_id}/learning/questions/saved",
@@ -520,6 +525,13 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
         assert [item["id"] for item in listed.json()] == [question["id"]]
         assert snapshot.json()["saved_questions"] == listed.json()
+        assert snapshot.json()["active_question"]["id"] == question["id"]
+        assert snapshot.json()["last_answer"]["attempt_id"] == "saved-attempt"
+        assert any(
+            session["activity"] == "review"
+            and session["planned_at"] == answer.json()["next_review_at"]
+            for session in snapshot.json()["plan"]["sessions"]
+        )
 
         bob = client.post(
             "/auth/register",

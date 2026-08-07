@@ -222,7 +222,7 @@ class S3ObjectStorage:
 
 
 class ConfiguredObjectStorage:
-    """Resolve the current platform setting for every operation."""
+    """Keep a local canonical copy and optionally mirror it to the active backend."""
 
     def __init__(self, integrations: IntegrationRepository, *, data_root: Path) -> None:
         self.integrations = integrations
@@ -236,10 +236,51 @@ class ConfiguredObjectStorage:
         return S3ObjectStorage(settings) if settings.enabled else self.local
 
     def put(self, **kwargs) -> StoredObject:
-        return self._active().put(**kwargs)
+        local = self.local.put(**kwargs)
+        try:
+            active = self._active()
+        except Exception:
+            local.rollback()
+            raise
+        if active is self.local:
+            return local
+        try:
+            mirrored = active.put(**kwargs)
+        except Exception:
+            local.rollback()
+            raise
+
+        def rollback(_: str) -> None:
+            mirrored.rollback()
+            local.rollback()
+
+        return StoredObject(
+            key=local.key,
+            created=local.created or mirrored.created,
+            _rollback_handler=rollback,
+        )
 
     def delete(self, key: str) -> None:
-        self._active().delete(key)
+        active = self._active()
+        if active is not self.local:
+            active.delete(key)
+        self.local.delete(key)
 
     def get(self, key: str) -> bytes:
-        return self._active().get(key)
+        try:
+            return self.local.get(key)
+        except FileNotFoundError:
+            active = self._active()
+            if active is self.local:
+                raise
+            payload = active.get(key)
+            parts = PurePosixPath(key).parts
+            if len(parts) == 6 and parts[0] == "users":
+                self.local.put(
+                    owner_id=parts[1],
+                    workspace_id=parts[3],
+                    material_id=parts[5],
+                    filename="material",
+                    payload=payload,
+                )
+            return payload

@@ -210,6 +210,33 @@ def test_fallback_grading_rejects_topic_echo_and_generic_filler() -> None:
     assert filler.mastery_evidence is False
 
 
+def test_fallback_grading_rejects_repeated_keyword_spam() -> None:
+    question = fallback_question(
+        topic_id="limits",
+        topic_name="Limits",
+        difficulty_level=2,
+        sources=[
+            SearchResult(
+                citation_id="notes#0",
+                material_id="notes",
+                filename="notes.txt",
+                chunk_index=0,
+                text="A limit describes the value a function approaches near a point.",
+                score=1.0,
+            )
+        ],
+    )
+
+    spam = fallback_grade(
+        question,
+        "for example limit describes value function approaches near point " * 20,
+    )
+
+    assert spam.passed is False
+    assert spam.mastery_evidence is False
+    assert spam.score < question.pass_score
+
+
 def test_fallback_grading_can_pass_substantive_grounded_explanation() -> None:
     question = fallback_question(
         topic_id="limits",
