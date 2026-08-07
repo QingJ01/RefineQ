@@ -22,6 +22,7 @@ export interface LearningWorkspace {
   topics: string[];
   keywords: string[];
   routing_summary: string;
+  archived: boolean;
   created_at: string;
   last_active_at: string;
 }
@@ -46,6 +47,7 @@ export interface StudySession {
   topic_id: string;
   planned_at: string;
   minutes: number;
+  status?: "planned" | "completed";
 }
 
 export interface StudyPlan {
@@ -110,6 +112,7 @@ export interface LearningEvidence {
 
 export interface MaterialRecord {
   id: string;
+  project_id?: string;
   filename: string;
   content_type: string;
   size: number;
@@ -133,6 +136,30 @@ export interface AgentReply {
   message: string;
   citations: string[];
   sources: SearchSource[];
+}
+
+export interface AgentMessage {
+  role: "user" | "assistant";
+  content: string;
+  citations: string[];
+}
+
+export interface AgentSessionSummary {
+  id: string;
+  workspace_id: string;
+  preview: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentSessionDetail extends AgentSessionSummary {
+  messages: AgentMessage[];
+}
+
+export interface PasswordResetAccepted {
+  accepted: boolean;
+  reset_token?: string | null;
 }
 
 export interface PublicModelSettings {

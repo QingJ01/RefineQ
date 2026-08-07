@@ -106,6 +106,39 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="home-language"');
   });
 
+  it("makes recent learning and workspace correction actions operable", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("zh")}
+        busy={false}
+        workspaces={[{
+          id: "math-space",
+          title: "高等数学",
+          subject: "数学",
+          goal: "准备期末考试",
+          topics: ["极限"],
+          keywords: ["高数"],
+          routing_summary: "数学学习",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-07T00:00:00Z",
+        }]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onUpdate={() => undefined}
+        onDelete={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('href="#recent-learning"');
+    expect(html).toContain('id="recent-learning"');
+    expect(html).toContain('data-testid="workspace-rename-math-space"');
+    expect(html).toContain('data-testid="workspace-archive-math-space"');
+    expect(html).toContain('data-testid="workspace-delete-math-space"');
+  });
+
   it("renders plan sessions as a numbered study path", () => {
     const html = renderToStaticMarkup(
       <PlanTimeline
@@ -125,6 +158,7 @@ describe("focused learning components", () => {
             },
           ],
         }}
+        onUpdateSession={() => undefined}
       />,
     );
 
@@ -132,6 +166,8 @@ describe("focused learning components", () => {
     expect(html).toContain("01");
     expect(html).toContain("45 min");
     expect(html).toContain("content-card plan-card");
+    expect(html).toContain('data-testid="complete-session-session-1"');
+    expect(html).toContain('data-testid="defer-session-session-1"');
   });
 
   it("keeps long study paths focused until the learner expands them", () => {
@@ -246,6 +282,9 @@ describe("focused learning components", () => {
     expect(html).toContain("核心概念正确");
     expect(html).toContain("说明了趋近");
     expect(html).toContain("缺少形式化定义");
+    expect(html).toContain("难度 3");
+    expect(html).toContain("AI 判分");
+    expect(html).toContain("notes#0");
   });
 
   it("offers a next question after grading instead of resubmitting the old one", () => {

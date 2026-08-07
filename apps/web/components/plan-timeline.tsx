@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { Translator } from "@/lib/i18n";
-import type { Locale, StudyPlan } from "@/lib/types";
+import type { Locale, StudyPlan, StudySession } from "@/lib/types";
 import { buildPlanRows } from "@/lib/view-models";
 
 
@@ -10,10 +10,15 @@ export function PlanTimeline({
   plan,
   locale,
   t,
+  onUpdateSession,
 }: {
   plan: StudyPlan | null;
   locale: Locale;
   t: Translator;
+  onUpdateSession?: (
+    session: StudySession,
+    input: { status?: "planned" | "completed"; planned_at?: string },
+  ) => void | Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -32,8 +37,12 @@ export function PlanTimeline({
         <span className="minute-badge">{plan.daily_minutes} {t("minutes")}</span>
       </div>
       <ol className="plan-timeline" id="study-plan-sessions">
-        {visibleRows.map((row) => (
-          <li key={row.id} className="plan-session">
+        {visibleRows.map((row) => {
+          const session = plan.sessions.find((item) => item.id === row.id)!;
+          const deferredAt = new Date(session.planned_at);
+          deferredAt.setUTCDate(deferredAt.getUTCDate() + 1);
+          return (
+          <li key={row.id} className={session.status === "completed" ? "plan-session completed" : "plan-session"}>
             <span className="sequence">{String(row.sequence).padStart(2, "0")}</span>
             <span className="timeline-rule" aria-hidden="true" />
             <div className="plan-topic">
@@ -41,8 +50,23 @@ export function PlanTimeline({
               <span>{row.dateLabel}</span>
             </div>
             <span className="plan-minutes">{row.minutesLabel}</span>
+            <div className="plan-session-actions">
+              <button
+                type="button"
+                data-testid={`complete-session-${session.id}`}
+                onClick={() => void onUpdateSession?.(session, {
+                  status: session.status === "completed" ? "planned" : "completed",
+                })}
+              >{t(session.status === "completed" ? "reopenSession" : "completeSession")}</button>
+              <button
+                type="button"
+                data-testid={`defer-session-${session.id}`}
+                onClick={() => void onUpdateSession?.(session, { planned_at: deferredAt.toISOString() })}
+              >{t("deferSession")}</button>
+            </div>
           </li>
-        ))}
+          );
+        })}
       </ol>
       {rows.length > 7 ? (
         <button

@@ -2,13 +2,16 @@
 
 import {
   ArrowRight,
+  Archive,
   Clock3,
   History,
   Languages,
   LogOut,
   MessageSquarePlus,
+  Pencil,
   Settings2,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
@@ -23,6 +26,8 @@ export function LearningHome({
   workspaces,
   onResolve,
   onOpen,
+  onUpdate,
+  onDelete,
   isAdmin = false,
   onAdmin,
   onLogout,
@@ -33,6 +38,11 @@ export function LearningHome({
   workspaces: LearningWorkspace[];
   onResolve: (intent: string) => void | Promise<void>;
   onOpen: (workspace: LearningWorkspace) => void | Promise<void>;
+  onUpdate?: (
+    workspace: LearningWorkspace,
+    input: { title?: string; archived?: boolean },
+  ) => void | Promise<void>;
+  onDelete?: (workspace: LearningWorkspace) => void | Promise<void>;
   isAdmin?: boolean;
   onAdmin?: () => void;
   onLogout: () => void;
@@ -53,8 +63,8 @@ export function LearningHome({
           <BrandMark className="brand-mark" size={36} />
           <BrandName />
         </div>
-        <div className="home-nav-item active"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></div>
-        <div className="home-nav-item"><History size={19} /><span>{t("recentLearning")}</span></div>
+        <a className="home-nav-item active" href="#learning-composer"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></a>
+        <a className="home-nav-item" href="#recent-learning"><History size={19} /><span>{t("recentLearning")}</span></a>
         {isAdmin && (
           <button
             data-testid="home-admin"
@@ -88,7 +98,7 @@ export function LearningHome({
           <span className="kicker">PERSONAL LEARNING AGENT</span>
           <h1>{t("learningPrompt")}</h1>
           <p>{t("learningPromptHint")}</p>
-          <form className="learning-composer" onSubmit={submit}>
+          <form id="learning-composer" className="learning-composer" onSubmit={submit}>
             <textarea
               data-testid="learning-intent"
               value={intent}
@@ -106,19 +116,46 @@ export function LearningHome({
           </form>
         </div>
         {workspaces.length > 0 && (
-          <section className="recent-learning">
+          <section className="recent-learning" id="recent-learning">
             <div className="section-heading compact">
               <div><span className="kicker">CONTINUE LEARNING</span><h2>{t("recentLearning")}</h2></div>
               <Clock3 size={20} />
             </div>
             <div className="recent-grid">
               {workspaces.map((workspace) => (
-                <button key={workspace.id} onClick={() => onOpen(workspace)}>
-                  <span>{workspace.subject}</span>
-                  <strong>{workspace.title}</strong>
-                  <p>{workspace.goal}</p>
-                  <ArrowRight size={16} />
-                </button>
+                <article className="recent-card" key={workspace.id}>
+                  <button className="recent-card-open" onClick={() => onOpen(workspace)}>
+                    <span>{workspace.subject}</span>
+                    <strong>{workspace.title}</strong>
+                    <p>{workspace.goal}</p>
+                    <ArrowRight size={16} />
+                  </button>
+                  <div className="recent-card-actions" aria-label={`${workspace.title} actions`}>
+                    <button
+                      type="button"
+                      data-testid={`workspace-rename-${workspace.id}`}
+                      aria-label={`${t("renameWorkspace")} ${workspace.title}`}
+                      onClick={() => {
+                        const title = window.prompt(t("renameWorkspace"), workspace.title)?.trim();
+                        if (title && title !== workspace.title) void onUpdate?.(workspace, { title });
+                      }}
+                    ><Pencil size={14} /></button>
+                    <button
+                      type="button"
+                      data-testid={`workspace-archive-${workspace.id}`}
+                      aria-label={`${t("archiveWorkspace")} ${workspace.title}`}
+                      onClick={() => void onUpdate?.(workspace, { archived: true })}
+                    ><Archive size={14} /></button>
+                    <button
+                      type="button"
+                      data-testid={`workspace-delete-${workspace.id}`}
+                      aria-label={`${t("deleteWorkspace")} ${workspace.title}`}
+                      onClick={() => {
+                        if (window.confirm(t("deleteWorkspaceConfirm"))) void onDelete?.(workspace);
+                      }}
+                    ><Trash2 size={14} /></button>
+                  </div>
+                </article>
               ))}
             </div>
           </section>

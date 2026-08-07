@@ -1,5 +1,7 @@
 import type {
   AgentReply,
+  AgentSessionDetail,
+  AgentSessionSummary,
   AdminOverview,
   AnswerResult,
   AuthResponse,
@@ -8,9 +10,12 @@ import type {
   IntegrationTestResult,
   IntegrationUpdateInput,
   MaterialRecord,
+  PasswordResetAccepted,
   PracticeQuestion,
   PublicIntegrationSettings,
   PublicModelSettings,
+  SearchSource,
+  StudySession,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -96,6 +101,7 @@ export class ApiClient {
           body?.error?.message ?? `Request failed (${response.status})`,
         );
       }
+      if (response.status === 204) return undefined as T;
       return await response.json() as T;
     } catch (caught) {
       if (timedOut) {
@@ -122,18 +128,49 @@ export class ApiClient {
     });
   }
 
+  requestPasswordReset(email: string): Promise<PasswordResetAccepted> {
+    return this.request("/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  completePasswordReset(token: string, password: string): Promise<void> {
+    return this.request("/auth/password-reset/complete", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    });
+  }
+
   getProfile(token: string): Promise<User> {
     return this.request("/auth/me", {}, token);
   }
 
-  listWorkspaces(token: string): Promise<LearningWorkspace[]> {
-    return this.request("/workspaces", {}, token);
+  listWorkspaces(token: string, includeArchived = false): Promise<LearningWorkspace[]> {
+    const query = includeArchived ? "?include_archived=true" : "";
+    return this.request(`/workspaces${query}`, {}, token);
   }
 
-  resolveWorkspace(token: string, intent: string): Promise<WorkspaceRoute> {
+  updateWorkspace(
+    token: string,
+    workspaceId: string,
+    input: { title?: string; goal?: string; archived?: boolean },
+  ): Promise<LearningWorkspace> {
+    return this.request(
+      `/workspaces/${workspaceId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
+  deleteWorkspace(token: string, workspaceId: string): Promise<void> {
+    return this.request(`/workspaces/${workspaceId}`, { method: "DELETE" }, token);
+  }
+
+  resolveWorkspace(token: string, intent: string, signal?: AbortSignal): Promise<WorkspaceRoute> {
     return this.request(
       "/workspaces/resolve",
-      { method: "POST", body: JSON.stringify({ intent }) },
+      { method: "POST", body: JSON.stringify({ intent }), signal },
       token,
       this.longRequestTimeouts.model,
     );
@@ -143,10 +180,14 @@ export class ApiClient {
     return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
   }
 
-  getWorkspaceQuestion(token: string, workspaceId: string): Promise<PracticeQuestion> {
+  getWorkspaceQuestion(
+    token: string,
+    workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<PracticeQuestion> {
     return this.request(
       `/workspaces/${workspaceId}/learning/question`,
-      {},
+      { signal },
       token,
       this.longRequestTimeouts.model,
     );
@@ -157,11 +198,13 @@ export class ApiClient {
     workspaceId: string,
     questionId: string,
     answer: string,
+    signal?: AbortSignal,
   ): Promise<AnswerResult> {
     return this.request(
       `/workspaces/${workspaceId}/learning/answer`,
       {
         method: "POST",
+        signal,
         body: JSON.stringify({
           attempt_id: crypto.randomUUID().replaceAll("-", ""),
           question_id: questionId,
@@ -173,19 +216,77 @@ export class ApiClient {
     );
   }
 
+  updateWorkspacePlanSession(
+    token: string,
+    workspaceId: string,
+    sessionId: string,
+    input: { status?: "planned" | "completed"; planned_at?: string },
+  ): Promise<StudySession> {
+    return this.request<StudySession>(
+      `/workspaces/${workspaceId}/learning/plan/sessions/${sessionId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
   uploadWorkspaceMaterials(
     token: string,
     workspaceId: string,
     files: File[],
+    signal?: AbortSignal,
   ): Promise<MaterialRecord[]> {
     const body = new FormData();
     files.forEach((file) => body.append("files", file));
     return this.request(
       `/workspaces/${workspaceId}/materials`,
-      { method: "POST", body },
+      { method: "POST", body, signal },
       token,
       this.longRequestTimeouts.upload,
     );
+  }
+
+  listWorkspaceMaterials(token: string, workspaceId: string): Promise<MaterialRecord[]> {
+    return this.request(`/workspaces/${workspaceId}/materials`, {}, token);
+  }
+
+  searchWorkspaceMaterials(token: string, workspaceId: string, query: string): Promise<SearchSource[]> {
+    return this.request<SearchSource[]>(
+      `/workspaces/${workspaceId}/materials/search?q=${encodeURIComponent(query)}`,
+      {},
+      token,
+    );
+  }
+
+  deleteWorkspaceMaterial(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+  ): Promise<void> {
+    return this.request(
+      `/workspaces/${workspaceId}/materials/${materialId}`,
+      { method: "DELETE" },
+      token,
+    );
+  }
+
+  async downloadWorkspaceMaterial(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+  ): Promise<Blob> {
+    const response = await this.fetcher(
+      `${this.baseUrl}/workspaces/${workspaceId}/materials/${materialId}/download`,
+      { headers: authHeaders(token) },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new ApiError(
+        response.status,
+        body?.error?.code ?? "request_error",
+        body?.error?.message ?? `Request failed (${response.status})`,
+      );
+    }
+    return response.blob();
   }
 
   chatWorkspace(
@@ -194,15 +295,48 @@ export class ApiClient {
     message: string,
     sessionId?: string,
     turnId?: string,
+    signal?: AbortSignal,
   ): Promise<AgentReply> {
     return this.request(
       `/workspaces/${workspaceId}/agent/chat`,
       {
         method: "POST",
         body: JSON.stringify({ message, session_id: sessionId, turn_id: turnId }),
+        signal,
       },
       token,
       this.longRequestTimeouts.model,
+    );
+  }
+
+  listWorkspaceAgentSessions(
+    token: string,
+    workspaceId: string,
+  ): Promise<AgentSessionSummary[]> {
+    return this.request(`/workspaces/${workspaceId}/agent/sessions`, {}, token);
+  }
+
+  getWorkspaceAgentSession(
+    token: string,
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<AgentSessionDetail> {
+    return this.request(
+      `/workspaces/${workspaceId}/agent/sessions/${sessionId}`,
+      {},
+      token,
+    );
+  }
+
+  deleteWorkspaceAgentSession(
+    token: string,
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<void> {
+    return this.request(
+      `/workspaces/${workspaceId}/agent/sessions/${sessionId}`,
+      { method: "DELETE" },
+      token,
     );
   }
 

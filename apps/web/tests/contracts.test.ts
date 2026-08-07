@@ -63,6 +63,35 @@ describe("administrator routing", () => {
 });
 
 
+describe("durable learner routing", () => {
+  it("ships a real learning route and uses it for section navigation", () => {
+    const learningPage = fileURLToPath(
+      new URL("../app/learn/[workspaceId]/[section]/page.tsx", import.meta.url),
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(learningPage)).toBe(true);
+    expect(workspaceSource).toContain("/learn/${workspace.id}/${id}");
+    expect(workspaceSource).toContain('aria-current={section === id ? "page" : undefined}');
+  });
+
+  it("renders the automatic routing decision with correction controls", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource).toContain('data-testid="workspace-route-notice"');
+    expect(workspaceSource).toContain("route.confidence");
+    expect(workspaceSource).toContain("route.reason");
+    expect(workspaceSource).toContain("undoWorkspaceRoute");
+  });
+});
+
+
 describe("authentication and API errors", () => {
   it("sends platform integration changes only to administrator endpoints", async () => {
     let requestedPath = "";
@@ -130,6 +159,12 @@ describe("authentication and API errors", () => {
       status: 401,
       code: "unauthorized",
     });
+  });
+
+  it("supports no-content mutation responses", async () => {
+    const client = new ApiClient("/api", async () => new Response(null, { status: 204 }));
+
+    await expect(client.deleteWorkspace("token-1", "workspace-1")).resolves.toBeUndefined();
   });
 
   it("keeps the browser receiver when using the default fetch", async () => {
@@ -340,11 +375,18 @@ describe("persistent personal learning session", () => {
 
   it("restores and clears the token plus last learning workspace", () => {
     const storage = memoryStorage();
-    saveLearningSession(storage, { token: "token-1", workspaceId: "math-space" });
+    saveLearningSession(storage, {
+      token: "token-1",
+      workspaceId: "math-space",
+      locale: "en",
+      home: false,
+    });
 
     expect(loadLearningSession(storage)).toEqual({
       token: "token-1",
       workspaceId: "math-space",
+      locale: "en",
+      home: false,
     });
 
     clearLearningSession(storage);

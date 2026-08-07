@@ -40,7 +40,11 @@ export function PracticeCard({
         </button>
       ) : !result ? (
         <div className="question-sheet">
-          <span className="topic-label">{question.topic_id}</span>
+          <div className="practice-meta">
+            <span className="topic-label">{question.topic_id}</span>
+            {question.difficulty_level ? <span>{t("difficulty")} {question.difficulty_level}</span> : null}
+            <span>{t(question.mode === "ai" ? "aiQuestion" : "fallbackQuestion")}</span>
+          </div>
           <h3>{question.prompt}</h3>
           <textarea
             data-testid="practice-answer"
@@ -65,11 +69,21 @@ export function PracticeCard({
           <div>
             <strong>{t(status === "mastered" ? "correct" : status)}</strong>
             <span>{t("score")}: {result.score} / 100 · {t("mastery")}: {Math.round(result.mastery * 100)}%</span>
+            <div className="practice-meta result-meta">
+              <span>{t("difficulty")} {result.difficulty_level}</span>
+              <span>{t(result.grading_mode === "ai" ? "aiGrading" : "fallbackGrading")}</span>
+            </div>
             {!result.mastery_updated && <p>{t("masteryNotUpdated")}</p>}
             {result.feedback && <p>{result.feedback}</p>}
             {result.strengths.length > 0 && <section><b>{t("strengths")}</b><ul>{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section>}
             {result.gaps.length > 0 && <section><b>{t("gaps")}</b><ul>{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul></section>}
             {result.misconceptions.length > 0 && <section><b>{t("misconceptions")}</b><ul>{result.misconceptions.map((item) => <li key={item}>{item}</li>)}</ul></section>}
+            {result.citations.length > 0 && (
+              <section className="practice-citations">
+                <b>{t("sources")}</b>
+                <ul>{result.citations.map((citation) => <li key={citation}>{citation}</li>)}</ul>
+              </section>
+            )}
           </div>
         </div>
       )}
