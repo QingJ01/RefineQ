@@ -17,6 +17,8 @@ from refineq.learning.service import (
     ProgressResponse,
     ProjectNotFoundError,
     QuestionResponse,
+    QuestionSaveRequest,
+    SavedQuestionResponse,
     SeedRequest,
 )
 
@@ -144,6 +146,46 @@ def workspace_answer(
         return request.app.state.workspace_learning_service.submit_answer(
             user.id,
             workspace_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.get(
+    "/questions/saved",
+    response_model=list[SavedQuestionResponse],
+)
+def saved_workspace_questions(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> list[SavedQuestionResponse]:
+    try:
+        return request.app.state.workspace_learning_service.saved_questions(
+            user.id,
+            workspace_id,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.put(
+    "/questions/{question_id}/saved",
+    response_model=SavedQuestionResponse,
+)
+def save_workspace_question(
+    workspace_id: str,
+    question_id: str,
+    payload: QuestionSaveRequest,
+    request: Request,
+    user: CurrentUser,
+) -> SavedQuestionResponse:
+    try:
+        return request.app.state.workspace_learning_service.set_question_saved(
+            user.id,
+            workspace_id,
+            question_id,
             payload,
         )
     except LearningServiceError as error:

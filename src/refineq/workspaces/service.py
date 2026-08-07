@@ -12,7 +12,13 @@ from refineq.integrations.object_storage import ConfiguredObjectStorage
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.planning import build_study_plan
-from refineq.learning.service import LearningService, ProgressResponse, SeedRequest, TopicSeed
+from refineq.learning.service import (
+    LearningService,
+    ProgressResponse,
+    SavedQuestionResponse,
+    SeedRequest,
+    TopicSeed,
+)
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.sessions import SessionRepository
@@ -81,6 +87,7 @@ class WorkspaceSnapshot(BaseModel):
     plan: StudyPlan | None
     evidence: list[LearningEvidence]
     materials: list[MaterialRecord]
+    saved_questions: list[SavedQuestionResponse] = Field(default_factory=list)
 
 
 def _topic_id(name: str) -> str:
@@ -260,4 +267,5 @@ class WorkspaceService:
                 owner_id=owner_id,
                 project_id=workspace_id,
             ),
+            saved_questions=self._learning_service.saved_questions(owner_id, workspace_id),
         )

@@ -442,3 +442,85 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
             headers=headers,
         ).json()["plan"]["sessions"][0]
         assert restored == rescheduled.json()
+
+
+def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "准备微积分考试"},
+        ).json()["workspace"]["id"]
+        question = client.get(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+        ).json()
+
+        saved = client.put(
+            f"/workspaces/{workspace_id}/learning/questions/{question['id']}/saved",
+            headers=headers,
+            json={"saved": True},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["id"] == question["id"]
+        assert saved.json()["saved"] is True
+        assert saved.json()["saved_at"]
+        assert "expected_answer" not in saved.text
+
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "saved-attempt",
+                "question_id": question["id"],
+                "answer": "A detailed explanation with an example that is long enough to grade.",
+            },
+        )
+        assert answer.status_code == 200
+
+        listed = client.get(
+            f"/workspaces/{workspace_id}/learning/questions/saved",
+            headers=headers,
+        )
+        snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
+        assert [item["id"] for item in listed.json()] == [question["id"]]
+        assert snapshot.json()["saved_questions"] == listed.json()
+
+        bob = client.post(
+            "/auth/register",
+            json={
+                "email": "saved-question-bob@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Bob",
+            },
+        ).json()
+        forbidden = client.get(
+            f"/workspaces/{workspace_id}/learning/questions/saved",
+            headers={"Authorization": f"Bearer {bob['access_token']}"},
+        )
+        unknown = client.put(
+            f"/workspaces/{workspace_id}/learning/questions/not-a-question/saved",
+            headers=headers,
+            json={"saved": True},
+        )
+        unsaved = client.put(
+            f"/workspaces/{workspace_id}/learning/questions/{question['id']}/saved",
+            headers=headers,
+            json={"saved": False},
+        )
+        after = client.get(
+            f"/workspaces/{workspace_id}/learning/questions/saved",
+            headers=headers,
+        )
+
+    assert forbidden.status_code == 404
+    assert unknown.status_code == 409
+    assert unknown.json()["error"]["code"] == "learning_conflict"
+    assert unsaved.status_code == 200
+    assert unsaved.json()["saved"] is False
+    assert unsaved.json()["saved_at"] is None
+    assert after.json() == []

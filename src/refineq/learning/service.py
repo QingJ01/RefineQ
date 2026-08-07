@@ -92,6 +92,17 @@ class QuestionResponse(BaseModel):
     citations: list[str] = Field(default_factory=list)
     sources: list[SearchResult] = Field(default_factory=list)
     mode: str = "fallback"
+    saved: bool = False
+
+
+class SavedQuestionResponse(QuestionResponse):
+    saved_at: datetime | None = None
+
+
+class QuestionSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    saved: bool
 
 
 class AnswerRequest(BaseModel):
@@ -215,6 +226,7 @@ class LearningService:
                 "pending_question": None,
                 "question_sequence": 0,
                 "question_history": {},
+                "saved_questions": {},
                 "plan": None,
             }
             return data
@@ -336,7 +348,12 @@ class LearningService:
         return [SearchResult.model_validate(source) for source in grading.get("sources", [])]
 
     @classmethod
-    def _public_question(cls, question: dict[str, Any]) -> QuestionResponse:
+    def _public_question(
+        cls,
+        question: dict[str, Any],
+        *,
+        saved_at: str | datetime | None = None,
+    ) -> QuestionResponse:
         return QuestionResponse(
             id=question["id"],
             topic_id=question["topic_id"],
@@ -345,6 +362,7 @@ class LearningService:
             citations=question.get("citations", []),
             sources=cls._question_sources(question),
             mode=question.get("mode", "fallback"),
+            saved=saved_at is not None,
         )
 
     def next_question(
@@ -360,7 +378,11 @@ class LearningService:
         current = self._learning.get(owner_id, project_id)
         progress = self._progress(current.data)
         if progress.get("pending_question") and not replace_pending:
-            return self._public_question(progress["pending_question"])
+            pending = progress["pending_question"]
+            return self._public_question(
+                pending,
+                saved_at=progress.get("saved_questions", {}).get(pending["id"]),
+            )
         if topic_id is not None and topic_id not in progress["topics"]:
             raise LearningConflictError("Unknown practice topic")
         topic_id = topic_id or min(
@@ -424,6 +446,70 @@ class LearningService:
         if selected is None:
             raise LearningServiceError("Question generation failed")
         return self._public_question(selected)
+
+    def set_question_saved(
+        self,
+        owner_id: str,
+        project_id: str,
+        question_id: str,
+        payload: QuestionSaveRequest,
+    ) -> SavedQuestionResponse:
+        self._require_project(owner_id, project_id)
+        selected: dict[str, Any] | None = None
+        saved_at: str | None = None
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal saved_at, selected
+            progress = self._progress(data)
+            history = progress.setdefault("question_history", {})
+            pending = progress.get("pending_question")
+            if question_id not in history and pending and pending.get("id") == question_id:
+                history[question_id] = deepcopy(pending)
+            selected = history.get(question_id)
+            if selected is None:
+                raise LearningConflictError("Practice question not found")
+            saved_questions = progress.setdefault("saved_questions", {})
+            if payload.saved:
+                saved_at = saved_questions.get(question_id) or datetime.now(UTC).isoformat()
+                saved_questions[question_id] = saved_at
+            else:
+                saved_questions.pop(question_id, None)
+                saved_at = None
+            return data
+
+        self._learning.mutate(owner_id, project_id, apply)
+        if selected is None:
+            raise LearningServiceError("Question save failed")
+        public = self._public_question(selected, saved_at=saved_at)
+        return SavedQuestionResponse.model_validate(
+            {**public.model_dump(mode="json"), "saved_at": saved_at}
+        )
+
+    def saved_questions(
+        self,
+        owner_id: str,
+        project_id: str,
+    ) -> list[SavedQuestionResponse]:
+        self._require_project(owner_id, project_id)
+        progress = self._progress(self._learning.get(owner_id, project_id).data)
+        history = progress.get("question_history", {})
+        saved = progress.get("saved_questions", {})
+        responses: list[SavedQuestionResponse] = []
+        for question_id, saved_at in sorted(
+            saved.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        ):
+            question = history.get(question_id)
+            if question is None:
+                continue
+            public = self._public_question(question, saved_at=saved_at)
+            responses.append(
+                SavedQuestionResponse.model_validate(
+                    {**public.model_dump(mode="json"), "saved_at": saved_at}
+                )
+            )
+        return responses
 
     def submit_answer(
         self,
