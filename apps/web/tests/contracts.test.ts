@@ -201,6 +201,18 @@ describe("projectless product surface", () => {
     expect(styles).toMatch(/\.auth-form-heading p\s*\{[^}]*font-size: var\(--auth-card-supporting-size\)/s);
   });
 
+  it("gives the desktop authentication form enough visual weight", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toMatch(/\.auth-form-card\s*\{[^}]*width: min\(500px,[^}]*padding: 44px/s);
+    expect(styles).toMatch(/\.auth-tabs button\s*\{[^}]*min-height: 42px/s);
+    expect(styles).toMatch(/\.auth-form-card input\s*\{[^}]*min-height: 46px/s);
+    expect(styles).toMatch(/\.auth-form-card \.primary-action\s*\{[^}]*min-height: 46px/s);
+  });
+
   it("keeps the welcome illustration decorative and desktop-only", () => {
     const styles = readFileSync(
       fileURLToPath(new URL("../app/styles.css", import.meta.url)),

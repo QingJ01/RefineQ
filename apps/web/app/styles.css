@@ -350,8 +350,8 @@ textarea:focus {
 .auth-form-card {
   align-self: center;
   justify-self: center;
-  width: min(430px, calc(100% - 56px));
-  padding: 38px;
+  width: min(500px, calc(100% - 48px));
+  padding: 44px;
   border: 0;
   border-radius: 18px;
   background: var(--surface);
@@ -362,12 +362,12 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 26px;
+  margin-bottom: 30px;
 }
 
 .auth-form-heading h2 {
   margin: 0;
-  font-size: 25px;
+  font-size: 28px;
 }
 
 .auth-form-heading p {
@@ -386,14 +386,14 @@ textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  margin-bottom: 26px;
+  margin-bottom: 28px;
   padding: 4px;
   border-radius: 12px;
   background: var(--surface-soft);
 }
 
 .auth-tabs button {
-  min-height: 38px;
+  min-height: 42px;
   border: 0;
   border-radius: 9px;
   background: transparent;
@@ -410,7 +410,21 @@ textarea:focus {
 
 .auth-form-card form {
   display: grid;
-  gap: 18px;
+  gap: 20px;
+}
+
+.auth-form-card label {
+  font-size: 13px;
+}
+
+.auth-form-card input {
+  min-height: 46px;
+  padding: 12px 14px;
+}
+
+.auth-form-card .primary-action {
+  min-height: 46px;
+  font-size: 14px;
 }
 
 /* Projectless learning home */
