@@ -14,6 +14,7 @@ import { ProgressInsights } from "../components/progress-insights";
 import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { SessionCoach } from "../components/session-coach";
+import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { translator } from "../lib/i18n";
 import type { SearchSource } from "../lib/types";
 
@@ -380,6 +381,37 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="workspace-archive-math-space"');
     expect(html).toContain('data-testid="workspace-delete-math-space"');
     expect(html).toContain('data-testid="archived-workspaces-toggle"');
+  });
+
+  it("renders workspace switching as an accessible menu trigger instead of a home link", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceSwitcher
+        locale="zh"
+        current={{
+          id: "math-space",
+          title: "高等数学",
+          subject: "数学",
+          goal: "准备期末考试",
+          topics: ["极限"],
+          keywords: ["高数"],
+          routing_summary: "数学学习",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-07T00:00:00Z",
+        }}
+        workspaces={[]}
+        currentProgress={42}
+        onSelect={() => undefined}
+        onAllSpaces={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="workspace-switcher"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("高等数学");
+    expect(html).toContain("42%");
+    expect(html).not.toContain('href="/"');
   });
 
   it("renders plan sessions as a numbered study path", () => {

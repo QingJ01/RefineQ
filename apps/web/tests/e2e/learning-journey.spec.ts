@@ -66,6 +66,28 @@ test("learner completes and restores a capability learning journey", async ({ pa
   await expect(page.locator(".session-steps li")).toHaveCount(4);
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
+  await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
+    await page.getByTestId("workspace-home-link").click();
+    await page.getByTestId("learning-intent").fill(
+      "I want to practice conversational Spanish for an upcoming trip",
+    );
+    await page.getByTestId("start-learning").click();
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+    await expect(page.locator(".workspace-switcher > strong")).not.toHaveText(workspaceTitle);
+
+    const trigger = page.getByTestId("workspace-switcher");
+    await trigger.click();
+    await expect(page.getByTestId("workspace-switcher-menu")).toBeVisible();
+    await expect(page.getByTestId("workspace-switcher-all")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await page.getByRole("menuitem", { name: new RegExp(workspaceTitle) }).click();
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  });
+
   await test.step("use a short, varied capability path", async () => {
     await page.getByTestId("nav-path").click();
     await expect(page).toHaveURL(/\/path$/);
@@ -164,15 +186,14 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
   });
 
-  await test.step("restore sources and use the contextual coach", async () => {
+  await test.step("restore sources and keep the session usable when the coach is unavailable", async () => {
     await page.reload();
     await expect(page.locator(".workspace-header h1")).toHaveText(workspaceTitle);
     await page.getByTestId("nav-materials").click();
     await expect(page.locator(".material-list").getByText("user-interview.txt")).toBeVisible();
     await page.getByTestId("nav-today").click();
-    await page.getByTestId("session-coach-input").fill("Help me strengthen the evidence in my analysis");
-    await page.locator(".session-coach-form button").click();
-    await expect(page.getByTestId("session-coach-input")).toBeEnabled();
+    await expect(page.locator(".coach-capability-notice")).toBeVisible();
+    await expect(page.getByTestId("session-coach-input")).toBeDisabled();
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("capability-learning-desktop.png") });
   });

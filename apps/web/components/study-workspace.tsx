@@ -5,7 +5,6 @@ import {
   BookOpen,
   CalendarDays,
   ChartNoAxesColumnIncreasing,
-  ChevronsUpDown,
   House,
   Languages,
   LogOut,
@@ -24,6 +23,7 @@ import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { ProgressInsights } from "@/components/progress-insights";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
 import { translator } from "@/lib/i18n";
@@ -706,27 +706,14 @@ export function StudyWorkspace({
           <House size={18} />
           <span>{t("learningHome")}</span>
         </Link>
-        <Link
-          data-testid="workspace-switcher"
-          className="workspace-switcher"
-          href="/"
-          onClick={prepareRouteNavigation}
-          aria-label={`${t("switchSpace")}: ${workspace.title}`}
-        >
-          <span className="workspace-switcher-heading">
-            <span className="kicker">{t("currentSpace")}</span>
-            <ChevronsUpDown size={15} />
-          </span>
-          <strong>{workspace.title}</strong>
-          <span className="workspace-switcher-topic">
-            {progress?.topics ? Object.values(progress.topics)[0] : workspace.topics[0]}
-          </span>
-          <span className="workspace-switcher-progress">
-            <span>{t("learningProgress")}</span>
-            <strong>{Math.round(averageMastery * 100)}%</strong>
-          </span>
-          <i><b style={{ width: `${Math.round(averageMastery * 100)}%` }} /></i>
-        </Link>
+        <WorkspaceSwitcher
+          locale={locale}
+          current={workspace}
+          workspaces={workspaces}
+          currentProgress={Math.round(averageMastery * 100)}
+          onSelect={(target) => openWorkspace(target)}
+          onAllSpaces={returnHome}
+        />
         <span className="workspace-nav-label">{t("workspaceSections")}</span>
         <nav className="workspace-nav" aria-label={t("workspaceSections")}>
           {nav.map(({ id, icon: Icon }) => (
