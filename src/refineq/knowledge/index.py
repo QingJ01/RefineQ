@@ -600,6 +600,50 @@ class KnowledgeIndex:
             raise MaterialNotFoundError(material_id)
         return self._material_record(row)
 
+    def material_chunks(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        material_id: str,
+        limit: int = 24,
+    ) -> list[SearchResult]:
+        """Return evenly sampled chunks for bounded whole-document analysis."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        project_id = validate_identifier(project_id, field="project_id")
+        material_id = validate_identifier(material_id, field="material_id")
+        bounded_limit = max(1, min(limit, 100))
+        with self.database.session() as session:
+            rows = session.execute(
+                select(material_chunks)
+                .where(
+                    material_chunks.c.owner_id == owner_id,
+                    material_chunks.c.project_id == project_id,
+                    material_chunks.c.material_id == material_id,
+                )
+                .order_by(material_chunks.c.chunk_index)
+            ).all()
+        if not rows:
+            raise MaterialNotFoundError(material_id)
+        if len(rows) > bounded_limit:
+            indexes = {
+                round(position * (len(rows) - 1) / (bounded_limit - 1))
+                for position in range(bounded_limit)
+            } if bounded_limit > 1 else {0}
+            rows = [row for index, row in enumerate(rows) if index in indexes]
+        return [
+            SearchResult(
+                citation_id=f"{row.material_id}#{row.chunk_index}",
+                material_id=row.material_id,
+                filename=row.filename,
+                chunk_index=int(row.chunk_index),
+                text=row.content,
+                score=1.0,
+            )
+            for row in rows
+        ]
+
     def get_material_storage_key(
         self,
         *,

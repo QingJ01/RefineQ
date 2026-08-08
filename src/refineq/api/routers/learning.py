@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
+from refineq.learning.personalized import TargetedPlanRequest
 from refineq.learning.service import (
     AnswerRequest,
     AnswerResponse,
@@ -13,6 +14,7 @@ from refineq.learning.service import (
     LearningConflictError,
     LearningNotSeededError,
     LearningServiceError,
+    PlanSessionCreate,
     PlanSessionUpdate,
     ProgressResponse,
     ProjectNotFoundError,
@@ -76,6 +78,23 @@ def create_plan(project_id: str, request: Request, user: CurrentUser) -> StudyPl
         return request.app.state.learning_service.create_plan(user.id, project_id)
     except LearningServiceError as error:
         _raise_api_error(error)
+
+
+@workspace_router.post("/plan/targeted", response_model=StudyPlan)
+def create_targeted_plan(
+    workspace_id: str,
+    payload: TargetedPlanRequest,
+    request: Request,
+    user: CurrentUser,
+) -> StudyPlan:
+    try:
+        request.app.state.workspaces.get(user.id, workspace_id)
+        return request.app.state.targeted_plans.generate(user.id, workspace_id, payload)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "invalid_targeted_plan", "message": str(error)},
+        ) from error
 
 
 @router.post("/question", response_model=QuestionResponse)
@@ -236,6 +255,26 @@ def update_workspace_plan_session(
             session_id,
             payload,
         )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.post("/plan/sessions", response_model=StudySession)
+def add_workspace_plan_session(
+    workspace_id: str, payload: PlanSessionCreate, request: Request, user: CurrentUser
+) -> StudySession:
+    try:
+        return request.app.state.workspace_learning_service.add_plan_session(
+            user.id, workspace_id, payload
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.delete("/plan", status_code=status.HTTP_204_NO_CONTENT)
+def clear_workspace_plan(workspace_id: str, request: Request, user: CurrentUser) -> None:
+    try:
+        request.app.state.workspace_learning_service.clear_plan(user.id, workspace_id)
     except LearningServiceError as error:
         _raise_api_error(error)
 

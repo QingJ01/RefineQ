@@ -374,6 +374,70 @@ describe("authentication and API errors", () => {
     vi.useRealTimers();
   });
 
+  it("polls for an analysis that finishes after the proxy request fails", async () => {
+    vi.useFakeTimers();
+    let requests = 0;
+    const client = new ApiClient("/api", async () => {
+      requests += 1;
+      if (requests < 3) {
+        return new Response(JSON.stringify({
+          error: { code: "material_analysis_not_found", message: "Not ready" },
+        }), { status: 404, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        material_id: "material-1",
+        filename: "notes.pdf",
+        material_type: "textbook",
+        title: "Notes",
+        summary: "Ready",
+        sections: [],
+        topics: [],
+        confidence: 0.8,
+        mode: "ai",
+        analyzed_at: "2026-08-08T00:00:00Z",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const pending = client.waitForWorkspaceMaterialAnalysis("token", "workspace-1", "material-1");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    await expect(pending).resolves.toMatchObject({ material_id: "material-1", mode: "ai" });
+    expect(requests).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it("does not mistake an older saved analysis for the failed request", async () => {
+    vi.useFakeTimers();
+    let requests = 0;
+    const client = new ApiClient("/api", async () => {
+      requests += 1;
+      return new Response(JSON.stringify({
+        material_id: "material-1",
+        filename: "notes.pdf",
+        material_type: "textbook",
+        title: "Notes",
+        summary: requests === 1 ? "Old" : "Fresh",
+        sections: [],
+        topics: [],
+        confidence: 0.8,
+        mode: "ai",
+        analyzed_at: requests === 1 ? "2026-08-07T00:00:00Z" : "2026-08-08T00:00:01Z",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const pending = client.waitForWorkspaceMaterialAnalysis(
+      "token",
+      "workspace-1",
+      "material-1",
+      "2026-08-08T00:00:00Z",
+    );
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(pending).resolves.toMatchObject({ summary: "Fresh" });
+    expect(requests).toBe(2);
+    vi.useRealTimers();
+  });
+
   it("sends current learning state to the session coach", async () => {
     let body = "";
     const client = new ApiClient("/api", async (_input, init) => {

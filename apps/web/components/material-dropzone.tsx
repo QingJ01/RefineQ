@@ -5,6 +5,7 @@ import {
   FileStack,
   RotateCcw,
   Search,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -14,7 +15,7 @@ import { DragEvent, FormEvent, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
 import type { Translator } from "@/lib/i18n";
-import type { Locale, MaterialRecord, SearchSource } from "@/lib/types";
+import type { Locale, MaterialAnalysis, MaterialRecord, SearchSource, StudyPlan, TargetedPlanInput } from "@/lib/types";
 import {
   clearSelectedFiles,
   type UploadValidationError,
@@ -45,6 +46,9 @@ export function MaterialDropzone({
   onSearch,
   onDownload,
   onDelete,
+  onAnalyze,
+  onGeneratePlan,
+  onOpenCalendar,
   materials,
 }: {
   t: Translator;
@@ -53,6 +57,9 @@ export function MaterialDropzone({
   onSearch?: (query: string) => Promise<SearchSource[]>;
   onDownload?: (material: MaterialRecord) => void | Promise<void>;
   onDelete?: (material: MaterialRecord) => void | Promise<void>;
+  onAnalyze?: (material: MaterialRecord) => Promise<MaterialAnalysis>;
+  onGeneratePlan?: (input: TargetedPlanInput) => Promise<StudyPlan>;
+  onOpenCalendar?: () => void;
   materials: MaterialRecord[];
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,6 +72,57 @@ export function MaterialDropzone({
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<MaterialRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [analyses, setAnalyses] = useState<Record<string, MaterialAnalysis>>({});
+  const [analyzingIds, setAnalyzingIds] = useState<string[]>([]);
+  const [analysisErrors, setAnalysisErrors] = useState<string[]>([]);
+  const [planningId, setPlanningId] = useState<string | null>(null);
+  const [focusText, setFocusText] = useState("");
+  const [examDate, setExamDate] = useState("");
+  const [dailyMinutes, setDailyMinutes] = useState(45);
+  const [preferredTime, setPreferredTime] = useState("19:00");
+  const [studyWeekdays, setStudyWeekdays] = useState([0, 1, 2, 3, 4, 5, 6]);
+  const [routineNotes, setRoutineNotes] = useState("");
+  const [generatingPlan, setGeneratingPlan] = useState(false);
+  const [planStatus, setPlanStatus] = useState<"idle" | "success" | "error">("idle");
+  const [planError, setPlanError] = useState("");
+
+  const analysisCopy = locale === "zh" ? {
+    analyze: "分析资料",
+    analyzing: "正在识别章节和知识点…",
+    failed: "分析失败，请检查模型连接后重试。",
+    ai: "AI 分析",
+    fallback: "本地降级分析",
+    confidence: "置信度",
+    topics: "知识点",
+    sections: "章节",
+    citations: "资料片段",
+    types: {
+      textbook: "教材",
+      lecture_notes: "讲义",
+      exam: "试卷",
+      problem_set: "习题集",
+      mixed: "混合资料",
+      unknown: "未识别",
+    },
+  } : {
+    analyze: "Analyze material",
+    analyzing: "Identifying sections and topics…",
+    failed: "Analysis failed. Check the model connection and retry.",
+    ai: "AI analysis",
+    fallback: "Local fallback",
+    confidence: "Confidence",
+    topics: "Topics",
+    sections: "Sections",
+    citations: "Source chunks",
+    types: {
+      textbook: "Textbook",
+      lecture_notes: "Lecture notes",
+      exam: "Exam",
+      problem_set: "Problem set",
+      mixed: "Mixed material",
+      unknown: "Unknown",
+    },
+  };
 
   function patchQueue(id: string, patch: Partial<UploadItem>) {
     setQueue((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -171,6 +229,56 @@ export function MaterialDropzone({
     }
   }
 
+  async function analyzeMaterial(material: MaterialRecord) {
+    if (!onAnalyze || analyzingIds.includes(material.id)) return;
+    setAnalyzingIds((current) => [...current, material.id]);
+    setAnalysisErrors((current) => current.filter((id) => id !== material.id));
+    try {
+      const analysis = await onAnalyze(material);
+      setAnalyses((current) => ({ ...current, [material.id]: analysis }));
+    } catch {
+      setAnalysisErrors((current) => [...current, material.id]);
+    } finally {
+      setAnalyzingIds((current) => current.filter((id) => id !== material.id));
+    }
+  }
+
+  function beginPlanning(analysis: MaterialAnalysis) {
+    setPlanningId(analysis.material_id);
+    setFocusText(analysis.topics.slice(0, 8).join("、"));
+    setPlanStatus("idle");
+    setPlanError("");
+  }
+
+  async function generatePlan(analysis: MaterialAnalysis) {
+    if (!onGeneratePlan || !examDate) return;
+    const topics = focusText.split(/[、,，\n]/).map((item) => item.trim()).filter(Boolean);
+    if (topics.length === 0) return;
+    setGeneratingPlan(true);
+    setPlanStatus("idle");
+    setPlanError("");
+    try {
+      await onGeneratePlan({
+        material_id: analysis.material_id,
+        focus_topics: topics,
+        exam_at: new Date(`${examDate}T23:59:00`).toISOString(),
+        daily_minutes: dailyMinutes,
+        study_weekdays: studyWeekdays,
+        preferred_hour: Number(preferredTime.split(":")[0]),
+        timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        routine_notes: routineNotes,
+      });
+      setPlanStatus("success");
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+      onOpenCalendar?.();
+    } catch (error) {
+      setPlanStatus("error");
+      setPlanError(error instanceof Error ? error.message : (locale === "zh" ? "计划生成失败，请重试。" : "Plan generation failed. Please retry."));
+    } finally {
+      setGeneratingPlan(false);
+    }
+  }
+
   return (
     <section className="content-card materials-card">
       <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><FileStack size={24} strokeWidth={1.4} /></div>
@@ -250,8 +358,76 @@ export function MaterialDropzone({
                     <div><dt>{t("indexedAt")}</dt><dd>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(material.indexed_at))}</dd></div>
                   </dl>
                 </details>
+                {analyzingIds.includes(material.id) && (
+                  <span className="material-analysis-status">{analysisCopy.analyzing}</span>
+                )}
+                {analysisErrors.includes(material.id) && (
+                  <span className="material-analysis-error">{analysisCopy.failed}</span>
+                )}
+                {analyses[material.id] && (
+                  <div className="material-analysis" data-testid={`material-analysis-${material.id}`}>
+                    <div className="material-analysis-heading">
+                      <strong>{analysisCopy.types[analyses[material.id].material_type]}</strong>
+                      <span>{analyses[material.id].mode === "ai" ? analysisCopy.ai : analysisCopy.fallback}</span>
+                      <span>{analysisCopy.confidence} {Math.round(analyses[material.id].confidence * 100)}%</span>
+                    </div>
+                    <p>{analyses[material.id].summary}</p>
+                    {analyses[material.id].topics.length > 0 && (
+                      <div className="material-analysis-group">
+                        <b>{analysisCopy.topics}</b>
+                        <div>{analyses[material.id].topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
+                      </div>
+                    )}
+                    {analyses[material.id].sections.length > 0 && (
+                      <details className="material-analysis-sections">
+                        <summary>{analysisCopy.sections} · {analyses[material.id].sections.length}</summary>
+                        <ol>
+                          {analyses[material.id].sections.map((section) => (
+                            <li key={`${section.title}-${section.citation_ids.join("-")}`}>
+                              <strong>{section.title}</strong>
+                              {section.topics.length > 0 && <span>{section.topics.join(" · ")}</span>}
+                              {section.citation_ids.length > 0 && <code>{analysisCopy.citations}: {section.citation_ids.join(", ")}</code>}
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    )}
+                    {planningId !== material.id ? (
+                      <button type="button" className="targeted-plan-button" onClick={() => beginPlanning(analyses[material.id])}>
+                        {locale === "zh" ? "生成针对性学习计划" : "Create targeted study plan"}
+                      </button>
+                    ) : (
+                      <div className="targeted-plan-form">
+                        <label>{locale === "zh" ? "学习重点" : "Priority topics"}<textarea value={focusText} onChange={(event) => setFocusText(event.target.value)} /></label>
+                        <label>{locale === "zh" ? "考试日期" : "Exam date"}<input type="date" value={examDate} onChange={(event) => setExamDate(event.target.value)} /></label>
+                        <label>{locale === "zh" ? "每日分钟" : "Daily minutes"}<input type="number" min={10} max={480} value={dailyMinutes} onChange={(event) => setDailyMinutes(Number(event.target.value))} /></label>
+                        <label>{locale === "zh" ? "习惯学习时间" : "Preferred study time"}<input type="time" step={3600} value={preferredTime} onChange={(event) => setPreferredTime(event.target.value)} /></label>
+                        <fieldset className="targeted-plan-weekdays">
+                          <legend>{locale === "zh" ? "可学习日期" : "Available weekdays"}</legend>
+                          {(locale === "zh" ? ["一", "二", "三", "四", "五", "六", "日"] : ["M", "T", "W", "T", "F", "S", "S"]).map((label, day) => (
+                            <label key={day}><input type="checkbox" checked={studyWeekdays.includes(day)} onChange={() => setStudyWeekdays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day].sort())} />{label}</label>
+                          ))}
+                        </fieldset>
+                        <label className="wide">{locale === "zh" ? "作息与不可用时间" : "Routine and unavailable time"}<textarea value={routineNotes} onChange={(event) => setRoutineNotes(event.target.value)} placeholder={locale === "zh" ? "例如：工作日晚上学习，周三不可安排" : "e.g. evenings; unavailable Wednesday"} /></label>
+                        {planStatus === "error" && <p className="targeted-plan-error" role="alert">{locale === "zh" ? `生成失败：${planError}` : `Generation failed: ${planError}`}</p>}
+                        <button type="button" className={planStatus === "success" ? "is-success" : undefined} disabled={generatingPlan || !examDate || !focusText.trim() || studyWeekdays.length === 0} onClick={() => void generatePlan(analyses[material.id])}>{generatingPlan ? (locale === "zh" ? "正在生成…" : "Generating…") : planStatus === "success" ? (locale === "zh" ? "✓ 生成成功，正在打开日历" : "✓ Generated — opening calendar") : (locale === "zh" ? "确认并打开日历" : "Confirm and open calendar")}</button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="material-actions">
+                <button
+                  type="button"
+                  className="material-analyze-button"
+                  data-testid={`material-analyze-${material.id}`}
+                  aria-label={`${analysisCopy.analyze} ${material.filename}`}
+                  disabled={!onAnalyze || analyzingIds.includes(material.id)}
+                  onClick={() => void analyzeMaterial(material)}
+                >
+                  <Sparkles size={15} />
+                  <span>{analyzingIds.includes(material.id) ? analysisCopy.analyzing : analysisCopy.analyze}</span>
+                </button>
                 <button type="button" data-testid={`material-download-${material.id}`} aria-label={`${t("download")} ${material.filename}`} onClick={() => void onDownload?.(material)}><Download size={15} /></button>
                 <button
                   type="button"

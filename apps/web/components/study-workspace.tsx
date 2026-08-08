@@ -50,6 +50,7 @@ import type {
   LearningMode,
   LearningWorkspace,
   Locale,
+  MaterialAnalysis,
   MaterialRecord,
   PracticeQuestion,
   PracticeRequest,
@@ -57,6 +58,7 @@ import type {
   SavedPracticeQuestion,
   StudySession,
   StudyPlan,
+  TargetedPlanInput,
   SearchSource,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -467,6 +469,91 @@ export function StudyWorkspace({
       reportError(caught);
       return [];
     }
+  }
+
+  async function analyzeMaterial(material: MaterialRecord): Promise<MaterialAnalysis> {
+    if (!auth || !workspace) throw new Error(t("error"));
+    const requestedAt = new Date().toISOString();
+    try {
+      return await api.analyzeWorkspaceMaterial(
+        auth.access_token,
+        workspace.id,
+        material.id,
+      );
+    } catch (analysisError) {
+      try {
+        return await api.waitForWorkspaceMaterialAnalysis(
+          auth.access_token,
+          workspace.id,
+          material.id,
+          requestedAt,
+        );
+      } catch {
+        reportError(analysisError);
+        throw analysisError;
+      }
+    }
+  }
+
+  async function createTargetedPlan(input: TargetedPlanInput): Promise<StudyPlan> {
+    if (!auth || !workspace) throw new Error(t("error"));
+    const previousSessionIds = new Set(plan?.sessions.map((session) => session.id) ?? []);
+    const previousTopics = new Set(Object.values(progress?.topics ?? {}));
+    let generated: StudyPlan;
+    try {
+      generated = await api.createTargetedPlan(auth.access_token, workspace.id, input);
+    } catch (requestError) {
+      // A reverse proxy can time out after the backend has already persisted the plan.
+      // Recover from the workspace snapshot before reporting a false failure.
+      let recovered: StudyPlan | null = null;
+      for (let attempt = 0; attempt < 30 && !recovered; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+        try {
+          const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+          const candidate = snapshot.plan;
+          const hasNewSession = candidate?.sessions.some(
+            (session) => !previousSessionIds.has(session.id),
+          );
+          const hasNewFocus = input.focus_topics.some(
+            (topic) => Object.values(snapshot.progress.topics).includes(topic)
+              && !previousTopics.has(topic),
+          );
+          const alreadyGenerated = candidate
+            && input.focus_topics.some((topic) => candidate.goal.includes(topic));
+          if (candidate && (hasNewSession || hasNewFocus || alreadyGenerated)) {
+            applySnapshot(snapshot);
+            recovered = candidate;
+          }
+        } catch {
+          // Keep polling briefly; surface the original request error if recovery fails.
+        }
+      }
+      if (!recovered) throw requestError;
+      generated = recovered;
+    }
+    setPlan(generated);
+    try {
+      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      applySnapshot(snapshot);
+    } catch {
+      // The generated response is sufficient to open the calendar; refresh can retry later.
+    }
+    return generated;
+  }
+
+  async function addCalendarSession(input: { topic_name: string; planned_at: string; minutes: number; activity: string }) {
+    if (!auth || !workspace) return false;
+    await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    await refreshWorkspaceSnapshot();
+    return true;
+  }
+
+  async function clearCalendarPlan() {
+    if (!auth || !workspace) return false;
+    await api.clearWorkspacePlan(auth.access_token, workspace.id);
+    setPlan(null);
+    await refreshWorkspaceSnapshot();
+    return true;
   }
 
   async function downloadMaterial(material: MaterialRecord) {
@@ -931,6 +1018,9 @@ export function StudyWorkspace({
                materials={materials}
               onUpload={uploadMaterials}
               onSearch={searchMaterials}
+              onAnalyze={analyzeMaterial}
+              onGeneratePlan={createTargetedPlan}
+              onOpenCalendar={() => router.push(`/learn/${workspace.id}/calendar`)}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
             />
@@ -942,6 +1032,8 @@ export function StudyWorkspace({
               topicLabels={progress?.topics}
               busySessionId={busySessionId}
               onUpdateSession={updatePlanSession}
+              onAddSession={addCalendarSession}
+              onClearPlan={clearCalendarPlan}
             />
           )}
           {section === "progress" && (

@@ -10,6 +10,7 @@ import type {
   IntegrationKind,
   IntegrationTestResult,
   IntegrationUpdateInput,
+  MaterialAnalysis,
   MaterialRecord,
   PasswordResetAccepted,
   PracticeRequest,
@@ -19,6 +20,8 @@ import type {
   SearchSource,
   SavedPracticeQuestion,
   StudySession,
+  StudyPlan,
+  TargetedPlanInput,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -36,6 +39,9 @@ const DEFAULT_LONG_REQUEST_TIMEOUTS: LongRequestTimeouts = {
   model: 120_000,
   upload: 240_000,
 };
+
+const MATERIAL_ANALYSIS_RECOVERY_ATTEMPTS = 30;
+const MATERIAL_ANALYSIS_RECOVERY_INTERVAL_MS = 1_500;
 
 export class ApiError extends Error {
   constructor(
@@ -280,6 +286,26 @@ export class ApiClient {
     );
   }
 
+  addWorkspacePlanSession(
+    token: string,
+    workspaceId: string,
+    input: { topic_name: string; planned_at: string; minutes: number; activity: string },
+  ): Promise<StudySession> {
+    return this.request<StudySession>(
+      `/workspaces/${workspaceId}/learning/plan/sessions`,
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
+  clearWorkspacePlan(token: string, workspaceId: string): Promise<void> {
+    return this.request<void>(
+      `/workspaces/${workspaceId}/learning/plan`,
+      { method: "DELETE" },
+      token,
+    );
+  }
+
   uploadWorkspaceMaterials(
     token: string,
     workspaceId: string,
@@ -294,6 +320,73 @@ export class ApiClient {
       token,
       this.longRequestTimeouts.upload,
     );
+  }
+
+  analyzeWorkspaceMaterial(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+  ): Promise<MaterialAnalysis> {
+    return this.request<MaterialAnalysis>(
+      `/workspaces/${workspaceId}/materials/${materialId}/analysis`,
+      { method: "POST" },
+      token,
+      this.longRequestTimeouts.model,
+    );
+  }
+
+  getWorkspaceMaterialAnalysis(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+  ): Promise<MaterialAnalysis> {
+    return this.request<MaterialAnalysis>(
+      `/workspaces/${workspaceId}/materials/${materialId}/analysis`,
+      {},
+      token,
+    );
+  }
+
+  createTargetedPlan(
+    token: string,
+    workspaceId: string,
+    input: TargetedPlanInput,
+  ): Promise<StudyPlan> {
+    return this.request<StudyPlan>(
+      `/workspaces/${workspaceId}/learning/plan/targeted`,
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+      this.longRequestTimeouts.model,
+    );
+  }
+
+  async waitForWorkspaceMaterialAnalysis(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+    notBefore?: string,
+  ): Promise<MaterialAnalysis> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < MATERIAL_ANALYSIS_RECOVERY_ATTEMPTS; attempt += 1) {
+      try {
+        const analysis = await this.getWorkspaceMaterialAnalysis(token, workspaceId, materialId);
+        if (!notBefore || Date.parse(analysis.analyzed_at) >= Date.parse(notBefore)) return analysis;
+      } catch (caught) {
+        lastError = caught;
+        const recoverable = caught instanceof ApiError
+          && (caught.status === 404 || caught.status >= 500);
+        if (!recoverable || attempt === MATERIAL_ANALYSIS_RECOVERY_ATTEMPTS - 1) throw caught;
+      }
+      if (attempt === MATERIAL_ANALYSIS_RECOVERY_ATTEMPTS - 1) {
+        throw lastError ?? new ApiError(
+          408,
+          "material_analysis_timeout",
+          "Material analysis did not finish in time",
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, MATERIAL_ANALYSIS_RECOVERY_INTERVAL_MS));
+    }
+    throw lastError;
   }
 
   listWorkspaceMaterials(token: string, workspaceId: string): Promise<MaterialRecord[]> {

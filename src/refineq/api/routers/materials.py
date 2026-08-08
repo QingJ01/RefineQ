@@ -27,6 +27,7 @@ from refineq.knowledge.index import (
     SearchResult,
 )
 from refineq.knowledge.policy import MaterialPolicy, MaterialPolicyError, UploadDescriptor
+from refineq.materials.models import MaterialAnalysis
 from refineq.storage.json_store import RecordNotFoundError
 
 router = APIRouter(prefix="/projects/{project_id}/materials", tags=["materials"])
@@ -348,6 +349,94 @@ def workspace_material_status(
     return material_status(workspace_id, material_id, request, user)
 
 
+def _analyze_material(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialAnalysis:
+    _require_project(request, user.id, project_id)
+    try:
+        return request.app.state.material_analysis.analyze(
+            owner_id=user.id,
+            workspace_id=project_id,
+            material_id=material_id,
+        )
+    except MaterialNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from error
+
+
+@router.post("/{material_id}/analysis", response_model=MaterialAnalysis)
+def analyze_material(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialAnalysis:
+    return _analyze_material(project_id, material_id, request, user)
+
+
+@workspace_router.post("/{material_id}/analysis", response_model=MaterialAnalysis)
+def analyze_workspace_material(
+    workspace_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialAnalysis:
+    return _analyze_material(workspace_id, material_id, request, user)
+
+
+def _material_analysis(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialAnalysis:
+    _require_project(request, user.id, project_id)
+    try:
+        return request.app.state.material_analysis.get(
+            owner_id=user.id,
+            workspace_id=project_id,
+            material_id=material_id,
+        )
+    except MaterialNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from error
+    except RecordNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "material_analysis_not_found",
+                "message": "Material has not been analyzed",
+            },
+        ) from error
+
+
+@router.get("/{material_id}/analysis", response_model=MaterialAnalysis)
+def material_analysis(
+    project_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialAnalysis:
+    return _material_analysis(project_id, material_id, request, user)
+
+
+@workspace_router.get("/{material_id}/analysis", response_model=MaterialAnalysis)
+def workspace_material_analysis(
+    workspace_id: str,
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialAnalysis:
+    return _material_analysis(workspace_id, material_id, request, user)
+
+
 def _download_material(
     project_id: str,
     material_id: str,
@@ -420,6 +509,11 @@ def _delete_material(
             request.app.state.knowledge.delete_material(
                 owner_id=user.id,
                 project_id=project_id,
+                material_id=material_id,
+            )
+            request.app.state.material_analysis.delete(
+                owner_id=user.id,
+                workspace_id=project_id,
                 material_id=material_id,
             )
         except Exception:

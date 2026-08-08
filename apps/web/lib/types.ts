@@ -195,6 +195,44 @@ export interface MaterialRecord {
   indexed_at: string;
 }
 
+export type MaterialType =
+  | "textbook"
+  | "lecture_notes"
+  | "exam"
+  | "problem_set"
+  | "mixed"
+  | "unknown";
+
+export interface MaterialSectionAnalysis {
+  title: string;
+  topics: string[];
+  citation_ids: string[];
+}
+
+export interface MaterialAnalysis {
+  material_id: string;
+  filename: string;
+  material_type: MaterialType;
+  title: string;
+  summary: string;
+  sections: MaterialSectionAnalysis[];
+  topics: string[];
+  confidence: number;
+  mode: "ai" | "fallback";
+  analyzed_at: string;
+}
+
+export interface TargetedPlanInput {
+  material_id: string;
+  focus_topics: string[];
+  exam_at: string;
+  daily_minutes: number;
+  study_weekdays: number[];
+  preferred_hour: number;
+  timezone_offset_minutes: number;
+  routine_notes: string;
+}
+
 export interface SearchSource {
   citation_id: string;
   material_id: string;

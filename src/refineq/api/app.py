@@ -46,9 +46,12 @@ from refineq.integrations.service import IntegrationTester
 from refineq.knowledge.embeddings import PlatformEmbeddingService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
+from refineq.learning.personalized import TargetedPlanService
 from refineq.learning.service import LearningService
+from refineq.materials.service import MaterialAnalysisService
 from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
+from refineq.storage.material_analyses import MaterialAnalysisRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
 from refineq.storage.sql_store import SqlRecordStore
@@ -106,6 +109,7 @@ def create_app(
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
+    app.state.material_analyses = MaterialAnalysisRepository(app.state.store)
     app.state.integrations = IntegrationRepository(
         app.state.database,
         encryption_key=app.state.settings.model_encryption_key,
@@ -140,6 +144,20 @@ def create_app(
         app.state.knowledge,
         app.state.model_settings,
         learning_model_transport or OpenAICompatibleStructuredTransport(),
+    )
+    app.state.material_analysis = MaterialAnalysisService(
+        app.state.knowledge,
+        app.state.material_analyses,
+        app.state.model_settings,
+        learning_model_transport
+        or OpenAICompatibleStructuredTransport(timeout=90.0, max_retries=0),
+    )
+    app.state.targeted_plans = TargetedPlanService(
+        app.state.learning,
+        app.state.material_analyses,
+        app.state.model_settings,
+        learning_model_transport
+        or OpenAICompatibleStructuredTransport(timeout=30.0, max_retries=0),
     )
     app.state.learning_service = LearningService(
         app.state.projects,

@@ -478,6 +478,39 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         ).json()["plan"]["sessions"][0]
         assert restored == rescheduled.json()
 
+        manual_time = datetime.now(UTC) + timedelta(days=2)
+        added = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=headers,
+            json={
+                "topic_name": "定积分复习",
+                "planned_at": manual_time.isoformat(),
+                "minutes": 50,
+                "activity": "review",
+            },
+        )
+        assert added.status_code == 200
+        assert added.json()["minutes"] == 50
+        assert added.json()["activity"] == "review"
+
+        refreshed_sessions = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["plan"]["sessions"]
+        assert added.json() in refreshed_sessions
+
+        cleared = client.delete(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+        )
+        assert cleared.status_code == 204
+        cleared_snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert cleared_snapshot["plan"] is None
+        assert cleared_snapshot["progress"]["topics"]
+
 
 def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
