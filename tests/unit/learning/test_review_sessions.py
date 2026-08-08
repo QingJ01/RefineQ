@@ -69,3 +69,56 @@ def test_upsert_review_session_deduplicates_topics_and_bounds_history() -> None:
     )
     assert any(item["id"] == "session-plan-review" for item in plan["sessions"])
     assert any(item["id"] == "study-session" for item in plan["sessions"])
+
+
+def test_upsert_review_session_advances_a_later_planned_review() -> None:
+    plan = {
+        "sessions": [
+            StudySession(
+                id="session-plan-review",
+                topic_id="algebra",
+                planned_at=NOW + timedelta(days=10),
+                minutes=20,
+                activity="review",
+            ).model_dump(mode="json")
+        ]
+    }
+    candidate = StudySession(
+        id="review-adaptive",
+        topic_id="algebra",
+        planned_at=NOW + timedelta(days=1),
+        minutes=20,
+        activity="review",
+    )
+
+    next_review_at = _upsert_review_session(plan, candidate, not_before=NOW)
+
+    assert next_review_at == NOW + timedelta(days=1)
+    assert [item["id"] for item in plan["sessions"]] == ["session-plan-review"]
+    assert plan["sessions"][0]["planned_at"] == (NOW + timedelta(days=1)).isoformat()
+
+
+def test_upsert_review_session_clamps_an_overdue_plan_to_the_observation_time() -> None:
+    plan = {
+        "sessions": [
+            StudySession(
+                id="session-overdue-review",
+                topic_id="algebra",
+                planned_at=NOW - timedelta(days=2),
+                minutes=20,
+                activity="review",
+            ).model_dump(mode="json")
+        ]
+    }
+    candidate = StudySession(
+        id="review-adaptive",
+        topic_id="algebra",
+        planned_at=NOW + timedelta(days=1),
+        minutes=20,
+        activity="review",
+    )
+
+    next_review_at = _upsert_review_session(plan, candidate, not_before=NOW)
+
+    assert next_review_at == NOW
+    assert plan["sessions"][0]["planned_at"] == NOW.isoformat()

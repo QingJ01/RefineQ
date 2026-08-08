@@ -26,6 +26,7 @@ import {
   saveLearningLocale,
 } from "@/lib/session";
 import type { Locale, User } from "@/lib/types";
+import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
 
 
 const copy = {
@@ -330,6 +331,7 @@ export function AccountRoute() {
       setUser(profile);
     }).catch((caught) => {
       if (shouldClearAccountSession(caught)) {
+        clearWorkspaceSnapshots(window.sessionStorage);
         clearLearningSession(window.sessionStorage);
         router.replace("/");
         return;
@@ -346,6 +348,7 @@ export function AccountRoute() {
   }
 
   function exitAccount() {
+    clearWorkspaceSnapshots(window.sessionStorage);
     clearLearningSession(window.sessionStorage);
     router.replace("/");
   }

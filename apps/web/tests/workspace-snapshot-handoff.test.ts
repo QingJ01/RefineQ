@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   clearWorkspaceSnapshots,
   consumeWorkspaceSnapshot,
+  removeWorkspaceSnapshot,
   saveWorkspaceSnapshot,
 } from "../lib/workspace-snapshot-handoff";
 import type { WorkspaceSnapshot } from "../lib/types";
@@ -60,6 +61,20 @@ describe("workspace snapshot handoff", () => {
     saveWorkspaceSnapshot(storage, snapshot);
 
     expect(consumeWorkspaceSnapshot(storage, "workspace-2")).toBeNull();
+  });
+
+  it("can discard a stale snapshot without consuming another workspace", () => {
+    const storage = new MemoryStorage();
+    saveWorkspaceSnapshot(storage, snapshot);
+    saveWorkspaceSnapshot(storage, {
+      ...snapshot,
+      workspace: { ...snapshot.workspace, id: "workspace-2" },
+    });
+
+    removeWorkspaceSnapshot(storage, "workspace-1");
+
+    expect(consumeWorkspaceSnapshot(storage, "workspace-1")).toBeNull();
+    expect(consumeWorkspaceSnapshot(storage, "workspace-2")?.workspace.id).toBe("workspace-2");
   });
 
   it("clears every cached workspace snapshot without touching unrelated session state", () => {

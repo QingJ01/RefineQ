@@ -41,6 +41,10 @@ export function consumeWorkspaceSnapshot(
   }
 }
 
+export function removeWorkspaceSnapshot(storage: SnapshotStorage, workspaceId: string): void {
+  storage.removeItem(snapshotKey(workspaceId));
+}
+
 export function clearWorkspaceSnapshots(storage: EnumerableSnapshotStorage): void {
   const keys: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {

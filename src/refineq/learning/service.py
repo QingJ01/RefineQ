@@ -40,8 +40,13 @@ MAX_QUESTION_REQUESTS = 100
 MAX_REVIEW_SESSIONS = 20
 
 
-def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) -> datetime:
-    """Keep one pending review per topic and bound persisted review history."""
+def _upsert_review_session(
+    raw_plan: dict[str, Any],
+    candidate: StudySession,
+    *,
+    not_before: datetime | None = None,
+) -> datetime:
+    """Keep the earliest useful pending review per topic and bound dynamic history."""
 
     sessions = raw_plan["sessions"]
     sessions[:] = [
@@ -56,19 +61,25 @@ def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) ->
     ]
     planned_review = min(
         (
-            StudySession.model_validate(item)
+            (item, StudySession.model_validate(item))
             for item in sessions
             if item.get("activity") == "review"
             and not str(item.get("id", "")).startswith("review_")
             and item.get("topic_id") == candidate.topic_id
             and item.get("status", "planned") != "completed"
         ),
-        key=lambda session: (session.planned_at, session.id),
+        key=lambda pair: (pair[1].planned_at, pair[1].id),
         default=None,
     )
-    selected_review = planned_review or candidate
     if planned_review is None:
         sessions.append(candidate.model_dump(mode="json"))
+        selected_at = candidate.planned_at
+    else:
+        planned_item, planned_session = planned_review
+        selected_at = min(planned_session.planned_at, candidate.planned_at)
+        if not_before is not None:
+            selected_at = max(selected_at, not_before)
+        planned_item["planned_at"] = selected_at.isoformat()
 
     reviews = [
         item
@@ -88,7 +99,7 @@ def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) ->
         remove_ids = {item["id"] for item in removable}
         sessions[:] = [item for item in sessions if item.get("id") not in remove_ids]
     sessions.sort(key=lambda item: item["planned_at"])
-    return selected_review.planned_at
+    return selected_at
 
 
 class LearningServiceError(RuntimeError):
@@ -1060,7 +1071,9 @@ class LearningService:
                         minutes=min(30, int(progress["daily_minutes"])),
                         activity="review",
                     )
-                    next_review_at = _upsert_review_session(raw_plan, review_session)
+                    next_review_at = _upsert_review_session(
+                        raw_plan, review_session, not_before=observed_at
+                    )
 
             result = {
                 "attempt_id": payload.attempt_id,

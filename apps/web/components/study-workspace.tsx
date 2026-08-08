@@ -81,6 +81,7 @@ import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
 import {
   clearWorkspaceSnapshots,
   consumeWorkspaceSnapshot,
+  removeWorkspaceSnapshot,
   saveWorkspaceSnapshot,
 } from "@/lib/workspace-snapshot-handoff";
 
@@ -276,9 +277,14 @@ export function StudyWorkspace({
           return;
         }
         if (workspaceRef.current?.id === initialWorkspaceId) {
+          removeWorkspaceSnapshot(window.sessionStorage, initialWorkspaceId);
           if (active) setRestoring(false);
           return;
         }
+        clearWorkspaceState();
+        clearPracticeState();
+        resetAgent();
+        setError("");
         setRestoring(true);
         try {
           const snapshot = consumeWorkspaceSnapshot(window.sessionStorage, initialWorkspaceId)
@@ -295,6 +301,10 @@ export function StudyWorkspace({
           if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
             clearWorkspaceSnapshots(window.sessionStorage);
             resetAuthentication();
+            clearWorkspaceState();
+            clearPracticeState();
+            resetAgent();
+            setWorkspaces([]);
             router.replace("/");
           } else if (caught instanceof ApiError && caught.status === 404) {
             redirectUnavailableWorkspace();
@@ -378,6 +388,10 @@ export function StudyWorkspace({
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
           clearWorkspaceSnapshots(window.sessionStorage);
           clearLearningSession(window.sessionStorage);
+          clearWorkspaceState();
+          clearPracticeState();
+          resetAgent();
+          setWorkspaces([]);
           router.replace("/");
         } else if (caught instanceof ApiError && caught.status === 404 && initialWorkspaceId) {
           redirectUnavailableWorkspace();
@@ -392,9 +406,12 @@ export function StudyWorkspace({
     return () => { active = false; };
   }, [
     applySnapshot,
+    clearPracticeState,
+    clearWorkspaceState,
     initialWorkspaceId,
     redirectUnavailableWorkspace,
     resetAuthentication,
+    resetAgent,
     router,
     setAuth,
     setError,
@@ -442,12 +459,12 @@ export function StudyWorkspace({
     navigation: "push" | "replace" = "push",
   ) {
     if (!token) return;
+    removeWorkspaceSnapshot(window.sessionStorage, target.id);
     setHomeBusy(true);
     setError("");
     try {
       const snapshot = await api.getWorkspaceSnapshot(token, target.id);
       applySnapshot(snapshot);
-      saveWorkspaceSnapshot(window.sessionStorage, snapshot);
       saveLearningSession(window.sessionStorage, {
         token,
         workspaceId: target.id,
@@ -473,9 +490,9 @@ export function StudyWorkspace({
       const route = await api.resolveWorkspace(auth.access_token, intent);
       const saved = loadLearningSession(window.sessionStorage);
       const previousId = workspace?.id ?? saved?.workspaceId ?? null;
+      removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id);
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
       applySnapshot(snapshot);
-      saveWorkspaceSnapshot(window.sessionStorage, snapshot);
       setRoute(route);
       setPreviousWorkspaceId(previousId === route.workspace.id ? null : previousId);
       window.sessionStorage.setItem(ROUTE_NOTICE_KEY, JSON.stringify({

@@ -10,6 +10,7 @@ import { localizeApiError } from "@/lib/error-messages";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "@/lib/session";
 import type { IntegrationKind, Locale } from "@/lib/types";
 import type { AdminSection } from "@/lib/admin-routes";
+import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
 
 
 export function AdminRoute({
@@ -49,6 +50,7 @@ export function AdminRoute({
       .catch((caught: unknown) => {
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+          clearWorkspaceSnapshots(window.sessionStorage);
           clearLearningSession(window.sessionStorage);
           router.replace("/");
         } else {
@@ -59,6 +61,7 @@ export function AdminRoute({
   }, [router, verificationNonce]);
 
   function logout() {
+    clearWorkspaceSnapshots(window.sessionStorage);
     clearLearningSession(window.sessionStorage);
     router.replace("/");
   }

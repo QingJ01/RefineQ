@@ -327,6 +327,28 @@ describe("durable learner routing", () => {
     expect(resolveLearningShellPath("/admin")).toEqual({ kind: "other" });
   });
 
+  it("never hands stale workspace state across a shared-shell route change", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const restoreStart = workspaceSource.indexOf("async function restore()");
+    const authenticatedStart = workspaceSource.indexOf("async function authenticated");
+    const restoreSource = workspaceSource.slice(restoreStart, authenticatedStart);
+    const openStart = workspaceSource.indexOf("async function openWorkspace");
+    const resolveStart = workspaceSource.indexOf("async function resolveIntent");
+    const uploadStart = workspaceSource.indexOf("async function uploadMaterials");
+    const openSource = workspaceSource.slice(openStart, resolveStart);
+    const resolveSource = workspaceSource.slice(resolveStart, uploadStart);
+
+    expect(restoreSource.indexOf("clearWorkspaceState()"))
+      .toBeLessThan(restoreSource.indexOf("api.getWorkspaceSnapshot"));
+    expect(openSource).toContain("removeWorkspaceSnapshot(window.sessionStorage, target.id)");
+    expect(openSource).not.toContain("saveWorkspaceSnapshot");
+    expect(resolveSource).toContain("removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id)");
+    expect(resolveSource).not.toContain("saveWorkspaceSnapshot");
+  });
+
   it("renders the automatic routing decision with correction controls", () => {
     const workspaceSource = readFileSync(
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
@@ -1079,6 +1101,17 @@ describe("persistent personal learning session", () => {
 
     expect(sources.every((source) => source.includes("window.sessionStorage"))).toBe(true);
     expect(sources.every((source) => !source.includes("window.localStorage"))).toBe(true);
+  });
+
+  it("clears workspace snapshots from every account exit surface", () => {
+    const sources = [
+      "../components/study-workspace.tsx",
+      "../components/account-center.tsx",
+      "../components/admin-route.tsx",
+    ].map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"));
+
+    expect(sources.every((source) => source.includes("clearWorkspaceSnapshots(window.sessionStorage)")))
+      .toBe(true);
   });
 
   it("hands a short-lived session to a new same-origin tab", async () => {

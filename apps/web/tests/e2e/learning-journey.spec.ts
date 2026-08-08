@@ -75,6 +75,8 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("start-learning").click();
     await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
     await expect(page.locator(".workspace-switcher > strong")).not.toHaveText(workspaceTitle);
+    const secondWorkspaceUrl = page.url();
+    const secondWorkspaceId = new URL(secondWorkspaceUrl).pathname.split("/")[2];
 
     const trigger = page.getByTestId("workspace-switcher");
     await trigger.click();
@@ -95,6 +97,21 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByRole("menuitem", { name: new RegExp(workspaceTitle) }).click();
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
     await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+
+    await page.route(`**/api/workspaces/${secondWorkspaceId}/snapshot`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "service_unavailable", message: "temporary" } }),
+      });
+    });
+    await page.goBack();
+    await expect(page).toHaveURL(secondWorkspaceUrl);
+    await expect(page.getByTestId("workspace-route-state")).toBeVisible();
+    await expect(page.locator(".workspace-switcher")).toHaveCount(0);
+    await page.unroute(`**/api/workspaces/${secondWorkspaceId}/snapshot`);
+    await page.goForward();
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
   });
 
   await test.step("use a short, varied capability path", async () => {
