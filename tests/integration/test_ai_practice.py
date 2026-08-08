@@ -98,6 +98,7 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         assert question_response.status_code == 200
         question = question_response.json()
         assert question["mode"] == "ai"
+        assert question["grounding"] == "material"
         assert question["citations"] == ["material-1#0"]
         assert question["sources"] == [
             {
@@ -130,6 +131,7 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         assert grade["strengths"] == ["准确说明趋近"]
         assert grade["gaps"] == ["可以补充形式化定义"]
         assert grade["grading_mode"] == "ai"
+        assert grade["grounding"] == "material"
         assert grade["sources"][0]["citation_id"] == "material-1#0"
         assert "expected_answer" not in answer.text
 
@@ -282,3 +284,36 @@ def test_workspace_learning_task_accepts_project_mode(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["learning_mode"] == "project"
+
+
+def test_workspace_case_task_without_matching_material_is_explicitly_general(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "general-case@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "General Case Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "练习识别用户真实需求"},
+        ).json()["workspace"]["id"]
+        response = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "general-case-1", "mode": "case"},
+        )
+
+    assert response.status_code == 200
+    question = response.json()
+    assert question["grounding"] == "general"
+    assert question["sources"] == []
+    assert "基于材料" not in question["prompt"]

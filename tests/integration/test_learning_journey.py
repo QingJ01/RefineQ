@@ -94,6 +94,8 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert question_response.status_code == 200
         question = question_response.json()
         assert question["topic_id"] == "chain-rule"
+        assert question["grounding"] == "general"
+        assert question["sources"] == []
         assert "expected_answer" not in question
 
         raw_learning = app.state.learning.get(alice["user_id"], project_id)
@@ -111,6 +113,7 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         )
         assert answer.status_code == 200
         assert answer.json()["is_correct"] is False
+        assert answer.json()["grounding"] == "general"
         assert answer.json()["mastery_updated"] is False
         assert answer.json()["replayed"] is False
 

@@ -68,6 +68,8 @@ const interfaceCopy = {
     review: "后续巩固",
     reviewHint: "系统会依据本次反馈安排下一次回顾。",
     sourceLabel: "参考来源",
+    materialGrounding: "材料依据",
+    generalGrounding: "通用生成",
   },
   en: {
     today: "Today",
@@ -95,6 +97,8 @@ const interfaceCopy = {
     review: "Follow-up review",
     reviewHint: "The next review will be scheduled from this feedback.",
     sourceLabel: "Sources",
+    materialGrounding: "Material-grounded",
+    generalGrounding: "General practice",
   },
 } as const;
 
@@ -186,6 +190,12 @@ export function LearningSessionCanvas({
   const agentRef = useRef<HTMLDetailsElement>(null);
   const sourceRecords = materials.slice(0, 2);
   const taskSources = result?.sources?.length ? result.sources : question?.sources ?? [];
+  const taskGrounding = result?.grounding
+    ?? question?.grounding
+    ?? (taskSources.length > 0 ? "material" : "general");
+  const groundingLabel = taskGrounding === "material"
+    ? text.materialGrounding
+    : text.generalGrounding;
   const nextReview = result?.next_review_at
     ?? plan?.sessions.find(
       (item) => item.activity === "review" && item.status !== "completed",
@@ -267,6 +277,9 @@ export function LearningSessionCanvas({
           {stage === "practice" && question && (
             <article className="session-task" data-testid="session-practice-stage" data-question-id={question.id}>
               <span className="session-section-label"><Target size={15} /> {steps[2].label}</span>
+              <span className={`session-grounding-badge ${taskGrounding}`} data-testid="practice-grounding">
+                {groundingLabel}
+              </span>
               <h2>{question.prompt}</h2>
               {taskSources[0]?.text && (
                 <blockquote className="session-case-evidence">
@@ -324,6 +337,9 @@ export function LearningSessionCanvas({
           {stage === "reflect" && result && question && (
             <article className="session-feedback" data-testid="session-reflect-stage" role="status">
               <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
+              <span className={`session-grounding-badge ${taskGrounding}`} data-testid="feedback-grounding">
+                {groundingLabel}
+              </span>
               <h2>{result.feedback}</h2>
               <div className="feedback-columns">
                 <section>

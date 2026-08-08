@@ -14,7 +14,7 @@ from refineq.agent.structured import (
     StructuredModelTransport,
 )
 from refineq.knowledge.index import KnowledgeIndex, SearchResult
-from refineq.learning.models import LearningMode
+from refineq.learning.models import Grounding, LearningMode
 
 
 class RubricCriterion(BaseModel):
@@ -63,6 +63,7 @@ class GeneratedQuestion(BaseModel):
     explanation: str
     citations: list[str]
     sources: list[SearchResult]
+    grounding: Grounding = Grounding.GENERAL
     pass_score: int = Field(default=70, ge=0, le=100)
     learning_mode: LearningMode = LearningMode.CONCEPT
     mode: Literal["ai", "fallback"]
@@ -104,12 +105,18 @@ def fallback_question(
     learning_mode: LearningMode = LearningMode.CONCEPT,
 ) -> GeneratedQuestion:
     source_hint = sources[0].text[:500] if sources else topic_name
+    case_prompt = (
+        f"请基于材料中的真实情境，使用“场景—核心问题—现有替代—行为证据”"
+        f"分析“{topic_name}”，并区分表面诉求与底层需求。"
+        if sources
+        else (
+            f"请构造一个与“{topic_name}”相关的典型情境，使用“场景—核心问题—"
+            "现有替代—行为证据”完成分析，并区分表面诉求与底层需求。"
+        )
+    )
     prompts = {
         LearningMode.CONCEPT: f"请用自己的话解释“{topic_name}”，并给出一个关键例子或应用。",
-        LearningMode.CASE: (
-            f"请基于材料中的真实情境，使用“场景—核心问题—现有替代—行为证据”"
-            f"分析“{topic_name}”，并区分表面诉求与底层需求。"
-        ),
+        LearningMode.CASE: case_prompt,
         LearningMode.PROJECT: (
             f"围绕“{topic_name}”产出一份可执行的最小方案，写清目标、约束、行动步骤和验证标准。"
         ),
@@ -138,7 +145,11 @@ def fallback_question(
     }
     explanations = {
         LearningMode.CONCEPT: "确定性降级任务，优先检查核心概念与主动回忆。",
-        LearningMode.CASE: "确定性降级任务，使用真实材料训练情境分析和证据判断。",
+        LearningMode.CASE: (
+            "确定性降级任务，使用真实材料训练情境分析和证据判断。"
+            if sources
+            else "确定性降级任务，使用典型情境训练问题拆解和证据判断。"
+        ),
         LearningMode.PROJECT: "确定性降级任务，以可执行产出和验证闭环作为评价重点。",
         LearningMode.EXAM: "确定性降级任务，按模拟作答要求检查结论与推理过程。",
     }
@@ -152,6 +163,7 @@ def fallback_question(
         explanation=explanations[learning_mode],
         citations=[source.citation_id for source in sources[:3]],
         sources=sources,
+        grounding=Grounding.MATERIAL if sources else Grounding.GENERAL,
         learning_mode=learning_mode,
         mode="fallback",
     )
@@ -313,6 +325,7 @@ class LearningIntelligenceService:
             explanation=output.explanation,
             citations=_valid_citations(output.citations, sources),
             sources=sources,
+            grounding=Grounding.MATERIAL if sources else Grounding.GENERAL,
             learning_mode=learning_mode,
             mode="ai",
         )

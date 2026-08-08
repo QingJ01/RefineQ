@@ -46,6 +46,13 @@ class LearningMode(StrEnum):
     EXAM = "exam"
 
 
+class Grounding(StrEnum):
+    """Whether a learning task is supported by retrieved user material."""
+
+    MATERIAL = "material"
+    GENERAL = "general"
+
+
 class BKTState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

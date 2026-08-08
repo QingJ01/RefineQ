@@ -79,6 +79,7 @@ export interface PracticeQuestion {
   difficulty_level?: number;
   citations?: string[];
   sources?: SearchSource[];
+  grounding?: "material" | "general";
   learning_mode?: LearningMode;
   mode?: "ai" | "fallback";
   saved?: boolean;
@@ -112,6 +113,7 @@ export interface AnswerResult {
   misconceptions: string[];
   citations: string[];
   sources?: SearchSource[];
+  grounding?: "material" | "general";
   grading_mode: "ai" | "fallback";
   mastery_updated: boolean;
   next_review_at?: string | null;

@@ -21,6 +21,7 @@ from refineq.learning.intelligence import (
 from refineq.learning.models import (
     BKTState,
     DifficultyState,
+    Grounding,
     KnowledgeType,
     LearningEvidence,
     LearningMode,
@@ -100,6 +101,7 @@ class QuestionResponse(BaseModel):
     difficulty_level: int = Field(default=2, ge=1, le=5)
     citations: list[str] = Field(default_factory=list)
     sources: list[SearchResult] = Field(default_factory=list)
+    grounding: Grounding = Grounding.GENERAL
     learning_mode: LearningMode = LearningMode.CONCEPT
     mode: str = "fallback"
     saved: bool = False
@@ -153,6 +155,7 @@ class AnswerResponse(BaseModel):
     misconceptions: list[str] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
     sources: list[SearchResult] = Field(default_factory=list)
+    grounding: Grounding = Grounding.GENERAL
     grading_mode: str = "fallback"
     mastery_updated: bool = True
     next_review_at: datetime | None = None
@@ -379,6 +382,13 @@ class LearningService:
         return [SearchResult.model_validate(source) for source in grading.get("sources", [])]
 
     @classmethod
+    def _question_grounding(cls, question: dict[str, Any]) -> Grounding:
+        stored = question.get("grounding")
+        if stored is not None:
+            return Grounding(stored)
+        return Grounding.MATERIAL if cls._question_sources(question) else Grounding.GENERAL
+
+    @classmethod
     def _public_question(
         cls,
         question: dict[str, Any],
@@ -392,6 +402,7 @@ class LearningService:
             difficulty_level=question.get("difficulty_level", 2),
             citations=question.get("citations", []),
             sources=cls._question_sources(question),
+            grounding=cls._question_grounding(question),
             learning_mode=question.get("learning_mode", LearningMode.CONCEPT),
             mode=question.get("mode", "fallback"),
             saved=saved_at is not None,
@@ -469,6 +480,7 @@ class LearningService:
                 "difficulty_level": generated.difficulty_level,
                 "learning_mode": generated.learning_mode.value,
                 "citations": generated.citations,
+                "grounding": generated.grounding.value,
                 "mode": generated.mode,
                 "grading": generated.model_dump(mode="json"),
             }
@@ -603,8 +615,14 @@ class LearningService:
         self._require_project(owner_id, project_id)
         current = self._learning.get(owner_id, project_id)
         if payload.attempt_id in current.data["attempts"]:
+            stored_attempt = current.data["attempts"][payload.attempt_id]
+            stored_grounding = stored_attempt.get("grounding") or (
+                Grounding.MATERIAL.value
+                if stored_attempt.get("sources")
+                else Grounding.GENERAL.value
+            )
             return AnswerResponse.model_validate(
-                {**current.data["attempts"][payload.attempt_id], "replayed": True}
+                {**stored_attempt, "grounding": stored_grounding, "replayed": True}
             )
         current_progress = self._progress(current.data)
         current_question = current_progress.get("pending_question")
@@ -725,6 +743,7 @@ class LearningService:
                     for source in self._question_sources(question)
                     if source.citation_id in grade.citations
                 ],
+                "grounding": self._question_grounding(question).value,
                 "grading_mode": grade.mode,
                 "mastery_updated": grade.mastery_evidence,
                 "next_review_at": (

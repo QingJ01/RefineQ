@@ -284,6 +284,31 @@
   text-transform: uppercase;
 }
 
+.session-grounding-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-left: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--muted-strong);
+  background: var(--surface-soft);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.02em;
+}
+
+.session-grounding-badge.material {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session-feedback > .session-grounding-badge {
+  margin: 12px 0 0;
+}
+
 .session-lesson h2,
 .session-task h2,
 .session-feedback h2 {

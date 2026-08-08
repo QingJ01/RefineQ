@@ -15,6 +15,7 @@ import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { SessionCoach } from "../components/session-coach";
 import { translator } from "../lib/i18n";
+import type { SearchSource } from "../lib/types";
 
 
 const t = translator("en");
@@ -80,6 +81,93 @@ describe("focused learning components", () => {
     expect(html).toContain("用户访谈原文.md");
     expect(html).toContain('data-testid="session-coach"');
     expect(html).not.toContain("证据账本");
+  });
+
+  it("distinguishes material-grounded practice from general generation", () => {
+    const source: SearchSource = {
+      citation_id: "interview#0",
+      material_id: "interview",
+      filename: "用户访谈原文.md",
+      chunk_index: 0,
+      text: "用户会先把访谈记录复制到表格，再逐条打标签。",
+      score: 0.92,
+    };
+    const renderGrounding = (
+      grounding: "material" | "general",
+      sources: SearchSource[],
+      reflect = false,
+    ) => renderToStaticMarkup(
+      <LearningSessionCanvas
+        locale="zh"
+        t={translator("zh")}
+        workspace={{
+          id: "product-thinking",
+          title: "产品思维",
+          subject: "product",
+          goal: "识别真实用户需求",
+          topics: ["用户需求验证"],
+          keywords: ["需求验证"],
+          routing_summary: "能力学习",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-07T00:00:00Z",
+        }}
+        plan={null}
+        progress={null}
+        materials={[]}
+        question={{
+          id: "question-1",
+          topic_id: "user-needs",
+          prompt: "分析用户当前的替代方案",
+          grounding,
+          sources,
+        }}
+        answer=""
+        result={reflect ? {
+          attempt_id: "attempt-1",
+          question_id: "question-1",
+          topic_id: "user-needs",
+          is_correct: true,
+          mastery: 0.6,
+          difficulty_level: 2,
+          evidence_id: "evidence-1",
+          score: 80,
+          feedback: "已经区分了表面诉求与行为证据。",
+          strengths: ["引用了行为证据"],
+          gaps: [],
+          misconceptions: [],
+          citations: [],
+          sources,
+          grounding,
+          grading_mode: "ai",
+          mastery_updated: true,
+          replayed: false,
+        } : null}
+        busy={false}
+        learningMode="case"
+        savedQuestions={[]}
+        onLearningModeChange={() => undefined}
+        onAnswerChange={() => undefined}
+        onStartTask={() => undefined}
+        onSubmit={() => undefined}
+        onNextTask={() => undefined}
+        onToggleSaved={() => undefined}
+        onOpenLibrary={() => undefined}
+        onAskCoach={async () => ({ session_id: "session-1", message: "", citations: [], sources: [] })}
+      />,
+    );
+
+    const materialHtml = renderGrounding("material", [source]);
+    const generalHtml = renderGrounding("general", []);
+    const feedbackHtml = renderGrounding("general", [], true);
+
+    expect(materialHtml).toContain('data-testid="practice-grounding"');
+    expect(materialHtml).toContain("材料依据");
+    expect(materialHtml).toContain('data-testid="practice-sources"');
+    expect(generalHtml).toContain("通用生成");
+    expect(generalHtml).not.toContain("真实材料线索");
+    expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
+    expect(feedbackHtml).toContain("通用生成");
   });
 
   it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {
