@@ -615,12 +615,14 @@ def test_account_deletion_is_fail_safe_when_object_cleanup_fails(
                 filename=f"material-{index}.txt",
                 payload=f"payload-{index}".encode(),
             )
-            entries.append({
-                "key": stored.key,
-                "workspace_id": "workspace-delete-test",
-                "material_id": f"material-delete-{index}",
-                "filename": f"material-{index}.txt",
-            })
+            entries.append(
+                {
+                    "key": stored.key,
+                    "workspace_id": "workspace-delete-test",
+                    "material_id": f"material-delete-{index}",
+                    "filename": f"material-{index}.txt",
+                }
+            )
         monkeypatch.setattr(
             app.state.identity,
             "account_storage_objects",
@@ -937,10 +939,13 @@ def test_account_deletion_fence_rejects_a_late_material_write(tmp_path: Path) ->
 
     with pytest.raises(FileNotFoundError):
         app.state.object_storage.get(stored.key)
-    assert app.state.knowledge.list_materials(
-        owner_id=user.id,
-        project_id="workspace-race",
-    ) == []
+    assert (
+        app.state.knowledge.list_materials(
+            owner_id=user.id,
+            project_id="workspace-race",
+        )
+        == []
+    )
 
 
 def test_account_deletion_removes_identity_and_owner_records(tmp_path: Path) -> None:

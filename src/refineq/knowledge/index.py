@@ -760,15 +760,13 @@ class KnowledgeIndex:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
         filters = [
-                materials.c.owner_id == owner_id,
-                materials.c.project_id == project_id,
+            materials.c.owner_id == owner_id,
+            materials.c.project_id == project_id,
         ]
         if status is not None:
             filters.append(materials.c.status == status)
         with self.database.session() as session:
-            rows = session.execute(
-                select(materials).where(*filters)
-            ).all()
+            rows = session.execute(select(materials).where(*filters)).all()
         records = [self._material_record(row) for row in rows]
         if tag is not None:
             normalized_tag = tag.casefold()

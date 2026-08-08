@@ -509,10 +509,9 @@ class LearningService:
             if not plan:
                 raise LearningNotSeededError("Learning plan has not been created")
             topic_ids = list(progress["topics"])
-            if (
-                len(payload.topic_order) != len(set(payload.topic_order))
-                or set(payload.topic_order) != set(topic_ids)
-            ):
+            if len(payload.topic_order) != len(set(payload.topic_order)) or set(
+                payload.topic_order
+            ) != set(topic_ids):
                 raise LearningConflictError("topic_order must contain every learning topic once")
 
             normalized_goal = payload.goal.strip()
@@ -667,12 +666,16 @@ class LearningService:
                     raise LearningConflictError("Review session topic does not match")
             if topic_id is not None and topic_id not in progress["topics"]:
                 raise LearningConflictError("Unknown practice topic")
-            selected_topic_id = review_topic_id or topic_id or min(
-                progress["topics"],
-                key=lambda candidate: (
-                    BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
-                    candidate,
-                ),
+            selected_topic_id = (
+                review_topic_id
+                or topic_id
+                or min(
+                    progress["topics"],
+                    key=lambda candidate: (
+                        BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
+                        candidate,
+                    ),
+                )
             )
             topic = progress["topics"][selected_topic_id]
             mastery = BKTState.model_validate(progress["bkt_states"][selected_topic_id]).p_mastery
@@ -1020,8 +1023,7 @@ class LearningService:
                 "misconceptions": grade.misconceptions,
                 "citations": grade.citations,
                 "sources": [
-                    source.model_dump(mode="json")
-                    for source in self._question_sources(question)
+                    source.model_dump(mode="json") for source in self._question_sources(question)
                 ],
                 "grounding": self._question_grounding(question).value,
                 "grading_mode": grade.mode,
@@ -1097,12 +1099,14 @@ class LearningService:
         }
         attempts: list[AttemptInsight] = []
         for attempt_id, attempt in record.data.get("attempts", {}).items():
-            question = history.get(attempt.get("question_id")) or attempt.get(
-                "question_snapshot"
-            ) or {}
-            attempt_time = datetime.fromisoformat(attempt["observed_at"]) if attempt.get(
-                "observed_at"
-            ) else evidence_times.get(attempt_id, observed_at)
+            question = (
+                history.get(attempt.get("question_id")) or attempt.get("question_snapshot") or {}
+            )
+            attempt_time = (
+                datetime.fromisoformat(attempt["observed_at"])
+                if attempt.get("observed_at")
+                else evidence_times.get(attempt_id, observed_at)
+            )
             topic_id = str(attempt["topic_id"])
             topic_name = str(progress["topics"][topic_id].get("name") or topic_id)
             attempts.append(
@@ -1122,8 +1126,7 @@ class LearningService:
                     misconceptions=list(attempt.get("misconceptions", [])),
                     citations=list(attempt.get("citations", [])),
                     sources=[
-                        SearchResult.model_validate(source)
-                        for source in attempt.get("sources", [])
+                        SearchResult.model_validate(source) for source in attempt.get("sources", [])
                     ],
                     grounding=attempt.get("grounding", Grounding.GENERAL),
                     grading_mode=str(attempt.get("grading_mode") or "fallback"),
@@ -1143,14 +1146,11 @@ class LearningService:
                 TopicInsight(
                     topic_id=topic_id,
                     topic_name=str(progress["topics"][topic_id].get("name") or topic_id),
-                    mastery=BKTState.model_validate(
-                        progress["bkt_states"][topic_id]
-                    ).p_mastery,
+                    mastery=BKTState.model_validate(progress["bkt_states"][topic_id]).p_mastery,
                     attempt_count=len(topic_attempts),
                     error_count=sum(not item.is_correct for item in topic_attempts),
                     last_practiced_at=(
-                        max(item.observed_at for item in topic_attempts)
-                        if topic_attempts else None
+                        max(item.observed_at for item in topic_attempts) if topic_attempts else None
                     ),
                 )
             )

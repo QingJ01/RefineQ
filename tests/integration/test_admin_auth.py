@@ -145,12 +145,8 @@ def test_admin_operations_are_paginated_guarded_and_audited(tmp_path) -> None:
         text="material indexing status",
         size=24,
     )
-    learner_headers = {
-        "Authorization": f"Bearer {app.state.identity.issue_token(learner)}"
-    }
-    admin_headers = {
-        "Authorization": f"Bearer {app.state.identity.issue_token(admin)}"
-    }
+    learner_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(learner)}"}
+    admin_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(admin)}"}
 
     with TestClient(app) as client:
         for path in ("/admin/users", "/admin/jobs", "/admin/audit", "/admin/backups"):

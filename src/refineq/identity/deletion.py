@@ -216,9 +216,7 @@ class AccountDeletionCoordinator:
                     durable_remove_tree(directory)
                     continue
                 pending = self._load(directory)
-                exists, current_deletion_id = self.identity.account_deletion_state(
-                    pending.user_id
-                )
+                exists, current_deletion_id = self.identity.account_deletion_state(pending.user_id)
                 if exists and current_deletion_id == pending.deletion_id:
                     self._restore(pending)
                     self.identity.cancel_account_deletion(

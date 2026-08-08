@@ -229,8 +229,7 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             headers=alice_headers,
         ).json()
         reviews = [
-            session for session in snapshot["plan"]["sessions"]
-            if session["activity"] == "review"
+            session for session in snapshot["plan"]["sessions"] if session["activity"] == "review"
         ]
         assert len(reviews) >= 2
         for index, review in enumerate(reversed(reviews[-2:])):
@@ -238,9 +237,7 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
                 f"/workspaces/{workspace_id}/learning/plan/sessions/{review['id']}",
                 headers=alice_headers,
                 json={
-                    "planned_at": (
-                        datetime.now(UTC) - timedelta(hours=index + 1)
-                    ).isoformat(),
+                    "planned_at": (datetime.now(UTC) - timedelta(hours=index + 1)).isoformat(),
                 },
             )
             assert response.status_code == 200
@@ -421,7 +418,8 @@ def test_attempt_question_snapshot_survives_history_pruning(
             headers=headers,
         )
         restored_attempt = next(
-            item for item in insights.json()["attempts"]
+            item
+            for item in insights.json()["attempts"]
             if item["question_id"] == first_question["id"]
         )
         retried = client.post(

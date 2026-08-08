@@ -129,18 +129,16 @@ class AdminOperations:
                     func.sum(case((materials.c.status == "indexed", 1), else_=0)).label(
                         "completed"
                     ),
-                    func.sum(case((materials.c.status == "failed", 1), else_=0)).label(
-                        "failed"
-                    ),
+                    func.sum(case((materials.c.status == "failed", 1), else_=0)).label("failed"),
                     func.max(materials.c.indexed_at).label("last_activity_at"),
                 )
             ).one()
             embedding_row = session.execute(
                 select(
                     func.count().label("total"),
-                    func.sum(
-                        case((material_chunks.c.embedding.is_not(None), 1), else_=0)
-                    ).label("completed"),
+                    func.sum(case((material_chunks.c.embedding.is_not(None), 1), else_=0)).label(
+                        "completed"
+                    ),
                 )
             ).one()
         material_total = int(material_row.total or 0)
@@ -231,9 +229,7 @@ class AdminOperations:
                 raise BackupError(
                     "Backup audit failed and archive cleanup could not be confirmed"
                 ) from cleanup_error
-            raise BackupError(
-                "Backup audit failed; the created archive was removed"
-            ) from error
+            raise BackupError("Backup audit failed; the created archive was removed") from error
         return backup
 
     def list_backups(self) -> list[ManagedBackup]:

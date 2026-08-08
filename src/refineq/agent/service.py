@@ -385,8 +385,7 @@ class AgentService:
                 stored_citations = stored_turn.get("citations", [])
                 citations = [citation for citation in stored_citations if isinstance(citation, str)]
                 stored_sources = [
-                    SearchResult.model_validate(source)
-                    for source in stored_turn.get("sources", [])
+                    SearchResult.model_validate(source) for source in stored_turn.get("sources", [])
                 ]
                 response_sources = [
                     source for source in stored_sources if source.citation_id in citations
@@ -473,9 +472,7 @@ class AgentService:
                         "role": "assistant",
                         "content": reply_text,
                         "citations": citations,
-                        "sources": [
-                            source.model_dump(mode="json") for source in response_sources
-                        ],
+                        "sources": [source.model_dump(mode="json") for source in response_sources],
                     },
                 ]
             )
@@ -488,9 +485,7 @@ class AgentService:
                 turns[payload.turn_id] = {
                     "message": reply_text,
                     "citations": citations,
-                    "sources": [
-                        source.model_dump(mode="json") for source in response_sources
-                    ],
+                    "sources": [source.model_dump(mode="json") for source in response_sources],
                     "action_proposal": (
                         action_proposal.model_dump(mode="json")
                         if action_proposal is not None

@@ -38,7 +38,8 @@ def test_initialize_migrates_v1_material_metadata_without_losing_rows(tmp_path) 
             )
         )
         connection.execute(text("INSERT INTO schema_versions VALUES (1, CURRENT_TIMESTAMP)"))
-        connection.execute(text("""
+        connection.execute(
+            text("""
             CREATE TABLE materials (
                 owner_id VARCHAR(128) NOT NULL,
                 project_id VARCHAR(128) NOT NULL,
@@ -53,13 +54,16 @@ def test_initialize_migrates_v1_material_metadata_without_losing_rows(tmp_path) 
                 indexed_at DATETIME NOT NULL,
                 UNIQUE (owner_id, project_id, material_id)
             )
-        """))
-        connection.execute(text("""
+        """)
+        )
+        connection.execute(
+            text("""
             INSERT INTO materials VALUES (
                 'owner', 'workspace', 'material-1', 'limits.txt', 'text/plain',
                 12, 'indexed', 1, 'abc', 'objects/limits', CURRENT_TIMESTAMP
             )
-        """))
+        """)
+        )
 
     database.initialize()
 

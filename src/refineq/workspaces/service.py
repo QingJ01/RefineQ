@@ -249,14 +249,13 @@ class WorkspaceService:
                 self._workspaces.get(owner_id, workspace_id)
                 progress = self._learning.get(owner_id, workspace_id).data["progress"]
                 original_plan_fields = {
-                    field: deepcopy(progress[field])
-                    for field in plan_fields
-                    if field in progress
+                    field: deepcopy(progress[field]) for field in plan_fields if field in progress
                 }
                 plan = self._learning_service.update_plan(owner_id, workspace_id, payload)
                 try:
                     self._workspaces.update(owner_id, workspace_id, goal=payload.goal)
                 except Exception:
+
                     def restore(data: dict) -> dict:
                         current_progress = data["progress"]
                         for field in plan_fields:

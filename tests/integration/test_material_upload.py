@@ -259,18 +259,28 @@ def test_workspace_material_metadata_filters_sort_and_bulk_delete_are_owner_scop
     with pytest.raises(FileNotFoundError):
         app.state.object_storage.get(zeta_key)
     with app.state.database.session() as session:
-        assert session.scalar(
-            select(func.count()).select_from(materials).where(
-                materials.c.project_id == workspace_id,
-                materials.c.material_id == zeta["id"],
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(materials)
+                .where(
+                    materials.c.project_id == workspace_id,
+                    materials.c.material_id == zeta["id"],
+                )
             )
-        ) == 0
-        assert session.scalar(
-            select(func.count()).select_from(material_chunks).where(
-                material_chunks.c.project_id == workspace_id,
-                material_chunks.c.material_id == zeta["id"],
+            == 0
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(material_chunks)
+                .where(
+                    material_chunks.c.project_id == workspace_id,
+                    material_chunks.c.material_id == zeta["id"],
+                )
             )
-        ) == 0
+            == 0
+        )
 
 
 def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
@@ -324,11 +334,14 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
         strict=True,
     ):
         assert app.state.object_storage.get(storage_keys[material["id"]]) == expected
-        assert app.state.knowledge.get_material(
-            owner_id=owner_id,
-            project_id=workspace_id,
-            material_id=material["id"],
-        ).id == material["id"]
+        assert (
+            app.state.knowledge.get_material(
+                owner_id=owner_id,
+                project_id=workspace_id,
+                material_id=material["id"],
+            ).id
+            == material["id"]
+        )
 
 
 def test_upload_refuses_to_race_an_active_material_object_deletion(tmp_path: Path) -> None:
@@ -402,11 +415,14 @@ def test_upload_revalidates_workspace_after_parsing_before_writing(
     assert uploaded.status_code == 404
     assert uploaded.json()["error"]["code"] == "workspace_not_found"
     with app.state.database.session() as session:
-        assert session.scalar(
-            select(func.count()).select_from(materials).where(
-                materials.c.project_id == workspace_id
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(materials)
+                .where(materials.c.project_id == workspace_id)
             )
-        ) == 0
+            == 0
+        )
 
 
 def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the_lease(
@@ -470,11 +486,14 @@ def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the
     assert deleted.status_code == 204
     assert missing_workspace.status_code == 404
     with app.state.database.session() as session:
-        assert session.scalar(
-            select(func.count()).select_from(materials).where(
-                materials.c.project_id == workspace_id
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(materials)
+                .where(materials.c.project_id == workspace_id)
             )
-        ) == 0
+            == 0
+        )
     assert stored_keys
     for storage_key in stored_keys:
         with pytest.raises(FileNotFoundError):
@@ -592,11 +611,14 @@ def test_workspace_delete_stays_committed_when_recovery_journal_cleanup_fails(
     assert deleted.status_code == 204
     assert missing_workspace.status_code == 404
     with app.state.database.session() as session:
-        assert session.scalar(
-            select(func.count()).select_from(materials).where(
-                materials.c.material_id == material["id"]
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(materials)
+                .where(materials.c.material_id == material["id"])
             )
-        ) == 0
+            == 0
+        )
     assert not any(path.name == material["id"] for path in app.state.settings.data_root.rglob("*"))
 
 
@@ -635,11 +657,14 @@ def test_pending_bulk_material_delete_is_recovered_after_process_interruption(
     recovered_app = create_app(settings)
     try:
         assert recovered_app.state.object_storage.get(storage_key) == b"Recover this material"
-        assert recovered_app.state.knowledge.get_material(
-            owner_id=owner_id,
-            project_id=workspace_id,
-            material_id=material["id"],
-        ).id == material["id"]
+        assert (
+            recovered_app.state.knowledge.get_material(
+                owner_id=owner_id,
+                project_id=workspace_id,
+                material_id=material["id"],
+            ).id
+            == material["id"]
+        )
         recovery_root = settings.data_root / "recovery" / "material-deletions"
         assert not any(path.is_dir() for path in recovery_root.iterdir())
     finally:

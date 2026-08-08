@@ -249,6 +249,5 @@ def test_bulk_material_delete_is_atomic_and_owner_scoped(tmp_path: Path) -> None
     assert [record.id for record, _ in deleted] == ["shared-id"]
     assert index.list_materials(owner_id="alice", project_id="project") == []
     assert [
-        material.filename
-        for material in index.list_materials(owner_id="bob", project_id="project")
+        material.filename for material in index.list_materials(owner_id="bob", project_id="project")
     ] == ["bob.txt"]

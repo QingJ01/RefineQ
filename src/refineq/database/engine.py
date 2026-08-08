@@ -63,9 +63,7 @@ class Database:
                     column["name"] for column in inspect(connection).get_columns("materials")
                 }
                 if "deletion_id" not in user_columns:
-                    connection.execute(
-                        text("ALTER TABLE users ADD COLUMN deletion_id VARCHAR(64)")
-                    )
+                    connection.execute(text("ALTER TABLE users ADD COLUMN deletion_id VARCHAR(64)"))
                 if self.is_postgresql:
                     if "title" not in material_columns:
                         connection.execute(
@@ -89,10 +87,7 @@ class Database:
                         )
                     if "tags" not in material_columns:
                         connection.execute(
-                            text(
-                                "ALTER TABLE materials ADD COLUMN tags JSON "
-                                "NOT NULL DEFAULT '[]'"
-                            )
+                            text("ALTER TABLE materials ADD COLUMN tags JSON NOT NULL DEFAULT '[]'")
                         )
                     connection.execute(text("UPDATE materials SET title = filename"))
                 connection.execute(

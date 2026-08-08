@@ -164,9 +164,7 @@ class IdentityService:
                 select(users).where(users.c.id == user_id).with_for_update()
             ).one_or_none()
         session.execute(
-            update(users)
-            .where(users.c.id == user_id)
-            .values(updated_at=users.c.updated_at)
+            update(users).where(users.c.id == user_id).values(updated_at=users.c.updated_at)
         )
         return session.execute(select(users).where(users.c.id == user_id)).one_or_none()
 
@@ -221,9 +219,13 @@ class IdentityService:
 
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
-        valid = row is not None and row.deletion_id is None and bcrypt.checkpw(
-            password_bytes,
-            row.password_hash.encode("ascii"),
+        valid = (
+            row is not None
+            and row.deletion_id is None
+            and bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            )
         )
         if not valid:
             raise InvalidCredentialsError("Invalid email or password")
@@ -247,9 +249,13 @@ class IdentityService:
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
             session_version = self._session_version(session, row.id) if row is not None else 0
-        if row is None or row.deletion_id is not None or not bcrypt.checkpw(
-            password_bytes,
-            row.password_hash.encode("ascii"),
+        if (
+            row is None
+            or row.deletion_id is not None
+            or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            )
         ):
             raise InvalidCredentialsError("Invalid email or password")
         user = self._public_user(row)
@@ -268,9 +274,13 @@ class IdentityService:
             raise InvalidCredentialsError("Invalid current password") from error
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
-        if row is None or row.deletion_id is not None or not bcrypt.checkpw(
-            password_bytes,
-            row.password_hash.encode("ascii"),
+        if (
+            row is None
+            or row.deletion_id is not None
+            or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            )
         ):
             raise InvalidCredentialsError("Invalid current password")
         return self._public_user(row)
@@ -408,16 +418,23 @@ class IdentityService:
             raise InvalidCredentialsError("Invalid current password") from error
         with self._lock, self.database.session() as session:
             row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
-            if row is None or row.deletion_id is not None or not bcrypt.checkpw(
-                password_bytes,
-                row.password_hash.encode("ascii"),
+            if (
+                row is None
+                or row.deletion_id is not None
+                or not bcrypt.checkpw(
+                    password_bytes,
+                    row.password_hash.encode("ascii"),
+                )
             ):
                 raise InvalidCredentialsError("Invalid current password")
-            if session.scalar(
-                select(integration_settings.c.kind).where(
-                    integration_settings.c.updated_by == user_id
-                ).limit(1)
-            ) is not None:
+            if (
+                session.scalar(
+                    select(integration_settings.c.kind)
+                    .where(integration_settings.c.updated_by == user_id)
+                    .limit(1)
+                )
+                is not None
+            ):
                 raise AccountDeletionError(
                     "Transfer platform integration ownership before deleting this account"
                 )
@@ -444,11 +461,14 @@ class IdentityService:
                 raise InvalidCredentialsError("Invalid current password")
             if row.deletion_id is not None:
                 raise AccountDeletionError("Account deletion is already in progress")
-            if session.scalar(
-                select(integration_settings.c.kind).where(
-                    integration_settings.c.updated_by == user_id
-                ).limit(1)
-            ) is not None:
+            if (
+                session.scalar(
+                    select(integration_settings.c.kind)
+                    .where(integration_settings.c.updated_by == user_id)
+                    .limit(1)
+                )
+                is not None
+            ):
                 raise AccountDeletionError(
                     "Transfer platform integration ownership before deleting this account"
                 )
@@ -495,17 +515,18 @@ class IdentityService:
                 raise AccountDeletionError("Account deletion transaction is no longer current")
             # Repeat the ownership check inside the deletion transaction to close
             # the gap between preflight and the final database mutation.
-            if session.scalar(
-                select(integration_settings.c.kind).where(
-                    integration_settings.c.updated_by == user_id
-                ).limit(1)
-            ) is not None:
+            if (
+                session.scalar(
+                    select(integration_settings.c.kind)
+                    .where(integration_settings.c.updated_by == user_id)
+                    .limit(1)
+                )
+                is not None
+            ):
                 raise AccountDeletionError(
                     "Transfer platform integration ownership before deleting this account"
                 )
-            session.execute(
-                delete(material_chunks).where(material_chunks.c.owner_id == user_id)
-            )
+            session.execute(delete(material_chunks).where(material_chunks.c.owner_id == user_id))
             session.execute(delete(materials).where(materials.c.owner_id == user_id))
             session.execute(delete(records).where(records.c.owner_id == user_id))
             session.execute(
@@ -755,10 +776,15 @@ class IdentityService:
             current_session_version = (
                 self._session_version(session, str(subject)) if row is not None else 0
             )
-        if row is None or row.deletion_id is not None or not secrets.compare_digest(
-            credential,
-            sha256(row.password_hash.encode("utf-8")).hexdigest(),
-        ) or session_version != current_session_version:
+        if (
+            row is None
+            or row.deletion_id is not None
+            or not secrets.compare_digest(
+                credential,
+                sha256(row.password_hash.encode("utf-8")).hexdigest(),
+            )
+            or session_version != current_session_version
+        ):
             raise InvalidTokenError("Invalid access token")
         return self._public_user(row)
 

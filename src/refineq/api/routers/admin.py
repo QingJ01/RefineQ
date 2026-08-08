@@ -213,8 +213,7 @@ def list_admin_backups(request: Request, admin: AdminUser) -> ManagedBackupsResp
         ) from error
     return ManagedBackupsResponse(
         items=[
-            ManagedBackupResponse.model_validate(item, from_attributes=True)
-            for item in backups
+            ManagedBackupResponse.model_validate(item, from_attributes=True) for item in backups
         ],
         total=len(backups),
     )
@@ -260,9 +259,7 @@ def validate_admin_restore(
             },
         ) from error
     public = ManagedBackupResponse.model_validate(backup, from_attributes=True)
-    return RestoreValidationResponse.model_validate(
-        {"status": "validated", **public.model_dump()}
-    )
+    return RestoreValidationResponse.model_validate({"status": "validated", **public.model_dump()})
 
 
 @router.get("/integrations", response_model=list[PublicIntegrationSettings])

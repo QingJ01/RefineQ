@@ -553,9 +553,7 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         assert [item["id"] for item in regenerated.json()["sessions"]] != [
             item["id"] for item in original_sessions
         ]
-        assert sum(
-            item["status"] == "completed" for item in regenerated.json()["sessions"]
-        ) == 1
+        assert sum(item["status"] == "completed" for item in regenerated.json()["sessions"]) == 1
 
         restored = client.get(
             f"/workspaces/{workspace_id}/snapshot",
