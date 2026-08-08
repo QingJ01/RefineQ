@@ -19,6 +19,34 @@ def test_settings_resolve_refineq_data_root(monkeypatch, tmp_path: Path) -> None
     assert settings.data_root == configured_root.resolve()
 
 
+def test_backup_root_is_configurable_and_defaults_outside_data_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    data_root = tmp_path / "runtime"
+    configured_backup_root = tmp_path / "durable-backups"
+    monkeypatch.setenv("REFINEQ_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("REFINEQ_BACKUP_ROOT", str(configured_backup_root))
+
+    configured = Settings(_env_file=None)
+    monkeypatch.delenv("REFINEQ_BACKUP_ROOT")
+    defaulted = Settings(_env_file=None)
+
+    assert configured.resolved_backup_root == configured_backup_root.resolve()
+    assert defaulted.resolved_backup_root == (tmp_path / "runtime-backups").resolve()
+    assert not defaulted.resolved_backup_root.is_relative_to(defaulted.data_root)
+
+
+def test_backup_root_cannot_be_nested_inside_runtime_data(tmp_path: Path) -> None:
+    data_root = tmp_path / "runtime"
+
+    with pytest.raises(ValidationError, match="outside the data root"):
+        Settings(
+            data_root=data_root,
+            backup_root=data_root / "backups",
+            _env_file=None,
+        )
+
+
 def test_server_defaults_are_loopback_safe(monkeypatch) -> None:
     monkeypatch.delenv("REFINEQ_HOST", raising=False)
     monkeypatch.delenv("REFINEQ_PORT", raising=False)

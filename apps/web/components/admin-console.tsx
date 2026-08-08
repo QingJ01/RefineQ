@@ -11,11 +11,9 @@ import {
   FileScan,
   Gauge,
   HardDrive,
-  Languages,
   LayoutDashboard,
   ListChecks,
   LoaderCircle,
-  LogOut,
   PlugZap,
   Save,
   ShieldCheck,
@@ -25,7 +23,7 @@ import {
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { BrandMark, BrandName } from "@/components/brand";
+import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
@@ -35,6 +33,7 @@ import type {
   AdminOverview,
   AdminUsersPage,
   IntegrationKind,
+  LearningWorkspace,
   Locale,
   ManagedBackup,
   ManagedBackupsResponse,
@@ -1003,6 +1002,7 @@ export function AdminConsole({
   locale,
   activeKind,
   activeSection,
+  workspaces = [],
   onLogout,
   onToggleLocale,
 }: {
@@ -1010,6 +1010,7 @@ export function AdminConsole({
   locale: Locale;
   activeKind?: IntegrationKind;
   activeSection?: "overview" | "operations";
+  workspaces?: LearningWorkspace[];
   onLogout: () => void;
   onToggleLocale: () => void;
 }) {
@@ -1061,12 +1062,14 @@ export function AdminConsole({
   return (
     <main id="main-content" className="admin-console">
       <div className="admin-shell">
-        <aside className="admin-sidebar">
-          <Link className="admin-brand" href="/" aria-label="RefineQ">
-            <BrandMark size={34} />
-            <BrandName />
-          </Link>
-          <nav className="admin-nav" aria-label={c.title}>
+        <AppSidebar
+          locale={locale}
+          active="admin"
+          workspaces={workspaces}
+          isAdmin
+          contextLabel={c.title}
+          contextNavigation={(
+          <div className="admin-nav">
             <Link className={!activeKind && activeSection !== "operations" ? "active" : ""} href="/admin">
               <LayoutDashboard size={18} />
               <span>{c.overview}</span>
@@ -1093,16 +1096,11 @@ export function AdminConsole({
               </Link>
               );
             })}
-          </nav>
-          <div className="admin-sidebar-actions">
-            <button className="quiet-button" onClick={onToggleLocale}>
-              <Languages size={16} /> {c.language}
-            </button>
-            <button data-testid="admin-logout" className="quiet-button" onClick={onLogout}>
-              <LogOut size={16} /> {c.logout}
-            </button>
           </div>
-        </aside>
+          )}
+          onToggleLocale={onToggleLocale}
+          onLogout={onLogout}
+        />
 
         <section className="admin-main">
           <header className="admin-page-header">

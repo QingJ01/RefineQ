@@ -35,7 +35,7 @@ _NUMBER = (
     r"\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|"
     r"[零一二两三四五六七八九十]{1,3}"
 )
-_MONTH_NAMES = {
+_MONTHS = {
     "jan": 1,
     "feb": 2,
     "mar": 3,
@@ -49,6 +49,11 @@ _MONTH_NAMES = {
     "nov": 11,
     "dec": 12,
 }
+_ENGLISH_MONTH = (
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,50 +98,81 @@ def _relative_exam(intent: str, now: datetime) -> datetime | None:
         unit = chinese.group("unit")
         days = count * (7 if unit in {"周", "星期"} else 30 if unit == "个月" else 1)
         return now + timedelta(days=days)
-
-    shorthand = re.search(r"(?P<unit>下{1,2}周|下{1,2}个?月|next\s+(?:week|month))", intent, re.I)
-    if shorthand:
-        unit = shorthand.group("unit").casefold()
-        repeats = 2 if unit.startswith("下下") else 1
-        span = 30 if ("月" in unit or "month" in unit) else 7
-        return now + timedelta(days=span * repeats)
     return None
 
 
-def _at_year(now: datetime, month: int, day: int, year: int) -> datetime | None:
-    try:
-        return datetime(year, month, day, tzinfo=now.tzinfo)
-    except ValueError:
-        return None
+def _exam_date(
+    *,
+    month: int,
+    day: int,
+    now: datetime,
+    year: int | None = None,
+) -> datetime | None:
+    years = [year] if year is not None else list(range(now.year, now.year + 8))
+    for candidate_year in years:
+        if candidate_year is None:
+            continue
+        try:
+            candidate = datetime(
+                candidate_year,
+                month,
+                day,
+                23,
+                59,
+                59,
+                tzinfo=now.tzinfo,
+            )
+        except ValueError:
+            continue
+        if candidate > now:
+            return candidate
+        if year is not None:
+            return None
+    return None
 
 
 def _absolute_exam(intent: str, now: datetime) -> datetime | None:
-    """Resolve a calendar date to the next occurrence at or after today."""
-
-    candidates: list[tuple[int, int]] = []
-    for matched in re.finditer(r"(?P<month>\d{1,2})\s*月\s*(?P<day>\d{1,2})\s*[日号]", intent):
-        candidates.append((int(matched.group("month")), int(matched.group("day"))))
-    for matched in re.finditer(r"\b(?P<month>\d{1,2})\s*[/-]\s*(?P<day>\d{1,2})\b", intent):
-        candidates.append((int(matched.group("month")), int(matched.group("day"))))
-    for matched in re.finditer(
-        r"\b(?P<name>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?P<day>\d{1,2})\b",
+    chinese = re.search(
+        rf"(?:(?P<year>\d{{4}})\s*年\s*)?"
+        rf"(?P<month>{_NUMBER})\s*月\s*(?P<day>{_NUMBER})\s*(?:日|号)",
         intent,
         flags=re.IGNORECASE,
-    ):
-        month = _MONTH_NAMES[matched.group("name").casefold()]
-        candidates.append((month, int(matched.group("day"))))
+    )
+    if chinese:
+        return _exam_date(
+            month=_number(chinese.group("month")),
+            day=_number(chinese.group("day")),
+            now=now,
+            year=int(chinese.group("year")) if chinese.group("year") else None,
+        )
 
-    for month, day in candidates:
-        if not 1 <= month <= 12:
-            continue
-        resolved = _at_year(now, month, day, now.year)
-        if resolved is None:
-            continue
-        if resolved.date() < now.date():
-            resolved = _at_year(now, month, day, now.year + 1)
-            if resolved is None:
-                continue
-        return resolved
+    slash = re.search(
+        r"(?<![\d/])(?P<month>\d{1,2})\s*/\s*(?P<day>\d{1,2})"
+        r"(?:\s*/\s*(?P<year>\d{4}))?(?![\d/])",
+        intent,
+    )
+    if slash:
+        return _exam_date(
+            month=int(slash.group("month")),
+            day=int(slash.group("day")),
+            now=now,
+            year=int(slash.group("year")) if slash.group("year") else None,
+        )
+
+    english = re.search(
+        rf"\b(?P<month>{_ENGLISH_MONTH})\s+"
+        r"(?P<day>\d{1,2})(?:st|nd|rd|th)?"
+        r"(?:\s*,?\s*(?P<year>\d{4}))?\b",
+        intent,
+        flags=re.IGNORECASE,
+    )
+    if english:
+        return _exam_date(
+            month=_MONTHS[english.group("month")[:3].casefold()],
+            day=int(english.group("day")),
+            now=now,
+            year=int(english.group("year")) if english.group("year") else None,
+        )
     return None
 
 
@@ -155,11 +191,7 @@ def _daily_minutes(intent: str) -> int | None:
 
 
 def infer_intent_constraints(intent: str, *, now: datetime) -> IntentConstraints:
-    """Extract unambiguous deadlines and per-day minute budgets.
-
-    Relative deadlines win over calendar dates because "30 天后" is explicit about
-    intent, while a bare "10 月 25 日" could also be a topic reference.
-    """
+    """Extract unambiguous exam deadlines and per-day minute budgets."""
 
     return IntentConstraints(
         exam_at=_relative_exam(intent, now) or _absolute_exam(intent, now),

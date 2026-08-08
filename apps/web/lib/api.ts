@@ -11,7 +11,9 @@ import type {
   AnswerResult,
   AttemptFeedbackInput,
   AttemptFeedbackResponse,
+  AuthCapabilities,
   AuthResponse,
+  CalendarResponse,
   LearningWorkspace,
   LearningInsights,
   IntegrationKind,
@@ -25,6 +27,7 @@ import type {
   PlanUpdateInput,
   PracticeRequest,
   PracticeQuestion,
+  Progress,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
@@ -32,6 +35,7 @@ import type {
   RestoreValidationResponse,
   StudyPlan,
   StudySession,
+  TopicSuggestion,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -145,6 +149,10 @@ export class ApiClient {
     });
   }
 
+  getAuthCapabilities(): Promise<AuthCapabilities> {
+    return this.request("/auth/capabilities");
+  }
+
   requestPasswordReset(email: string): Promise<PasswordResetAccepted> {
     return this.request("/auth/password-reset/request", {
       method: "POST",
@@ -216,6 +224,17 @@ export class ApiClient {
     return this.request(`/workspaces${query}`, {}, token);
   }
 
+  getCalendar(
+    token: string,
+    startsAt: string,
+    endsAt: string,
+    includeArchived = false,
+  ): Promise<CalendarResponse> {
+    const query = new URLSearchParams({ starts_at: startsAt, ends_at: endsAt });
+    if (includeArchived) query.set("include_archived", "true");
+    return this.request(`/calendar?${query.toString()}`, {}, token);
+  }
+
   updateWorkspace(
     token: string,
     workspaceId: string,
@@ -243,6 +262,40 @@ export class ApiClient {
 
   getWorkspaceSnapshot(token: string, workspaceId: string): Promise<WorkspaceSnapshot> {
     return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
+  }
+
+  listWorkspaceTopicSuggestions(
+    token: string,
+    workspaceId: string,
+  ): Promise<TopicSuggestion[]> {
+    return this.request(`/workspaces/${workspaceId}/topic-suggestions`, {}, token);
+  }
+
+  acceptWorkspaceTopicSuggestion(
+    token: string,
+    workspaceId: string,
+    suggestionId: string,
+  ): Promise<WorkspaceSnapshot> {
+    return this.request(
+      `/workspaces/${workspaceId}/topic-suggestions/${suggestionId}/accept`,
+      { method: "POST" },
+      token,
+    );
+  }
+
+  submitWorkspaceDiagnostic(
+    token: string,
+    workspaceId: string,
+    results: Array<{ topic_id: string; is_correct: boolean }>,
+  ): Promise<Progress> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/diagnostic`,
+      {
+        method: "POST",
+        body: JSON.stringify({ diagnostic_id: "initial", results }),
+      },
+      token,
+    );
   }
 
   getWorkspaceQuestion(
@@ -275,6 +328,7 @@ export class ApiClient {
           mode: options.learningMode ?? "concept",
           replace: options.replace ?? false,
           review_session_id: options.reviewSessionId,
+          plan_session_id: options.planSessionId,
         }),
       },
       token,

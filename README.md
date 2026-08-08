@@ -1,13 +1,13 @@
 # RefineQ（砺问）
 
-RefineQ 是面向高中生、大学生和高级学习者的个人学习 Agent。用户只需说明想学什么，系统会识别学习方向，自动建立或切换学习空间，并持续关联资料、计划、练习和进度。
+RefineQ（砺问）服务于这样一种具体处境：你手里有自己的讲义和笔记，也知道考试或截止日期，却说不清每个主题究竟掌握了多少。它把目标、资料、计划、主动练习和结构化判分放进同一个个人学习空间。
 
-它不会把“聊过了”当成“学会了”。掌握度由诊断、作答、复习和资料引用共同支撑。
+RefineQ 不会把“聊过了”当成“学会了”。掌握度只由一次性的初始自评和之后各道独立作答证据更新，资料引用负责说明证据来自哪里。
 
 ## 主要能力
 
 - 从自然语言中识别学习意图，自动建立、复用或切换个人学习空间。
-- 上传 PDF、DOCX、TXT 和 Markdown；文本类资料本地解析，扫描 PDF 可启用 OCR。
+- 上传 PDF、DOCX、TXT 和 Markdown；文本类资料本地解析，扫描 PDF 可启用 OCR。资料标题和显式标签可以形成主题建议，但只有用户确认后才会加入学习空间。
 - 使用 PostgreSQL 保存账号、学习状态与配置，使用 pgvector 做语义检索，并与关键词检索混合排序。
 - 根据个人资料生成题目，使用结构化评分标准智能判分，记录薄弱点和错因。
 - 根据截止日期、掌握度和遗忘情况生成今日学习计划。
@@ -54,6 +54,29 @@ npm run dev
 ```
 
 打开 `http://127.0.0.1:3000`。
+
+## 可选 SMTP 密码找回
+
+密码找回入口只有在后端完整配置 SMTP 后才会显示。至少设置
+`REFINEQ_PUBLIC_SITE_URL`、`REFINEQ_SMTP_HOST` 和 `REFINEQ_SMTP_FROM_EMAIL`；需要认证时同时设置
+`REFINEQ_SMTP_USERNAME` 与 `REFINEQ_SMTP_PASSWORD`。默认使用 587 端口和 STARTTLS；隐式 TLS
+请把 `REFINEQ_SMTP_STARTTLS=false`、`REFINEQ_SMTP_USE_SSL=true`。未配置时不会创建无法投递的重置令牌。
+
+`REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN=true` 只用于隔离的本地浏览器测试，不得用于公开环境。
+
+## 准备演示数据
+
+演示种子使用当前 `REFINEQ_DATABASE_URL` 和数据目录，不会重置已有进度。密码只能从运行时环境传入，
+命令不会把密码打印到输出：
+
+```powershell
+$env:REFINEQ_DEMO_EMAIL = "learner@refineq.local"
+$env:REFINEQ_DEMO_PASSWORD = "使用至少 12 字节的临时强密码"
+refineq-demo
+Remove-Item Env:REFINEQ_DEMO_PASSWORD
+```
+
+预置数据仅用于产品演示，不代表真实用户、访谈或参赛证据。
 
 ## 创建管理员
 

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.identity.models import (
     AccountDeleteRequest,
     AccountExportResponse,
+    AuthCapabilities,
     AuthResponse,
     LoginRequest,
     PasswordChangeRequest,
@@ -28,12 +30,30 @@ from refineq.identity.service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["identity"])
+logger = logging.getLogger(__name__)
 
 
 def _auth_response(request: Request, user: User) -> AuthResponse:
     return AuthResponse(
         access_token=request.app.state.identity.issue_token(user),
         user=user,
+    )
+
+
+def _deliver_password_reset(delivery, email: str, token: str) -> None:
+    try:
+        delivery.send(email, token)
+    except Exception as error:  # pragma: no cover - provider-specific failures
+        logger.warning("Password reset delivery failed: %s", type(error).__name__)
+
+
+@router.get("/capabilities", response_model=AuthCapabilities)
+def auth_capabilities(request: Request) -> AuthCapabilities:
+    return AuthCapabilities(
+        password_reset_available=(
+            request.app.state.settings.password_reset_expose_token
+            or request.app.state.password_reset_delivery.enabled
+        )
     )
 
 
@@ -196,14 +216,24 @@ def delete_account(
 def request_password_reset(
     payload: PasswordResetRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
 ) -> PasswordResetAccepted:
+    delivery = request.app.state.password_reset_delivery
+    expose_token = request.app.state.settings.password_reset_expose_token
+    if not expose_token and not delivery.enabled:
+        return PasswordResetAccepted()
     token = request.app.state.identity.request_password_reset(
         payload.email,
         ttl=timedelta(minutes=request.app.state.settings.password_reset_ttl_minutes),
     )
-    return PasswordResetAccepted(
-        reset_token=(token if request.app.state.settings.password_reset_expose_token else None)
-    )
+    if token is not None and delivery.enabled:
+        background_tasks.add_task(
+            _deliver_password_reset,
+            delivery,
+            payload.email.strip().lower(),
+            token,
+        )
+    return PasswordResetAccepted(reset_token=(token if expose_token else None))
 
 
 @router.post(

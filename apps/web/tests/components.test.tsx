@@ -6,7 +6,10 @@ import { AuthPanel } from "../components/auth-panel";
 import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
+import { AppSidebar } from "../components/app-sidebar";
+import { GlobalCalendar } from "../components/global-calendar";
 import { LearningHome } from "../components/learning-home";
+import { InitialDiagnostic } from "../components/initial-diagnostic";
 import { LearningReport } from "../components/learning-report";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
@@ -26,11 +29,183 @@ import type { SearchSource } from "../lib/types";
 
 const t = translator("en");
 
+const sidebarWorkspaces = [{
+  id: "math-space",
+  title: "Mathematics",
+  subject: "Mathematics",
+  goal: "Pass the final",
+  topics: ["Limits"],
+  keywords: ["calculus"],
+  routing_summary: "Calculus study",
+  archived: false,
+  created_at: "2026-08-01T00:00:00Z",
+  last_active_at: "2026-08-08T00:00:00Z",
+}];
+
+
+describe("shared authenticated sidebar", () => {
+  it("keeps global destinations, recent spaces, contextual navigation, and utilities together", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="en"
+        active="calendar"
+        workspaces={sidebarWorkspaces}
+        isAdmin
+        contextLabel="ACCOUNT"
+        contextNavigation={<a href="#profile">Profile</a>}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="app-sidebar"');
+    expect(html).toContain('data-testid="app-nav-home"');
+    expect(html).toContain('data-testid="app-nav-calendar"');
+    expect(html).toContain('href="/calendar"');
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain('href="/#recent-learning"');
+    expect(html).toContain('href="/learn/math-space/today"');
+    expect(html).toContain('data-testid="app-nav-admin"');
+    expect(html).toContain('data-testid="app-nav-account"');
+    expect(html).toContain("Profile");
+    expect(html).toContain('data-testid="app-language"');
+    expect(html).toContain('data-testid="app-logout"');
+  });
+
+  it("does not expose administrator navigation to learners", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="home"
+        workspaces={[]}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain('data-testid="app-nav-admin"');
+    expect(html).toContain("学习首页");
+    expect(html).toContain("总日历");
+  });
+});
+
+
+describe("cross-workspace calendar", () => {
+  const calendarWorkspaces = [
+    sidebarWorkspaces[0],
+    {
+      ...sidebarWorkspaces[0],
+      id: "english-space",
+      title: "English speaking",
+      subject: "English",
+    },
+  ];
+  const calendarTasks = [
+    {
+      id: "session-math-1",
+      workspace_id: "math-space",
+      workspace_title: "Mathematics",
+      workspace_archived: false,
+      topic_id: "limits",
+      topic_label: "Limits",
+      planned_at: "2026-08-08T01:00:00.000Z",
+      minutes: 30,
+      activity: "practice" as const,
+      status: "planned" as const,
+    },
+    {
+      id: "session-english-1",
+      workspace_id: "english-space",
+      workspace_title: "English speaking",
+      workspace_archived: false,
+      topic_id: "speaking",
+      topic_label: "Speaking",
+      planned_at: "2026-08-08T09:00:00.000Z",
+      minutes: 45,
+      activity: "learn" as const,
+      status: "completed" as const,
+    },
+  ];
+
+  it("summarizes visible tasks and deep-links each task to its owning space", () => {
+    const html = renderToStaticMarkup(
+      <GlobalCalendar
+        locale="en"
+        month={new Date(2026, 7, 1)}
+        selectedDate="2026-08-08"
+        tasks={calendarTasks}
+        workspaces={calendarWorkspaces}
+        includeArchived={false}
+        loading={false}
+        error=""
+        onMonthChange={() => undefined}
+        onSelectedDateChange={() => undefined}
+        onIncludeArchivedChange={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="global-calendar"');
+    expect(html).toContain('data-testid="calendar-workspace-filter-math-space"');
+    expect(html).toContain("2 tasks");
+    expect(html).toContain("75 min");
+    expect(html).toContain("2 spaces");
+    expect(html).toContain('href="/learn/math-space/calendar?session=session-math-1"');
+    expect(html).toContain('href="/learn/english-space/calendar?session=session-english-1"');
+    expect(html).toContain("Open in learning space");
+    expect(html).not.toContain(">Save<");
+    expect(html).not.toContain(">Delete<");
+  });
+
+  it("distinguishes an empty month from an account with no learning spaces", () => {
+    const renderEmpty = (workspaces: typeof calendarWorkspaces) => renderToStaticMarkup(
+      <GlobalCalendar
+        locale="en"
+        month={new Date(2026, 7, 1)}
+        selectedDate="2026-08-08"
+        tasks={[]}
+        workspaces={workspaces}
+        includeArchived={false}
+        loading={false}
+        error=""
+        onMonthChange={() => undefined}
+        onSelectedDateChange={() => undefined}
+        onIncludeArchivedChange={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(renderEmpty(calendarWorkspaces)).toContain("No tasks this month");
+    expect(renderEmpty([])).toContain("No learning spaces yet");
+  });
+});
+
 describe("focused learning components", () => {
+  it("renders an accessible initial self-assessment for every topic", () => {
+    const html = renderToStaticMarkup(
+      <InitialDiagnostic
+        locale="en"
+        topics={{ limits: "Function limits", derivatives: "Derivatives" }}
+        busy={false}
+        onSubmit={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="initial-diagnostic"');
+    expect(html).toContain("Function limits");
+    expect(html).toContain("Derivatives");
+    expect(html).toContain('name="diagnostic-limits"');
+    expect(html).toContain('name="diagnostic-derivatives"');
+    expect(html).toContain('type="radio"');
+    expect(html).toContain('data-testid="submit-initial-diagnostic"');
+    expect(html).toContain("disabled");
+  });
+
   it("renders a complete account and security center with an explicit danger zone", () => {
     const html = renderToStaticMarkup(
       <AccountCenter
         locale="en"
+        workspaces={sidebarWorkspaces}
         user={{
           id: "user-1",
           email: "learner@example.com",
@@ -44,15 +219,23 @@ describe("focused learning components", () => {
         onExport={async () => undefined}
         onLogoutAll={async () => undefined}
         onDeleteAccount={async () => undefined}
+        onLogout={() => undefined}
       />,
     );
 
     expect(html).toContain('data-testid="account-center"');
+    expect(html).toContain('data-testid="app-sidebar"');
+    expect(html).toContain('data-testid="app-nav-account"');
+    expect(html).toMatch(/data-testid="app-nav-account"[^>]*aria-current="page"/);
     expect(html).toContain('data-testid="account-profile-form"');
     expect(html).toContain('data-testid="account-password-form"');
     expect(html).toContain('data-testid="account-export"');
     expect(html).toContain('data-testid="account-logout-all"');
     expect(html).toContain('data-testid="account-delete-confirmation"');
+    expect(html).toContain('id="profile"');
+    expect(html).toContain('id="security"');
+    expect(html).toContain('id="data-sessions"');
+    expect(html).toContain('id="danger-zone"');
     expect(html).toContain("Type learner@example.com to confirm");
     expect(html).toContain("Delete account permanently");
   });
@@ -107,6 +290,42 @@ describe("focused learning components", () => {
 
     expect(html).toContain('data-activity="review"');
     expect(html).toContain("Review");
+  });
+
+  it("opens a deep-linked session on its date and marks it as focused", () => {
+    const html = renderToStaticMarkup(
+      <ScheduleCalendar
+        locale="en"
+        focusedSessionId="session-focus"
+        topicLabels={{ limits: "Limits", derivatives: "Derivatives" }}
+        onUpdateSession={() => undefined}
+        plan={{
+          id: "plan-focus",
+          goal: "Pass calculus",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [
+            {
+              id: "session-first",
+              topic_id: "limits",
+              planned_at: "2026-08-01T08:00:00Z",
+              minutes: 20,
+            },
+            {
+              id: "session-focus",
+              topic_id: "derivatives",
+              planned_at: "2026-08-10T08:00:00Z",
+              minutes: 45,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain("2026-08-10");
+    expect(html).toContain('data-session-id="session-focus"');
+    expect(html).toContain('data-focused="true"');
+    expect(html).toContain("Derivatives");
   });
 
   it("renders guided empty cards for plans, schedules, and progress", () => {
@@ -358,6 +577,7 @@ describe("focused learning components", () => {
           explanation: "这道题用于检验你能否从行为证据识别真实需求。",
           grounding,
           sources,
+          mode: "ai",
         } : null}
         answer=""
         result={reflect ? {
@@ -372,7 +592,7 @@ describe("focused learning components", () => {
           feedback: "已经区分了表面诉求与行为证据。",
           strengths: ["引用了行为证据"],
           gaps: [],
-          misconceptions: [],
+          misconceptions: ["misread observed behavior as stated preference"],
           citations: [],
           sources,
           grounding,
@@ -401,6 +621,7 @@ describe("focused learning components", () => {
     const recoveryHtml = renderGrounding("material", [source], true, false);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
+    expect(materialHtml).toContain('data-testid="question-generation-mode"');
     expect(materialHtml).toContain('data-testid="question-explanation"');
     expect(materialHtml).toContain("这道题用于检验你能否从行为证据识别真实需求。");
     expect(materialHtml).toContain("材料依据");
@@ -410,6 +631,9 @@ describe("focused learning components", () => {
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
+    expect(feedbackHtml).toContain('data-testid="grading-mode"');
+    expect(feedbackHtml).toContain('data-testid="feedback-misconceptions"');
+    expect(feedbackHtml).toContain("misread observed behavior as stated preference");
     expect(feedbackHtml).toContain("材料依据");
     expect(feedbackHtml).toContain('data-testid="feedback-sources"');
     expect(feedbackHtml).toContain("用户访谈原文.md");
@@ -506,21 +730,24 @@ describe("focused learning components", () => {
   it("renders a concise administrator overview without full configuration forms", () => {
     const html = renderToStaticMarkup(
       <AdminConsole
-        token="admin-token"
-        locale="zh"
+          token="admin-token"
+          locale="zh"
+          workspaces={sidebarWorkspaces}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}
       />,
     );
 
-    expect(html).toContain('class="admin-console"');
+      expect(html).toContain('class="admin-console"');
+      expect(html).toContain('data-testid="app-sidebar"');
+      expect(html).toMatch(/data-testid="app-nav-admin"[^>]*aria-current="page"/);
     expect(html).toContain('data-testid="admin-overview"');
     expect(html).toContain('data-testid="admin-system-status"');
     expect(html).toContain('data-testid="admin-next-action"');
     expect(html).toContain('data-testid="admin-principles"');
     expect(html).not.toContain('data-testid="admin-integration-link-');
     expect(html).not.toContain('data-testid="integration-card-');
-    expect(html).toContain('data-testid="admin-logout"');
+    expect(html).toContain('data-testid="app-logout"');
   });
 
   it("renders only the selected integration on a detail route", () => {
@@ -605,12 +832,13 @@ describe("focused learning components", () => {
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('autoComplete="current-password"');
     expect(html).toContain('data-testid="toggle-password"');
-    expect(html).toContain('data-testid="forgot-password"');
+    expect(html).not.toContain('data-testid="forgot-password"');
   });
 
   it("starts with one personal Agent prompt instead of a project form", () => {
     const html = renderToStaticMarkup(
       <LearningHome
+          locale="zh"
         t={translator("zh")}
         busy={false}
         workspaces={[]}
@@ -624,11 +852,12 @@ describe("focused learning components", () => {
     expect(html).toContain("今天想学什么");
     expect(html).not.toContain("项目名称");
     expect(html).toContain('class="home-shell"');
-    expect(html).toContain('class="home-sidebar"');
+      expect(html).toContain('class="home-sidebar"');
+      expect(html).toContain('data-testid="app-sidebar"');
     expect(html).toContain('class="learning-composer"');
     expect(html).toContain("RefineQ");
-    expect(html).toContain('data-testid="home-logout"');
-    expect(html).toContain('data-testid="home-language"');
+    expect(html).toContain('data-testid="app-logout"');
+    expect(html).toContain('data-testid="app-language"');
   });
 
   it("makes recent learning and workspace correction actions operable", () => {
@@ -846,6 +1075,47 @@ describe("focused learning components", () => {
     expect(html).toContain("34%");
     expect(html).toContain('data-testid="progress-recommendation"');
     expect(html).toContain('data-testid="practice-recommended-topic"');
+  });
+
+  it("breaks equal-mastery recommendation ties by topic id", () => {
+    const html = renderToStaticMarkup(
+      <ProgressInsights
+        t={t}
+        progress={{
+          goal: "Pass calculus",
+          mastery: { topic_z: 0.2, topic_a: 0.2 },
+          topics: { topic_z: "Zeta", topic_a: "Alpha" },
+          topic_order: ["topic_z", "topic_a"],
+          diagnostic_count: 0,
+          attempt_count: 0,
+          plan_id: "plan-1",
+        }}
+        onPracticeTopic={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/progress-recommendation[\s\S]*<strong>Alpha<\/strong>/);
+  });
+
+  it("labels mastery only after the backend marks the evidence stable", () => {
+    const baseProgress = {
+      goal: "Pass calculus",
+      mastery: { limits: 0.99 },
+      topics: { limits: "Limits" },
+      topic_order: ["limits"],
+      diagnostic_count: 0,
+      attempt_count: 1,
+      plan_id: "plan-1",
+    };
+    const unstable = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={{ ...baseProgress, stable: { limits: false } }} />,
+    );
+    const stable = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={{ ...baseProgress, stable: { limits: true } }} />,
+    );
+
+    expect(unstable).not.toContain("Mastered");
+    expect(stable).toContain("Mastered");
   });
 
   it("renders due reviews and a topic drill-down with stable empty states", () => {
@@ -1066,6 +1336,12 @@ describe("focused learning components", () => {
         onDelete={() => undefined}
         onUpdate={async () => undefined}
         onBulkDelete={async () => undefined}
+        topicSuggestions={[{
+          id: "topic_epsilon_delta",
+          name: "epsilon-delta",
+          source_material_ids: ["material-1"],
+        }]}
+        onAcceptTopicSuggestion={async () => undefined}
       />,
     );
 
@@ -1083,6 +1359,9 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="material-download-material-1"');
     expect(html).toContain('data-testid="material-delete-material-1"');
     expect(html).toContain('data-testid="material-metadata-material-1"');
+    expect(html).toContain('data-testid="material-topic-suggestions"');
+    expect(html).toContain('data-testid="accept-topic-topic_epsilon_delta"');
+    expect(html).toContain("Add topic");
     expect(html).toContain("12 B");
     expect(html).toContain("text/plain");
   });

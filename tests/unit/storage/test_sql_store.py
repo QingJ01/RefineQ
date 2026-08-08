@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import pytest
 
@@ -127,4 +128,41 @@ def test_duplicate_create_does_not_abort_an_owner_transaction(store: SqlRecordSt
     assert [item.data["name"] for item in store.list("owner", "workspaces")] == [
         "One",
         "Two",
+    ]
+
+
+def test_nested_postgres_owner_transactions_acquire_each_scope_lock() -> None:
+    class RecordingSession:
+        def __init__(self) -> None:
+            self.params: list[dict[str, int]] = []
+
+        def execute(self, statement, params):
+            del statement
+            self.params.append(params)
+
+    class RecordingDatabase:
+        is_postgresql = True
+
+        def __init__(self) -> None:
+            self.opened = 0
+            self.session_instance = RecordingSession()
+
+        @contextmanager
+        def session(self):
+            self.opened += 1
+            yield self.session_instance
+
+    database = RecordingDatabase()
+    nested_store = SqlRecordStore(database)  # type: ignore[arg-type]
+
+    with (
+        nested_store.owner_transaction("owner", "outer-scope"),
+        nested_store.owner_transaction("owner", "inner-scope"),
+    ):
+        pass
+
+    assert database.opened == 1
+    assert database.session_instance.params == [
+        {"key": nested_store._advisory_key("owner", "outer-scope")},
+        {"key": nested_store._advisory_key("owner", "inner-scope")},
     ]

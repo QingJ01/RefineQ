@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import math
 
 from sqlalchemy import func, select
 
 from refineq.database.engine import Database
 from refineq.database.schema import material_chunks
+from refineq.knowledge import index as index_module
 from refineq.knowledge.index import KnowledgeIndex
 
 
@@ -81,6 +83,51 @@ def test_semantic_similarity_can_retrieve_a_chunk_without_shared_words(tmp_path)
 
     assert results[0].material_id == "semantic"
     assert results[0].score > results[1].score
+
+
+def test_rank_fusion_is_invariant_to_score_scale() -> None:
+    lexical = {("a", 0): 10.0, ("b", 0): 9.0}
+    rescaled_lexical = {("a", 0): 10_000.0, ("b", 0): 3.0}
+    semantic = {("a", 0): 0.4, ("b", 0): 0.8}
+
+    baseline = index_module._weighted_rank_fusion(lexical, semantic)
+    rescaled = index_module._weighted_rank_fusion(rescaled_lexical, semantic)
+
+    assert baseline == rescaled
+    assert list(baseline) == [("b", 0), ("a", 0)]
+
+
+def test_low_similarity_semantic_noise_is_excluded(tmp_path) -> None:
+    relevant = "Light becomes stored chemical energy."
+    irrelevant = "A distant note about pottery glaze."
+    query = "photosynthesis mechanism"
+    index = KnowledgeIndex(
+        _database(tmp_path),
+        embedder=FakeEmbedder(
+            {
+                relevant: [1.0, 0.0],
+                irrelevant: [0.1, math.sqrt(0.99)],
+                query: [1.0, 0.0],
+            }
+        ),
+    )
+    for material_id, text in (("relevant", relevant), ("irrelevant", irrelevant)):
+        index.add_document(
+            owner_id="owner",
+            project_id="biology",
+            material_id=material_id,
+            filename=f"{material_id}.txt",
+            text=text,
+        )
+
+    results = index.search(
+        owner_id="owner",
+        project_id="biology",
+        query=query,
+        limit=5,
+    )
+
+    assert [result.material_id for result in results] == ["relevant"]
 
 
 def test_embedding_failure_keeps_lexical_retrieval_available(tmp_path) -> None:

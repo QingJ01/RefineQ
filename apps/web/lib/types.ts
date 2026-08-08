@@ -35,6 +35,25 @@ export interface LearningWorkspace {
   last_active_at: string;
 }
 
+export interface CalendarTask {
+  id: string;
+  workspace_id: string;
+  workspace_title: string;
+  workspace_archived: boolean;
+  topic_id: string;
+  topic_label: string;
+  planned_at: string;
+  minutes: number;
+  activity: "learn" | "practice" | "apply" | "review";
+  status: "planned" | "completed";
+}
+
+export interface CalendarResponse {
+  starts_at: string;
+  ends_at: string;
+  tasks: CalendarTask[];
+}
+
 export interface WorkspaceRoute {
   action: "created" | "switched" | "reused";
   confidence: number;
@@ -51,6 +70,13 @@ export interface WorkspaceSnapshot {
   saved_questions?: SavedPracticeQuestion[];
   active_question?: PracticeQuestion | null;
   last_answer?: AnswerResult | null;
+  topic_suggestions?: TopicSuggestion[];
+}
+
+export interface TopicSuggestion {
+  id: string;
+  name: string;
+  source_material_ids: string[];
 }
 
 export interface StudySession {
@@ -81,11 +107,17 @@ export interface PlanUpdateInput {
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
+  stable?: Record<string, boolean>;
   topics: Record<string, string>;
   topic_order: string[];
   diagnostic_count: number;
   attempt_count: number;
   plan_id: string | null;
+}
+
+export interface DiagnosticResultInput {
+  topic_id: string;
+  is_correct: boolean;
 }
 
 export interface PracticeQuestion {
@@ -114,6 +146,7 @@ export interface PracticeRequest {
   difficulty?: number;
   replace?: boolean;
   reviewSessionId?: string;
+  planSessionId?: string;
 }
 
 export interface AnswerResult {
@@ -136,6 +169,7 @@ export interface AnswerResult {
   mastery_updated: boolean;
   next_review_at?: string | null;
   completed_review_session_id?: string | null;
+  completed_plan_session_id?: string | null;
   answer?: string;
   observed_at?: string | null;
   learner_note?: string | null;
@@ -335,6 +369,10 @@ export interface AgentSessionDetail extends AgentSessionSummary {
 export interface PasswordResetAccepted {
   accepted: boolean;
   reset_token?: string | null;
+}
+
+export interface AuthCapabilities {
+  password_reset_available: boolean;
 }
 
 export interface PublicModelSettings {

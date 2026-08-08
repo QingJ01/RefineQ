@@ -117,11 +117,16 @@ describe("administrator routing", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(adminPage)).toBe(true);
     expect(existsSync(integrationPage)).toBe(true);
     expect(existsSync(operationsPage)).toBe(true);
-    expect(workspaceSource).toContain('router.push("/admin")');
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('href="/admin"');
     expect(workspaceSource).not.toContain('section === "admin"');
     expect(workspaceSource).not.toContain('"coach" | "admin"');
   });
@@ -298,13 +303,18 @@ describe("durable learner routing", () => {
       fileURLToPath(new URL("../components/workspace-switcher.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
-    expect(workspaceSource).toContain('data-testid="workspace-home-link"');
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('data-testid="app-nav-home"');
     expect(workspaceSource).toContain("<WorkspaceSwitcher");
     expect(switcherSource).toContain('data-testid="workspace-switcher"');
-    expect(workspaceSource).toContain('className="workspace-nav-label"');
+    expect(workspaceSource).toContain('contextLabel={t("workspaceSections")}');
     expect(workspaceSource).not.toContain('className="sidebar-learning"');
-    expect(workspaceSource).toContain('onClick={prepareHomeNavigation}');
+    expect(workspaceSource).toContain('onHomeNavigate={prepareHomeNavigation}');
     expect(workspaceSource).toContain('data-testid="workspace-route-state"');
     expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
@@ -477,11 +487,16 @@ describe("authentication and API errors", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(accountPage)).toBe(true);
-    expect(homeSource).toContain('data-testid="home-account"');
-    expect(workspaceSource).toContain('data-testid="nav-account"');
-    expect(workspaceSource).toContain('href="/account"');
+    expect(homeSource).toContain("<AppSidebar");
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('data-testid="app-nav-account"');
+    expect(sidebarSource).toContain('href="/account"');
   });
 
   it("delays releasing the account export until the browser can start the download", () => {
@@ -736,8 +751,9 @@ describe("authentication and API errors", () => {
     expect(materialSource).toContain("controller.abort()");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
-    expect(workspaceSource).toContain('session.activity === "review"');
-    expect(workspaceSource).toContain("startReviewSession(session.topic_id, session.id)");
+    expect(workspaceSource).toContain("learningModeForActivity(session.activity");
+    expect(workspaceSource).toContain("planSessionId: session.id");
+    expect(workspaceSource).toContain("onStartSession={startPlanSession}");
     expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
@@ -875,7 +891,7 @@ describe("recoverable client workflows", () => {
 
 
 describe("targeted and saved practice API", () => {
-  it("sends topic, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
+  it("sends topic, plan session, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
     let requestedInit: RequestInit | undefined;
     const client = new ApiClient("/api", async (input, init) => {
@@ -899,6 +915,7 @@ describe("targeted and saved practice API", () => {
       learningMode: "case",
       difficulty: 4,
       replace: true,
+      planSessionId: "plan-session-1",
     });
 
     expect(requestedPath).toBe("/api/workspaces/workspace-1/learning/question");
@@ -909,6 +926,7 @@ describe("targeted and saved practice API", () => {
       difficulty: 4,
       mode: "case",
       replace: true,
+      plan_session_id: "plan-session-1",
     });
   });
 
@@ -1156,6 +1174,57 @@ describe("persistent personal learning session", () => {
 
 
 describe("implicit workspace API", () => {
+  it("lists and explicitly accepts owner-scoped material topic suggestions", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({ path: String(input), method: String(init?.method ?? "GET") });
+      const body = String(input).endsWith("/accept") ? {} : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.listWorkspaceTopicSuggestions("token", "math-space");
+    await client.acceptWorkspaceTopicSuggestion("token", "math-space", "topic_epsilon");
+
+    expect(requests).toEqual([
+      { path: "/api/workspaces/math-space/topic-suggestions", method: "GET" },
+      {
+        path: "/api/workspaces/math-space/topic-suggestions/topic_epsilon/accept",
+        method: "POST",
+      },
+    ]);
+  });
+
+  it("submits the initial diagnostic through the owner-scoped workspace route", async () => {
+    let requestedPath = "";
+    let requestedBody: unknown;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        goal: "Pass calculus",
+        mastery: { limits: 0.4 },
+        topics: { limits: "Limits" },
+        topic_order: ["limits"],
+        diagnostic_count: 1,
+        attempt_count: 0,
+        plan_id: "plan-1",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.submitWorkspaceDiagnostic("token", "math-space", [
+      { topic_id: "limits", is_correct: true },
+    ]);
+
+    expect(requestedPath).toBe("/api/workspaces/math-space/learning/diagnostic");
+    expect(requestedBody).toEqual({
+      diagnostic_id: "initial",
+      results: [{ topic_id: "limits", is_correct: true }],
+    });
+  });
+
   it("resolves an intent and restores a workspace snapshot", async () => {
     const requests: Array<{ path: string; method: string }> = [];
     const client = new ApiClient("/api", async (input, init) => {
@@ -1284,6 +1353,80 @@ describe("implicit workspace API", () => {
         body: { learner_note: "Review this rubric", appealed: true },
       },
     ]);
+  });
+});
+
+
+describe("global calendar API", () => {
+  it("serializes a bounded range and archived-space preference", async () => {
+    let requestedPath = "";
+    let requestedInit: RequestInit | undefined;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedInit = init;
+      return new Response(JSON.stringify({
+        starts_at: "2026-07-26T00:00:00.000Z",
+        ends_at: "2026-09-06T00:00:00.000Z",
+        tasks: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.getCalendar(
+      "calendar-token",
+      "2026-07-26T00:00:00.000Z",
+      "2026-09-06T00:00:00.000Z",
+      true,
+    );
+
+    expect(requestedPath).toBe(
+      "/api/calendar?starts_at=2026-07-26T00%3A00%3A00.000Z"
+      + "&ends_at=2026-09-06T00%3A00%3A00.000Z&include_archived=true",
+    );
+    expect(requestedInit?.method ?? "GET").toBe("GET");
+    expect((requestedInit?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer calendar-token",
+    );
+  });
+});
+
+
+describe("global calendar route", () => {
+  it("loads a bounded owner calendar and hands task deep links back to workspace calendar", () => {
+    const page = fileURLToPath(new URL("../app/calendar/page.tsx", import.meta.url));
+    const route = fileURLToPath(new URL("../components/global-calendar-route.tsx", import.meta.url));
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(page)).toBe(true);
+    expect(existsSync(route)).toBe(true);
+    if (!existsSync(page) || !existsSync(route)) return;
+    const pageSource = readFileSync(page, "utf8");
+    const routeSource = readFileSync(route, "utf8");
+    expect(pageSource).toContain("<GlobalCalendarRoute");
+    expect(routeSource).toContain("api.getCalendar");
+    expect(routeSource).toContain("calendarGridRange");
+    expect(routeSource).toContain("includeArchived");
+    expect(workspaceSource).toContain("new URLSearchParams(window.location.search)");
+    expect(workspaceSource).toContain("focusedSessionId={focusedCalendarSessionId}");
+  });
+});
+
+
+describe("unified authenticated shell styling", () => {
+  it("gives shared navigation and the global calendar explicit desktop and mobile layouts", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toContain("/* Unified authenticated application shell */");
+    expect(styles).toContain(".app-sidebar {");
+    expect(styles).toContain(".global-calendar-shell {");
+    expect(styles).toContain(".global-calendar-layout {");
+    expect(styles).toContain('.global-calendar [data-color="0"]');
+    expect(styles).toContain("@media (max-width: 900px)");
   });
 });
 
@@ -1566,6 +1709,29 @@ describe("accessible application shell", () => {
     expect(configSource.slice(frontendStart)).not.toContain(
       "REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN",
     );
+  });
+
+  it("shows password recovery only after public capability detection", () => {
+    const authSource = readFileSync(
+      fileURLToPath(new URL("../components/auth-panel.tsx", import.meta.url)),
+      "utf8",
+    );
+    const apiSource = readFileSync(
+      fileURLToPath(new URL("../lib/api.ts", import.meta.url)),
+      "utf8",
+    );
+    const typesSource = readFileSync(
+      fileURLToPath(new URL("../lib/types.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(typesSource).toContain("AuthCapabilities");
+    expect(typesSource).toContain("password_reset_available: boolean");
+    expect(apiSource).toContain('this.request("/auth/capabilities")');
+    expect(authSource).toContain("api.getAuthCapabilities()");
+    expect(authSource).toContain("passwordResetAvailable &&");
+    expect(authSource).toContain('window.location.hash.startsWith("#reset-token=")');
+    expect(authSource).toContain("window.history.replaceState");
   });
 });
 

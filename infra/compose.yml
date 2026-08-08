@@ -28,10 +28,11 @@ services:
       dockerfile: infra/Dockerfile.api
     environment:
       REFINEQ_DATA_ROOT: /data
+      REFINEQ_BACKUP_ROOT: "${REFINEQ_BACKUP_ROOT:-/backups}"
       REFINEQ_DATABASE_URL: "${REFINEQ_DATABASE_URL:-postgresql+psycopg://refineq:refineq-local-change-me@database:5432/refineq}"
       REFINEQ_HOST: 0.0.0.0
       REFINEQ_PORT: 8000
-      REFINEQ_FORWARDED_ALLOW_IPS: "${REFINEQ_FORWARDED_ALLOW_IPS:-*}"
+      REFINEQ_FORWARDED_ALLOW_IPS: "${REFINEQ_FORWARDED_ALLOW_IPS:-172.30.0.2}"
       REFINEQ_MODEL_ENCRYPTION_KEY: "${REFINEQ_MODEL_ENCRYPTION_KEY:-}"
       REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS: "${REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS:-api.openai.com,api.deepseek.com,api.siliconflow.cn}"
       REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS: "${REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS:-}"
@@ -57,11 +58,23 @@ services:
       REFINEQ_MAX_PROJECTS_PER_USER: "${REFINEQ_MAX_PROJECTS_PER_USER:-100}"
       REFINEQ_MAX_AGENT_SESSIONS_PER_USER: "${REFINEQ_MAX_AGENT_SESSIONS_PER_USER:-200}"
       REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN: "${REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN:-false}"
+      REFINEQ_PUBLIC_SITE_URL: "${REFINEQ_PUBLIC_SITE_URL:-http://localhost}"
+      REFINEQ_SMTP_HOST: "${REFINEQ_SMTP_HOST:-}"
+      REFINEQ_SMTP_PORT: "${REFINEQ_SMTP_PORT:-587}"
+      REFINEQ_SMTP_FROM_EMAIL: "${REFINEQ_SMTP_FROM_EMAIL:-}"
+      REFINEQ_SMTP_USERNAME: "${REFINEQ_SMTP_USERNAME:-}"
+      REFINEQ_SMTP_PASSWORD: "${REFINEQ_SMTP_PASSWORD:-}"
+      REFINEQ_SMTP_STARTTLS: "${REFINEQ_SMTP_STARTTLS:-true}"
+      REFINEQ_SMTP_USE_SSL: "${REFINEQ_SMTP_USE_SSL:-false}"
+      REFINEQ_SMTP_TIMEOUT_SECONDS: "${REFINEQ_SMTP_TIMEOUT_SECONDS:-10}"
+      REFINEQ_DEMO_EMAIL: "${REFINEQ_DEMO_EMAIL:-learner@refineq.local}"
+      REFINEQ_DEMO_PASSWORD: "${REFINEQ_DEMO_PASSWORD:-}"
       REFINEQ_AUTH_RATE_LIMIT_REQUESTS: "${REFINEQ_AUTH_RATE_LIMIT_REQUESTS:-30}"
       REFINEQ_MUTATION_RATE_LIMIT_REQUESTS: "${REFINEQ_MUTATION_RATE_LIMIT_REQUESTS:-240}"
       REFINEQ_RATE_LIMIT_WINDOW_SECONDS: "${REFINEQ_RATE_LIMIT_WINDOW_SECONDS:-60}"
     volumes:
       - refineq-data:/data
+      - refineq-backups:/backups
     depends_on:
       database:
         condition: service_healthy
@@ -122,10 +135,20 @@ services:
     depends_on:
       web:
         condition: service_healthy
+    networks:
+      default:
+        ipv4_address: 172.30.0.2
     restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   refineq-data:
+  refineq-backups:
   refineq-postgres:
   caddy-data:
   caddy-config:

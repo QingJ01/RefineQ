@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,6 +29,8 @@ from refineq.storage.json_store import RecordNotFoundError, validate_identifier
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
+
+logger = logging.getLogger(__name__)
 
 MAX_SESSION_MESSAGES = 20
 MAX_SESSION_TURNS = 20
@@ -329,10 +332,15 @@ class AgentService:
             topic_id: BKTState.model_validate(state).p_mastery
             for topic_id, state in progress["bkt_states"].items()
         }
+        topic_names = {
+            topic_id: str(topic.get("name") or topic_id)
+            for topic_id, topic in progress["topics"].items()
+        }
         context = build_agent_context(
             goal=progress["goal"],
             plan=progress.get("plan"),
             mastery=mastery,
+            topic_names=topic_names,
             sources=sources,
             session_context=(
                 payload.session_context.model_dump(exclude_none=True)
@@ -344,7 +352,7 @@ class AgentService:
         session_id = payload.session_id or uuid4().hex
         validate_identifier(session_id, field="session_id")
         available = {source.citation_id: source for source in sources}
-        with self._sessions.conversation_transaction(owner_id, session_id):
+        with self._sessions.conversation_generation_lock(owner_id, session_id):
             return self._chat_in_session(
                 owner_id=owner_id,
                 project_id=project_id,
@@ -366,6 +374,33 @@ class AgentService:
         context: str,
         available: dict[str, SearchResult],
     ) -> AgentChatResponse:
+        def replay_turn(data: dict) -> AgentChatResponse | None:
+            if not payload.turn_id:
+                return None
+            turns = data.get("turns", {})
+            stored_turn = turns.get(payload.turn_id) if isinstance(turns, dict) else None
+            if not isinstance(stored_turn, dict) or not isinstance(stored_turn.get("message"), str):
+                return None
+            stored_citations = stored_turn.get("citations", [])
+            citations = [citation for citation in stored_citations if isinstance(citation, str)]
+            stored_sources = [
+                SearchResult.model_validate(source) for source in stored_turn.get("sources", [])
+            ]
+            response_sources = [
+                source for source in stored_sources if source.citation_id in citations
+            ]
+            if not response_sources:
+                citations = [citation for citation in citations if citation in available]
+                response_sources = [available[citation] for citation in citations]
+            restored_citation_ids = {source.citation_id for source in response_sources}
+            return AgentChatResponse(
+                session_id=session_id,
+                message=_sanitize_reply(stored_turn["message"], restored_citation_ids),
+                citations=citations,
+                sources=response_sources,
+                action_proposal=stored_turn.get("action_proposal"),
+            )
+
         session = None
         try:
             session = self._sessions.get(owner_id, session_id)
@@ -378,29 +413,10 @@ class AgentService:
             if self._sessions.count(owner_id) >= self._max_sessions:
                 raise AgentSessionLimitError("Agent session quota reached") from error
 
-        if session is not None and payload.turn_id:
-            turns = session.data.get("turns", {})
-            stored_turn = turns.get(payload.turn_id) if isinstance(turns, dict) else None
-            if isinstance(stored_turn, dict) and isinstance(stored_turn.get("message"), str):
-                stored_citations = stored_turn.get("citations", [])
-                citations = [citation for citation in stored_citations if isinstance(citation, str)]
-                stored_sources = [
-                    SearchResult.model_validate(source) for source in stored_turn.get("sources", [])
-                ]
-                response_sources = [
-                    source for source in stored_sources if source.citation_id in citations
-                ]
-                if not response_sources:
-                    citations = [citation for citation in citations if citation in available]
-                    response_sources = [available[citation] for citation in citations]
-                restored_citation_ids = {source.citation_id for source in response_sources}
-                return AgentChatResponse(
-                    session_id=session_id,
-                    message=_sanitize_reply(stored_turn["message"], restored_citation_ids),
-                    citations=citations,
-                    sources=response_sources,
-                    action_proposal=stored_turn.get("action_proposal"),
-                )
+        if session is not None:
+            replayed = replay_turn(session.data)
+            if replayed is not None:
+                return replayed
 
         history = _bounded_history(
             [
@@ -444,7 +460,17 @@ class AgentService:
             try:
                 extraction = intent_future.result(timeout=remaining)
             except (OpenAIError, TimeoutError, StructuredModelResponseError, ValueError):
+                logger.warning(
+                    "event=intent_extraction_failed reason=model_or_timeout "
+                    "duration_ms=%.1f mode=async",
+                    (perf_counter() - intent_started_at) * 1000,
+                )
                 extraction = None
+            else:
+                logger.info(
+                    "event=intent_extraction_completed reason=none duration_ms=%.1f mode=async",
+                    (perf_counter() - intent_started_at) * 1000,
+                )
             if extraction is not None and extraction.action is not None:
                 latest = self._learning.get(owner_id, project_id).data.get("progress", {})
                 timezone = (
@@ -496,34 +522,71 @@ class AgentService:
                     turns.pop(next(iter(turns)))
             return data
 
-        if session is not None:
-            self._sessions.mutate(owner_id, session_id, append_messages)
-        else:
-            with self._sessions.quota_transaction(owner_id):
-                try:
-                    concurrent_session = self._sessions.get(owner_id, session_id)
-                except RecordNotFoundError as error:
-                    if self._sessions.count(owner_id) >= self._max_sessions:
-                        raise AgentSessionLimitError("Agent session quota reached") from error
-                    self._sessions.create(
-                        owner_id,
-                        session_id,
-                        append_messages(
-                            {
-                                "session_id": session_id,
-                                "workspace_id": project_id,
-                                "messages": [],
-                                "turns": {},
-                            }
-                        ),
-                    )
-                else:
-                    concurrent_workspace_id = concurrent_session.data.get(
+        with self._learning.plan_transaction(owner_id, project_id):
+            try:
+                self._projects.get(owner_id, project_id)
+                latest_learning = self._learning.get(owner_id, project_id)
+                if not latest_learning.data.get("progress", {}).get("seeded"):
+                    raise RecordNotFoundError(project_id)
+            except RecordNotFoundError as error:
+                raise AgentSessionConflictError(
+                    "Learning space changed during response generation"
+                ) from error
+
+            if session is not None:
+                with self._sessions.conversation_transaction(owner_id, session_id):
+                    try:
+                        latest_session = self._sessions.get(owner_id, session_id)
+                    except RecordNotFoundError as error:
+                        raise AgentSessionConflictError(
+                            "Session changed during response generation"
+                        ) from error
+                    latest_workspace_id = latest_session.data.get(
                         "workspace_id"
-                    ) or concurrent_session.data.get("project_id")
-                    if concurrent_workspace_id != project_id:
+                    ) or latest_session.data.get("project_id")
+                    if latest_workspace_id != project_id:
                         raise AgentSessionConflictError("Session belongs to another learning space")
+                    replayed = replay_turn(latest_session.data)
+                    if replayed is not None:
+                        return replayed
+                    if latest_session.version != session.version:
+                        raise AgentSessionConflictError(
+                            "Session changed during response generation"
+                        )
                     self._sessions.mutate(owner_id, session_id, append_messages)
+            else:
+                with self._sessions.quota_transaction(owner_id):
+                    try:
+                        concurrent_session = self._sessions.get(owner_id, session_id)
+                    except RecordNotFoundError as error:
+                        if self._sessions.count(owner_id) >= self._max_sessions:
+                            raise AgentSessionLimitError("Agent session quota reached") from error
+                        self._sessions.create(
+                            owner_id,
+                            session_id,
+                            append_messages(
+                                {
+                                    "session_id": session_id,
+                                    "workspace_id": project_id,
+                                    "messages": [],
+                                    "turns": {},
+                                }
+                            ),
+                        )
+                    else:
+                        concurrent_workspace_id = concurrent_session.data.get(
+                            "workspace_id"
+                        ) or concurrent_session.data.get("project_id")
+                        if concurrent_workspace_id != project_id:
+                            raise AgentSessionConflictError(
+                                "Session belongs to another learning space"
+                            )
+                        replayed = replay_turn(concurrent_session.data)
+                        if replayed is not None:
+                            return replayed
+                        raise AgentSessionConflictError(
+                            "Session changed during response generation"
+                        )
         return AgentChatResponse(
             session_id=session_id,
             message=reply_text,

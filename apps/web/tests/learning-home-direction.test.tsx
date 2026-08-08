@@ -30,6 +30,25 @@ describe("dialog-first learning home", () => {
     expect(html).not.toContain('href="#recent-learning"');
   });
 
+  it("anchors the submission-facing prompt in one dated exam story", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("zh")}
+        busy={false}
+        workspaces={[]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("10 月 25 日考计算机组成原理期中");
+    expect(html).toContain("每天能学 90 分钟");
+    expect(html).toContain("计划、练习和掌握证据");
+    expect(html).not.toContain("访谈分析");
+  });
+
   it("uses the same desktop sidebar width as the learning workspace", () => {
     const styles = readFileSync(
       fileURLToPath(new URL("../app/styles.css", import.meta.url)),
@@ -63,8 +82,8 @@ describe("dialog-first learning home", () => {
       />,
     );
 
-    expect(html).toContain('class="home-primary-navigation"');
-    expect(html).toContain('class="home-space-list"');
+    expect(html).toContain('class="app-sidebar-global"');
+    expect(html).toContain('class="app-recent-spaces"');
     expect(html).toContain('href="/"');
     expect(html).toContain('href="/learn/calculus/today"');
     expect(html).toContain("Calculus Sprint");

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
@@ -13,6 +14,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from refineq.learning.models import LearningMode
+
+logger = logging.getLogger(__name__)
 
 Weekday = Literal[
     "monday",
@@ -475,6 +478,9 @@ class BoundedIntentExecutor:
 
     def submit(self, operation: Callable[[], T]) -> Future[T] | None:
         if not self._permits.acquire(blocking=False):
+            logger.warning(
+                "event=intent_extraction_skipped reason=capacity duration_ms=0 mode=async"
+            )
             return None
 
         def run() -> T:

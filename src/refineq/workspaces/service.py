@@ -29,10 +29,13 @@ from refineq.storage.sessions import SessionRepository
 from refineq.storage.workspaces import WorkspaceRepository
 from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
-from refineq.workspaces.models import LearningWorkspace
+from refineq.workspaces.models import LearningWorkspace, WorkspaceRoutingDecision
 from refineq.workspaces.routing import route_workspace
 
 DEFAULT_CAPABILITY_HORIZON_DAYS = 7
+MAX_TOPIC_SUGGESTION_MATERIALS = 50
+MAX_TOPIC_SUGGESTIONS = 12
+MAX_TOPIC_SUGGESTION_SOURCES = 20
 
 
 class WorkspaceServiceError(RuntimeError):
@@ -49,6 +52,14 @@ class WorkspaceConstraintError(WorkspaceServiceError):
 
 class WorkspaceQuotaError(WorkspaceServiceError):
     code = "workspace_quota"
+
+
+class WorkspaceConflictError(WorkspaceServiceError):
+    code = "workspace_conflict"
+
+
+class TopicSuggestionNotFoundError(WorkspaceServiceError):
+    code = "topic_suggestion_not_found"
 
 
 class WorkspaceResolveRequest(BaseModel):
@@ -85,6 +96,14 @@ class WorkspaceUpdateRequest(BaseModel):
     archived: bool | None = None
 
 
+class TopicSuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    name: str = Field(min_length=1, max_length=200)
+    source_material_ids: list[str] = Field(min_length=1, max_length=20)
+
+
 class WorkspaceSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -96,10 +115,51 @@ class WorkspaceSnapshot(BaseModel):
     saved_questions: list[SavedQuestionResponse] = Field(default_factory=list)
     active_question: QuestionResponse | None = None
     last_answer: AnswerResponse | None = None
+    topic_suggestions: list[TopicSuggestion] = Field(default_factory=list)
 
 
 def _topic_id(name: str) -> str:
     return f"topic_{sha256(name.casefold().encode()).hexdigest()[:16]}"
+
+
+def _material_topic_suggestions(
+    workspace: LearningWorkspace,
+    materials: list[MaterialRecord],
+) -> list[TopicSuggestion]:
+    """Derive bounded candidates from user-visible metadata, never material content."""
+
+    if len(workspace.topics) >= 200:
+        return []
+    existing = {name.casefold() for name in workspace.topics}
+    candidates: dict[str, tuple[str, list[str]]] = {}
+    bounded_materials = sorted(
+        materials,
+        key=lambda item: (item.indexed_at, item.id),
+        reverse=True,
+    )[:MAX_TOPIC_SUGGESTION_MATERIALS]
+    for material in bounded_materials:
+        if material.status != "indexed":
+            continue
+        for raw_name in [material.title, *material.tags]:
+            name = " ".join(raw_name.split()).strip()
+            key = name.casefold()
+            if not name or len(name) > 200 or key in existing:
+                continue
+            if key not in candidates:
+                if len(candidates) >= MAX_TOPIC_SUGGESTIONS:
+                    continue
+                candidates[key] = (name, [])
+            sources = candidates[key][1]
+            if material.id not in sources and len(sources) < MAX_TOPIC_SUGGESTION_SOURCES:
+                sources.append(material.id)
+    return [
+        TopicSuggestion(
+            id=_topic_id(name),
+            name=name,
+            source_material_ids=sources,
+        )
+        for name, sources in candidates.values()
+    ]
 
 
 class WorkspaceService:
@@ -132,28 +192,46 @@ class WorkspaceService:
         now: datetime | None = None,
     ) -> WorkspaceRouteResponse:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._workspaces.quota_transaction(owner_id):
-            return self._resolve_locked(owner_id, payload, observed_at=observed_at)
-
-    def _resolve_locked(
-        self,
-        owner_id: str,
-        payload: WorkspaceResolveRequest,
-        *,
-        observed_at: datetime,
-    ) -> WorkspaceRouteResponse:
         workspaces = self._workspaces.list(owner_id)
         decision = (
             self._routing.route(payload.intent, owner_id, workspaces)
             if self._routing is not None
             else route_workspace(payload.intent, workspaces)
         )
-        if decision.workspace_id is not None:
-            workspace = self._workspaces.touch(
+        with self._workspaces.quota_transaction(owner_id):
+            latest = self._workspaces.list(owner_id)
+            if decision.workspace_id is None and len(latest) >= self._max_workspaces:
+                raise WorkspaceQuotaError("Learning workspace quota reached")
+            if latest != workspaces:
+                raise WorkspaceConflictError("Learning workspaces changed during routing")
+            return self._commit_resolution(
                 owner_id,
-                decision.workspace_id,
-                now=observed_at,
+                payload,
+                decision,
+                latest,
+                observed_at=observed_at,
             )
+
+    def _commit_resolution(
+        self,
+        owner_id: str,
+        payload: WorkspaceResolveRequest,
+        decision: WorkspaceRoutingDecision,
+        workspaces: list[LearningWorkspace],
+        *,
+        observed_at: datetime,
+    ) -> WorkspaceRouteResponse:
+        if decision.workspace_id is not None:
+            try:
+                workspace = self._workspaces.touch(
+                    owner_id,
+                    decision.workspace_id,
+                    now=observed_at,
+                )
+            except RecordNotFoundError as error:
+                raise WorkspaceConflictError(
+                    "Selected learning workspace no longer exists"
+                ) from error
         else:
             if len(workspaces) >= self._max_workspaces:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
@@ -234,6 +312,65 @@ class WorkspaceService:
                 goal=payload.goal,
                 archived=payload.archived,
             )
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+
+    def topic_suggestions(
+        self,
+        owner_id: str,
+        workspace_id: str,
+    ) -> list[TopicSuggestion]:
+        try:
+            workspace = self._workspaces.get(owner_id, workspace_id)
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+        materials = self._knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=workspace_id,
+        )
+        return _material_topic_suggestions(workspace, materials)
+
+    def accept_topic_suggestion(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        suggestion_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> WorkspaceSnapshot:
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            with self._learning.plan_transaction(owner_id, workspace_id):
+                workspace = self._workspaces.get(owner_id, workspace_id)
+                if any(_topic_id(name) == suggestion_id for name in workspace.topics):
+                    return self.snapshot(owner_id, workspace_id)
+                suggestion = next(
+                    (
+                        item
+                        for item in self.topic_suggestions(owner_id, workspace_id)
+                        if item.id == suggestion_id
+                    ),
+                    None,
+                )
+                if suggestion is None:
+                    raise TopicSuggestionNotFoundError("Topic suggestion not found")
+                workspace_snapshot = self._workspaces.snapshot(owner_id, workspace_id)
+                learning_snapshot = self._learning.get(owner_id, workspace_id)
+                try:
+                    self._workspaces.append_topic(owner_id, workspace_id, suggestion.name)
+                    self._learning_service.add_topic(
+                        owner_id,
+                        workspace_id,
+                        TopicSeed(id=suggestion.id, name=suggestion.name),
+                        start_at=observed_at,
+                    )
+                except Exception:
+                    try:
+                        self._workspaces.restore(owner_id, workspace_id, workspace_snapshot)
+                    finally:
+                        self._learning.restore(owner_id, workspace_id, learning_snapshot)
+                    raise
+                return self.snapshot(owner_id, workspace_id)
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
 
@@ -360,4 +497,5 @@ class WorkspaceService:
                 if pending is None and raw_answer is not None
                 else None
             ),
+            topic_suggestions=self.topic_suggestions(owner_id, workspace_id),
         )
