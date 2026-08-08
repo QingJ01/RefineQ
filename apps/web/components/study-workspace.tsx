@@ -5,13 +5,16 @@ import {
   BookOpen,
   CalendarDays,
   ChartNoAxesColumnIncreasing,
+  ChevronsUpDown,
+  House,
   Languages,
   LogOut,
   Settings2,
   Sparkles,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
@@ -29,6 +32,7 @@ import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
   loadLearningSession,
+  saveLearningLocale,
   saveLearningSession,
 } from "@/lib/session";
 import type {
@@ -49,6 +53,7 @@ import type {
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
+import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
 
 const ROUTE_NOTICE_KEY = "refineq.workspace-route-notice";
 
@@ -125,6 +130,14 @@ export function StudyWorkspace({
     attemptIdRef.current = null;
   }
 
+  const redirectUnavailableWorkspace = useCallback(() => {
+    window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+    setWorkspace(null);
+    setRoute(null);
+    setPreviousWorkspaceId(null);
+    router.replace("/");
+  }, [router]);
+
   useEffect(() => {
     let active = true;
     async function restore() {
@@ -148,9 +161,23 @@ export function StudyWorkspace({
         if (!active) return;
         setAuth(restoredAuth);
         setWorkspaces(recent);
-        const selectedId = initialWorkspaceId ?? (saved.home ? undefined : saved.workspaceId);
-        const selected = recent.find((item) => item.id === selectedId);
-        if (selected) {
+        const selectedId = initialWorkspaceId;
+        const resolution = resolveRequestedWorkspace(selectedId, recent);
+        if (resolution.kind === "home") {
+          saveLearningSession(window.sessionStorage, {
+            token: saved.token,
+            workspaceId: saved.workspaceId,
+            locale: saved.locale ?? "zh",
+          });
+          setWorkspace(null);
+          return;
+        }
+        if (resolution.kind === "unavailable") {
+          redirectUnavailableWorkspace();
+          return;
+        }
+        if (resolution.kind === "workspace") {
+          const selected = resolution.workspace;
           const snapshot = await api.getWorkspaceSnapshot(saved.token, selected.id);
           if (!active) return;
           applySnapshot(snapshot);
@@ -158,7 +185,6 @@ export function StudyWorkspace({
             token: saved.token,
             workspaceId: selected.id,
             locale: saved.locale ?? "zh",
-            home: false,
           });
           const rawNotice = window.sessionStorage.getItem(ROUTE_NOTICE_KEY);
           if (rawNotice) {
@@ -180,6 +206,9 @@ export function StudyWorkspace({
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
           clearLearningSession(window.sessionStorage);
+          router.replace("/");
+        } else if (caught instanceof ApiError && caught.status === 404 && initialWorkspaceId) {
+          redirectUnavailableWorkspace();
         } else {
           setError(caught instanceof Error ? caught.message : "Unable to restore the learning session");
         }
@@ -189,7 +218,7 @@ export function StudyWorkspace({
     }
     void restore();
     return () => { active = false; };
-  }, [initialWorkspaceId]);
+  }, [initialWorkspaceId, redirectUnavailableWorkspace, router]);
 
   useEffect(() => {
     if (!route) return;
@@ -202,20 +231,26 @@ export function StudyWorkspace({
   }, [route]);
 
   async function authenticated(response: AuthResponse) {
+    if (initialWorkspaceId) setHomeBusy(true);
     setAuth(response);
     setError("");
     saveLearningSession(window.sessionStorage, {
       token: response.access_token,
       locale,
-      home: !initialWorkspaceId,
     });
     try {
       const recent = await api.listWorkspaces(response.access_token);
       setWorkspaces(recent);
       const selected = recent.find((item) => item.id === initialWorkspaceId);
-      if (selected) await openWorkspace(selected, response.access_token, initialSection);
+      if (initialWorkspaceId && !selected) {
+        redirectUnavailableWorkspace();
+        return;
+      }
+      if (selected) await openWorkspace(selected, response.access_token, initialSection, "replace");
     } catch (caught) {
       reportError(caught);
+    } finally {
+      if (initialWorkspaceId) setHomeBusy(false);
     }
   }
 
@@ -223,6 +258,7 @@ export function StudyWorkspace({
     target: LearningWorkspace,
     token = auth?.access_token,
     targetSection: LearningSection = "today",
+    navigation: "push" | "replace" = "push",
   ) {
     if (!token) return;
     setHomeBusy(true);
@@ -234,9 +270,12 @@ export function StudyWorkspace({
         token,
         workspaceId: target.id,
         locale,
-        home: false,
       });
-      router.push(learningPath(target.id, targetSection));
+      if (navigation === "replace") {
+        router.replace(learningPath(target.id, targetSection));
+      } else {
+        router.push(learningPath(target.id, targetSection));
+      }
     } catch (caught) {
       reportError(caught);
     } finally {
@@ -265,7 +304,6 @@ export function StudyWorkspace({
         token: auth.access_token,
         workspaceId: route.workspace.id,
         locale,
-        home: false,
       });
       router.push(learningPath(route.workspace.id, "today"));
     } catch (caught) {
@@ -548,26 +586,34 @@ export function StudyWorkspace({
     setPreviousWorkspaceId(null);
   }
 
-  function logout() {
-    clearLearningSession(window.sessionStorage);
-    setAuth(null);
-    setWorkspace(null);
-    setWorkspaces([]);
-  }
-
-  function returnHome() {
+  function prepareRouteNavigation() {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
     setRoute(null);
     setPreviousWorkspaceId(null);
+  }
+
+  function prepareHomeNavigation() {
+    prepareRouteNavigation();
     if (auth) {
       saveLearningSession(window.sessionStorage, {
         token: auth.access_token,
         workspaceId: workspace?.id,
         locale,
-        home: true,
       });
     }
     setWorkspace(null);
+  }
+
+  function logout() {
+    clearLearningSession(window.sessionStorage);
+    setAuth(null);
+    setWorkspace(null);
+    setWorkspaces([]);
+    router.replace("/");
+  }
+
+  function returnHome() {
+    prepareHomeNavigation();
     router.push("/");
   }
 
@@ -575,18 +621,36 @@ export function StudyWorkspace({
     const next = locale === "zh" ? "en" : "zh";
     setLocale(next);
     if (auth) {
-      saveLearningSession(window.sessionStorage, {
-        token: auth.access_token,
-        workspaceId: workspace?.id,
-        locale: next,
-        home: !workspace,
-      });
+      saveLearningLocale(window.sessionStorage, auth.access_token, next, workspace?.id);
     }
     document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
   }
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
   if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
+  if (!workspace && initialWorkspaceId) {
+    const retryTarget = workspaces.find((item) => item.id === initialWorkspaceId);
+    return (
+      <main id="main-content" className="workspace-route-state" data-testid="workspace-route-state">
+        <BrandMark size={48} />
+        <span className="kicker">REFINEQ / LEARNING SPACE</span>
+        <h1>{homeBusy && !error ? t("loading") : t("workspaceOpenFailed")}</h1>
+        <p>{error || (locale === "zh" ? "正在恢复这个空间的资料与学习进度。" : "Restoring this space, its sources, and progress.")}</p>
+        <div>
+          {retryTarget && !homeBusy && (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => void openWorkspace(retryTarget, auth.access_token, initialSection, "replace")}
+            >
+              {t("retry")}
+            </button>
+          )}
+          <Link className="primary-action" href="/">{t("backLearningHome")}</Link>
+        </div>
+      </main>
+    );
+  }
   if (!workspace) {
     return (
       <>
@@ -623,51 +687,67 @@ export function StudyWorkspace({
   return (
     <main id="main-content" className="workspace-shell">
       <aside className="workspace-sidebar">
-        <button className="sidebar-brand wordmark-button" onClick={returnHome} aria-label="RefineQ">
+        <Link className="sidebar-brand wordmark-button" href="/" onClick={prepareRouteNavigation} aria-label="RefineQ">
           <BrandMark className="brand-mark" size={36} />
           <BrandName />
-        </button>
-        <nav className="workspace-nav" aria-label="Study sections">
+        </Link>
+        <Link
+          data-testid="workspace-home-link"
+          className="workspace-home-link"
+          href="/"
+          onClick={prepareRouteNavigation}
+        >
+          <House size={18} />
+          <span>{t("learningHome")}</span>
+        </Link>
+        <Link
+          data-testid="workspace-switcher"
+          className="workspace-switcher"
+          href="/"
+          onClick={prepareRouteNavigation}
+          aria-label={`${t("switchSpace")}: ${workspace.title}`}
+        >
+          <span className="workspace-switcher-heading">
+            <span className="kicker">{t("currentSpace")}</span>
+            <ChevronsUpDown size={15} />
+          </span>
+          <strong>{workspace.title}</strong>
+          <span className="workspace-switcher-topic">
+            {progress?.topics ? Object.values(progress.topics)[0] : workspace.topics[0]}
+          </span>
+          <span className="workspace-switcher-progress">
+            <span>{t("learningProgress")}</span>
+            <strong>{Math.round(averageMastery * 100)}%</strong>
+          </span>
+          <i><b style={{ width: `${Math.round(averageMastery * 100)}%` }} /></i>
+        </Link>
+        <span className="workspace-nav-label">{t("workspaceSections")}</span>
+        <nav className="workspace-nav" aria-label={t("workspaceSections")}>
           {nav.map(({ id, icon: Icon }) => (
-            <button
+            <Link
               key={id}
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
-              onClick={() => {
-                router.push(`/learn/${workspace.id}/${id}`);
-              }}
+              href={learningPath(workspace.id, id)}
+              onClick={prepareRouteNavigation}
               aria-label={t(id)}
               aria-current={section === id ? "page" : undefined}
             >
               <Icon size={19} />
               <span>{t(id)}</span>
-            </button>
+            </Link>
           ))}
           {auth.user.role === "admin" && (
-            <button
+            <Link
               data-testid="nav-admin"
-              onClick={() => router.push("/admin")}
-              aria-label="管理"
+              href="/admin"
+              aria-label={t("administration")}
             >
               <Settings2 size={19} />
-              <span>管理</span>
-            </button>
+              <span>{t("administration")}</span>
+            </Link>
           )}
         </nav>
-        <div className="sidebar-learning">
-          <span className="kicker">CURRENT LEARNING</span>
-          <strong>{workspace.title}</strong>
-          <p className="sidebar-current-topic">{progress?.topics ? Object.values(progress.topics)[0] : workspace.topics[0]}</p>
-          <span className="sidebar-goal">{workspace.goal}</span>
-          <div className="sidebar-capability-progress">
-            <span>{t("learningProgress")}</span>
-            <strong>{Math.round(averageMastery * 100)}%</strong>
-            <i><b style={{ width: `${Math.round(averageMastery * 100)}%` }} /></i>
-          </div>
-          <button className="quiet-button switch-learning" onClick={returnHome}>
-            <Sparkles size={15} /> {t("recentLearning")}
-          </button>
-        </div>
         <div className="sidebar-actions">
           <button className="quiet-button" onClick={toggleLocale}><Languages size={16} /> {t("language")}</button>
           <button className="quiet-button" onClick={logout}><LogOut size={16} /> {t("logout")}</button>

@@ -62,6 +62,8 @@ const interfaceCopy = {
     score: "本次评价",
     strength: "做得好的地方",
     gap: "下一步改进",
+    noStrengths: "这次还没有识别到明确亮点",
+    noGaps: "请先补充完整回答，再生成针对性改进建议",
     review: "后续巩固",
     reviewHint: "系统会依据本次反馈安排下一次回顾。",
     sourceLabel: "参考来源",
@@ -87,6 +89,8 @@ const interfaceCopy = {
     score: "Evaluation",
     strength: "What worked",
     gap: "Improve next",
+    noStrengths: "No clear strength was identified in this response yet",
+    noGaps: "Add a complete response to receive a focused improvement suggestion",
     review: "Follow-up review",
     reviewHint: "The next review will be scheduled from this feedback.",
     sourceLabel: "Sources",
@@ -308,8 +312,18 @@ export function LearningSessionCanvas({
               <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
               <h2>{result.feedback}</h2>
               <div className="feedback-columns">
-                <section><h3>{text.strength}</h3><ul>{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section>
-                <section><h3>{text.gap}</h3><ul>{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul></section>
+                <section>
+                  <h3>{text.strength}</h3>
+                  {result.strengths.length > 0
+                    ? <ul>{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul>
+                    : <p className="feedback-empty">{text.noStrengths}</p>}
+                </section>
+                <section>
+                  <h3>{text.gap}</h3>
+                  {result.gaps.length > 0
+                    ? <ul>{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul>
+                    : <p className="feedback-empty">{text.noGaps}</p>}
+                </section>
               </div>
               <div className="session-review-note">
                 <Clock3 size={17} />

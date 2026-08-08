@@ -81,6 +81,64 @@ describe("focused learning components", () => {
     expect(html).not.toContain("证据账本");
   });
 
+  it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {
+    const html = renderToStaticMarkup(
+      <LearningSessionCanvas
+        locale="zh"
+        t={translator("zh")}
+        workspace={{
+          id: "math-space",
+          title: "高等数学",
+          subject: "mathematics",
+          goal: "掌握导数",
+          topics: ["链式法则"],
+          keywords: ["导数"],
+          routing_summary: "考试学习",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-07T00:00:00Z",
+        }}
+        plan={null}
+        progress={null}
+        materials={[]}
+        question={{ id: "question-1", topic_id: "chain-rule", prompt: "解释链式法则" }}
+        answer=""
+        result={{
+          attempt_id: "attempt-1",
+          question_id: "question-1",
+          topic_id: "chain-rule",
+          is_correct: false,
+          mastery: 0,
+          difficulty_level: 2,
+          evidence_id: "evidence-1",
+          score: 0,
+          feedback: "回答信息不足，请用完整句子说明原理。",
+          strengths: [],
+          gaps: [],
+          misconceptions: [],
+          citations: [],
+          grading_mode: "ai",
+          mastery_updated: false,
+          replayed: false,
+        }}
+        busy={false}
+        learningMode="concept"
+        savedQuestions={[]}
+        onLearningModeChange={() => undefined}
+        onAnswerChange={() => undefined}
+        onStartTask={() => undefined}
+        onSubmit={() => undefined}
+        onNextTask={() => undefined}
+        onToggleSaved={() => undefined}
+        onOpenLibrary={() => undefined}
+        onAskCoach={async () => ({ session_id: "session-1", message: "", citations: [], sources: [] })}
+      />,
+    );
+
+    expect(html).toContain("这次还没有识别到明确亮点");
+    expect(html).toContain("请先补充完整回答，再生成针对性改进建议");
+  });
+
   it("renders a reusable accessible confirmation dialog", () => {
     const html = renderToStaticMarkup(
       <ConfirmDialog

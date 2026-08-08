@@ -2,7 +2,6 @@ export interface LearningSession {
   token: string;
   workspaceId?: string;
   locale?: "zh" | "en";
-  home?: boolean;
 }
 
 const SESSION_KEY = "refineq.learning-session";
@@ -17,8 +16,7 @@ export function loadLearningSession(storage: Storage): LearningSession | null {
       return null;
     }
     const locale = parsed.locale === "en" || parsed.locale === "zh" ? parsed.locale : undefined;
-    const home = typeof parsed.home === "boolean" ? parsed.home : undefined;
-    return { token: parsed.token, workspaceId: parsed.workspaceId, locale, home };
+    return { token: parsed.token, workspaceId: parsed.workspaceId, locale };
   } catch {
     return null;
   }
@@ -26,6 +24,20 @@ export function loadLearningSession(storage: Storage): LearningSession | null {
 
 export function saveLearningSession(storage: Storage, session: LearningSession): void {
   storage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+export function saveLearningLocale(
+  storage: Storage,
+  token: string,
+  locale: "zh" | "en",
+  activeWorkspaceId?: string,
+): void {
+  const saved = loadLearningSession(storage);
+  saveLearningSession(storage, {
+    token,
+    workspaceId: activeWorkspaceId ?? saved?.workspaceId,
+    locale,
+  });
 }
 
 export function clearLearningSession(storage: Storage): void {

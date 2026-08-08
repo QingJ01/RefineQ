@@ -64,7 +64,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   await expect(page.locator(".session-steps li")).toHaveCount(4);
-  const workspaceTitle = await page.locator(".sidebar-learning > strong").innerText();
+  const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
   await test.step("use a short, varied capability path", async () => {
     await page.getByTestId("nav-path").click();
@@ -86,12 +86,25 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.keyboard.press("Tab");
     await expect(page.locator(".skip-link")).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(page.locator(".workspace-sidebar .sidebar-brand")).toHaveAccessibleName("RefineQ");
+    await expect(page.getByTestId("workspace-switcher")).toBeFocused();
+    await expect(page.getByTestId("workspace-switcher")).toBeVisible();
+    await expect(page.getByTestId("workspace-switcher")).toHaveAccessibleName(
+      new RegExp(workspaceTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
     for (const testId of ["nav-today", "nav-path", "nav-materials", "nav-progress"]) {
       await expect(page.getByTestId(testId)).toHaveAccessibleName(/.+/);
     }
     await page.screenshot({ path: testInfo.outputPath("capability-learning-mobile.png") });
     await page.setViewportSize({ width: 1440, height: 1024 });
+  });
+
+  await test.step("return to personal home and recover the same workspace with browser history", async () => {
+    await page.getByTestId("workspace-home-link").click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId("learning-intent")).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/path$/);
+    await expect(page.getByTestId("learning-path-view")).toBeVisible();
   });
 
   await test.step("upload a real interview source", async () => {
