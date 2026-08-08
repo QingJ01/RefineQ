@@ -280,6 +280,7 @@ export class ApiClient {
           mode: options.learningMode ?? "concept",
           replace: options.replace ?? false,
           review_session_id: options.reviewSessionId,
+          plan_session_id: options.planSessionId,
         }),
       },
       token,

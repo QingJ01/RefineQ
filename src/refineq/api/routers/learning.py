@@ -101,6 +101,7 @@ def create_question(
             replace_pending=payload.replace,
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
+            plan_session_id=payload.plan_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -123,6 +124,7 @@ def create_workspace_question(
             replace_pending=payload.replace,
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
+            plan_session_id=payload.plan_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)

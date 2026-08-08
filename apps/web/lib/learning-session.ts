@@ -1,4 +1,4 @@
-import type { LearningMode, Locale } from "./types";
+import type { LearningMode, Locale, StudySession } from "./types";
 
 
 export type LearningSessionStage = "learn" | "practice" | "reflect";
@@ -7,6 +7,17 @@ export interface LearningSessionStep {
   id: "align" | "learn" | "practice" | "reflect";
   label: string;
   minutes: number;
+}
+
+export function learningModeForActivity(
+  activity: NonNullable<StudySession["activity"]>,
+): LearningMode {
+  return {
+    learn: "concept",
+    practice: "case",
+    apply: "project",
+    review: "exam",
+  }[activity];
 }
 
 const steps: Record<LearningMode, Record<Locale, LearningSessionStep[]>> = {

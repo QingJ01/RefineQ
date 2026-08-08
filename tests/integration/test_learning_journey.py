@@ -167,6 +167,127 @@ def test_owner_identity_is_rejected_from_request_json(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
+def test_plan_sessions_control_practice_mode_and_complete_only_on_evidence(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    exam_at = datetime.now(UTC) + timedelta(days=5)
+
+    with TestClient(app) as client:
+        learner = _register(client, "plan-loop@example.com")
+        headers = _authorization(learner["token"])
+        project_id = client.post(
+            "/projects",
+            headers=headers,
+            json={"name": "Systems"},
+        ).json()["id"]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Understand cache coherence",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 30,
+                "topics": [{"id": "cache", "name": "Cache coherence"}],
+            },
+        )
+        plan = client.post(
+            f"/projects/{project_id}/learning/plan",
+            headers=headers,
+        ).json()
+        app.state.knowledge.add_document(
+            owner_id=learner["user_id"],
+            project_id=project_id,
+            material_id="cache-notes",
+            filename="cache.txt",
+            text=(
+                "A cache coherence protocol keeps processor copies consistent by "
+                "invalidating stale copies after writes and measuring propagation latency."
+            ),
+        )
+        sessions = {session["activity"]: session for session in plan["sessions"][:4]}
+        expected_modes = {
+            "learn": "concept",
+            "practice": "case",
+            "apply": "project",
+            "review": "exam",
+        }
+
+        for activity, expected_mode in expected_modes.items():
+            question = client.post(
+                f"/projects/{project_id}/learning/question",
+                headers=headers,
+                json={
+                    "request_id": f"plan-mode-{activity}",
+                    "plan_session_id": sessions[activity]["id"],
+                    "mode": "concept",
+                    "replace": True,
+                },
+            )
+            assert question.status_code == 200
+            assert question.json()["topic_id"] == sessions[activity]["topic_id"]
+            assert question.json()["learning_mode"] == expected_mode
+
+        insufficient_question = client.post(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "plan-insufficient",
+                "plan_session_id": sessions["learn"]["id"],
+                "replace": True,
+            },
+        ).json()
+        insufficient = client.post(
+            f"/projects/{project_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "plan-insufficient-attempt",
+                "question_id": insufficient_question["id"],
+                "answer": "cache",
+            },
+        )
+        assert insufficient.status_code == 200
+        assert insufficient.json()["mastery_updated"] is False
+
+        evidence_question = client.post(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "plan-evidence",
+                "plan_session_id": sessions["practice"]["id"],
+                "replace": True,
+            },
+        ).json()
+        evidence = client.post(
+            f"/projects/{project_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "plan-evidence-attempt",
+                "question_id": evidence_question["id"],
+                "answer": (
+                    "A cache coherence protocol keeps processor copies consistent. "
+                    "For example, after a write it invalidates stale copies and measures "
+                    "propagation latency before relying on the new value."
+                ),
+            },
+        )
+        snapshot = client.get(
+            f"/projects/{project_id}/learning/progress",
+            headers=headers,
+        )
+        stored_plan = app.state.learning.get(learner["user_id"], project_id).data["progress"][
+            "plan"
+        ]
+        statuses = {session["id"]: session["status"] for session in stored_plan["sessions"]}
+
+    assert snapshot.status_code == 200
+    assert evidence.status_code == 200
+    assert evidence.json()["mastery_updated"] is True
+    assert evidence.json()["completed_plan_session_id"] == sessions["practice"]["id"]
+    assert statuses[sessions["learn"]["id"]] == "planned"
+    assert statuses[sessions["practice"]["id"]] == "completed"
+
+
 def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
     tmp_path: Path,
 ) -> None:

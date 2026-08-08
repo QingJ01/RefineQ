@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from refineq.knowledge.index import SearchResult
 from refineq.learning.bkt import DEFAULT_BKT, mastery_is_stable, update_bkt
@@ -39,6 +39,43 @@ MAX_SAVED_QUESTIONS = 100
 MAX_QUESTION_REQUESTS = 100
 MAX_REVIEW_SESSIONS = 20
 MAX_CREDITED_QUESTIONS = 50
+PLAN_ACTIVITY_MODES = {
+    "learn": LearningMode.CONCEPT,
+    "practice": LearningMode.CASE,
+    "apply": LearningMode.PROJECT,
+    "review": LearningMode.EXAM,
+}
+
+
+def _recent_learning_needs(
+    progress: dict[str, Any],
+    topic_id: str,
+    *,
+    limit: int = 3,
+) -> list[dict[str, list[str]]]:
+    """Return bounded, same-topic feedback without inventing or merging diagnoses."""
+
+    selected: list[dict[str, list[str]]] = []
+    for raw_evidence in reversed(progress.get("evidence", [])):
+        details = raw_evidence.get("details", {})
+        if not isinstance(details, dict) or details.get("topic_id") != topic_id:
+            continue
+        gaps = [
+            value.strip()[:300]
+            for value in details.get("gaps", [])[:5]
+            if isinstance(value, str) and value.strip()
+        ]
+        misconceptions = [
+            value.strip()[:300]
+            for value in details.get("misconceptions", [])[:5]
+            if isinstance(value, str) and value.strip()
+        ]
+        if not gaps and not misconceptions:
+            continue
+        selected.append({"gaps": gaps, "misconceptions": misconceptions})
+        if len(selected) == limit:
+            break
+    return list(reversed(selected))
 
 
 def _upsert_review_session(
@@ -202,6 +239,16 @@ class QuestionRequest(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
     )
+    plan_session_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+    )
+
+    @model_validator(mode="after")
+    def select_one_session_origin(self) -> QuestionRequest:
+        if self.plan_session_id is not None and self.review_session_id is not None:
+            raise ValueError("plan_session_id and review_session_id are mutually exclusive")
+        return self
 
 
 class AnswerRequest(BaseModel):
@@ -238,6 +285,7 @@ class AnswerResponse(BaseModel):
     learner_note: str | None = None
     appealed: bool = False
     completed_review_session_id: str | None = None
+    completed_plan_session_id: str | None = None
     question_snapshot: dict[str, Any] | None = Field(default=None, exclude=True)
     replayed: bool = False
 
@@ -694,6 +742,7 @@ class LearningService:
         replace_pending: bool = False,
         request_id: str | None = None,
         review_session_id: str | None = None,
+        plan_session_id: str | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
         with self._learning.question_transaction(owner_id, project_id):
@@ -714,7 +763,28 @@ class LearningService:
                     pending,
                     saved_at=progress.get("saved_questions", {}).get(pending["id"]),
                 )
-            review_topic_id: str | None = None
+            session_topic_id: str | None = None
+            originating_plan_session_id: str | None = None
+            if plan_session_id is not None:
+                raw_plan = progress.get("plan")
+                plan_session = next(
+                    (
+                        session
+                        for session in (raw_plan or {}).get("sessions", [])
+                        if session.get("id") == plan_session_id
+                    ),
+                    None,
+                )
+                if plan_session is None:
+                    raise LearningConflictError("Plan session not found")
+                parsed_session = StudySession.model_validate(plan_session)
+                if parsed_session.status == "completed":
+                    raise LearningConflictError("Plan session is already completed")
+                session_topic_id = parsed_session.topic_id
+                originating_plan_session_id = parsed_session.id
+                learning_mode = PLAN_ACTIVITY_MODES[parsed_session.activity]
+                if topic_id is not None and topic_id != session_topic_id:
+                    raise LearningConflictError("Plan session topic does not match")
             if review_session_id is not None:
                 raw_plan = progress.get("plan")
                 review_session = next(
@@ -734,13 +804,15 @@ class LearningService:
                     or parsed_review.planned_at > datetime.now(UTC)
                 ):
                     raise LearningConflictError("Review session is not due")
-                review_topic_id = parsed_review.topic_id
-                if topic_id is not None and topic_id != review_topic_id:
+                session_topic_id = parsed_review.topic_id
+                originating_plan_session_id = parsed_review.id
+                learning_mode = LearningMode.EXAM
+                if topic_id is not None and topic_id != session_topic_id:
                     raise LearningConflictError("Review session topic does not match")
             if topic_id is not None and topic_id not in progress["topics"]:
                 raise LearningConflictError("Unknown practice topic")
             selected_topic_id = (
-                review_topic_id
+                session_topic_id
                 or topic_id
                 or min(
                     progress["topics"],
@@ -767,6 +839,7 @@ class LearningService:
                     mastery=mastery,
                     difficulty_level=selected_difficulty,
                     learning_mode=learning_mode,
+                    prior_feedback=_recent_learning_needs(progress, selected_topic_id),
                 )
             else:
                 generated = fallback_question(
@@ -788,6 +861,7 @@ class LearningService:
                 "mode": generated.mode,
                 "grading": generated.model_dump(mode="json"),
                 "review_session_id": review_session_id,
+                "plan_session_id": originating_plan_session_id,
             }
             selected: dict[str, Any] | None = None
 
@@ -871,6 +945,7 @@ class LearningService:
                 raise QuestionNotFoundError("Practice question not found")
             selected = deepcopy(stored_question)
             selected.pop("review_session_id", None)
+            selected.pop("plan_session_id", None)
             progress["pending_question"] = deepcopy(selected)
             saved_at = progress.get("saved_questions", {}).get(question_id)
             return data
@@ -994,9 +1069,11 @@ class LearningService:
         replayed = False
         next_review_at: datetime | None = None
         completed_review_session_id: str | None = None
+        completed_plan_session_id: str | None = None
 
         def grade_once(data: dict[str, Any]) -> dict[str, Any]:
-            nonlocal completed_review_session_id, next_review_at, replayed, result
+            nonlocal completed_plan_session_id, completed_review_session_id
+            nonlocal next_review_at, replayed, result
             progress = self._progress(data)
             if payload.attempt_id in data["attempts"]:
                 replayed = True
@@ -1061,20 +1138,26 @@ class LearningService:
             )
             raw_plan = progress.get("plan")
             if raw_plan:
-                review_session_id = question.get("review_session_id")
-                if review_session_id is not None:
-                    review_session = next(
+                originating_session_id = question.get("plan_session_id") or question.get(
+                    "review_session_id"
+                )
+                if mastery_updated and originating_session_id is not None:
+                    originating_session = next(
                         (
                             session
                             for session in raw_plan["sessions"]
-                            if session.get("id") == review_session_id
+                            if session.get("id") == originating_session_id
                         ),
                         None,
                     )
-                    if review_session is None:
-                        raise LearningConflictError("Review session not found")
-                    review_session["status"] = "completed"
-                    completed_review_session_id = review_session_id
+                    if originating_session is None:
+                        raise LearningConflictError("Plan session not found")
+                    if originating_session.get("topic_id") != topic_id:
+                        raise LearningConflictError("Plan session topic does not match")
+                    originating_session["status"] = "completed"
+                    completed_plan_session_id = originating_session_id
+                    if originating_session.get("activity") == "review":
+                        completed_review_session_id = originating_session_id
                 candidate_review_at = observed_at + timedelta(days=3 if is_correct else 1)
                 exam_at = datetime.fromisoformat(progress["exam_at"])
                 if candidate_review_at < exam_at:
@@ -1115,6 +1198,7 @@ class LearningService:
                 "answer": payload.answer,
                 "observed_at": observed_at.isoformat(),
                 "completed_review_session_id": completed_review_session_id,
+                "completed_plan_session_id": completed_plan_session_id,
                 "question_snapshot": deepcopy(question),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)

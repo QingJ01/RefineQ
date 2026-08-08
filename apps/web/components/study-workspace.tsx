@@ -44,6 +44,7 @@ import {
 } from "@/lib/coach-actions";
 import { localizeApiError } from "@/lib/error-messages";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
+import { learningModeForActivity } from "@/lib/learning-session";
 import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
@@ -646,6 +647,27 @@ export function StudyWorkspace({
         topicId,
         reviewSessionId: sessionId,
         learningMode,
+        replace: question !== null,
+      });
+      window.requestAnimationFrame(() => {
+        document.getElementById("active-practice")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+  }
+
+  function startPlanSession(session: StudySession) {
+    runGuardedPracticeAction(async () => {
+      if (!workspace) return;
+      const mode = learningModeForActivity(session.activity ?? "practice");
+      setLearningMode(mode);
+      router.push(learningPath(workspace.id, "today"));
+      await getQuestion({
+        topicId: session.topic_id,
+        planSessionId: session.id,
+        learningMode: mode,
         replace: question !== null,
       });
       window.requestAnimationFrame(() => {
@@ -1357,9 +1379,7 @@ export function StudyWorkspace({
                 locale={locale}
                 t={t}
                 onUpdateSession={(session, input) => { void updatePlanSession(session, input); }}
-                onStartSession={(session) => session.activity === "review"
-                  ? startReviewSession(session.topic_id, session.id)
-                  : practiceTopic(session.topic_id)}
+                onStartSession={startPlanSession}
                 practiceBusy={practiceBusy}
                 busySessionId={busySessionId}
                 topicLabels={progress?.topics}

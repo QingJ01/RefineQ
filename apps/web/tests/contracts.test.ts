@@ -736,8 +736,9 @@ describe("authentication and API errors", () => {
     expect(materialSource).toContain("controller.abort()");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
-    expect(workspaceSource).toContain('session.activity === "review"');
-    expect(workspaceSource).toContain("startReviewSession(session.topic_id, session.id)");
+    expect(workspaceSource).toContain("learningModeForActivity(session.activity");
+    expect(workspaceSource).toContain("planSessionId: session.id");
+    expect(workspaceSource).toContain("onStartSession={startPlanSession}");
     expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
@@ -875,7 +876,7 @@ describe("recoverable client workflows", () => {
 
 
 describe("targeted and saved practice API", () => {
-  it("sends topic, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
+  it("sends topic, plan session, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
     let requestedInit: RequestInit | undefined;
     const client = new ApiClient("/api", async (input, init) => {
@@ -899,6 +900,7 @@ describe("targeted and saved practice API", () => {
       learningMode: "case",
       difficulty: 4,
       replace: true,
+      planSessionId: "plan-session-1",
     });
 
     expect(requestedPath).toBe("/api/workspaces/workspace-1/learning/question");
@@ -909,6 +911,7 @@ describe("targeted and saved practice API", () => {
       difficulty: 4,
       mode: "case",
       replace: true,
+      plan_session_id: "plan-session-1",
     });
   });
 

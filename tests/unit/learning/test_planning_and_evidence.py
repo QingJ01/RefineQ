@@ -8,9 +8,35 @@ import pytest
 
 from refineq.learning.evidence import create_evidence, make_recommendation
 from refineq.learning.planning import build_study_plan
+from refineq.learning.service import _recent_learning_needs
 
 START = datetime(2026, 8, 6, 8, 0, tzinfo=UTC)
 EXAM = datetime(2026, 8, 10, 8, 0, tzinfo=UTC)
+
+
+def test_recent_learning_needs_are_bounded_and_topic_isolated() -> None:
+    evidence = [
+        {"details": {"topic_id": "other", "gaps": ["cross-topic gap"]}},
+        {"details": {"topic_id": "limits", "gaps": ["oldest gap"]}},
+        {"details": {"topic_id": "limits", "gaps": ["recent gap 1"]}},
+        {
+            "details": {
+                "topic_id": "limits",
+                "misconceptions": ["recent misconception"],
+            }
+        },
+        {"details": {"topic_id": "limits", "gaps": ["recent gap 2"]}},
+    ]
+
+    needs = _recent_learning_needs({"evidence": evidence}, "limits")
+
+    assert needs == [
+        {"gaps": ["recent gap 1"], "misconceptions": []},
+        {"gaps": [], "misconceptions": ["recent misconception"]},
+        {"gaps": ["recent gap 2"], "misconceptions": []},
+    ]
+    assert "cross-topic gap" not in str(needs)
+    assert "oldest gap" not in str(needs)
 
 
 def test_evidence_ids_are_idempotent_for_one_source_event() -> None:

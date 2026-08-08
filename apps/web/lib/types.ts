@@ -115,6 +115,7 @@ export interface PracticeRequest {
   difficulty?: number;
   replace?: boolean;
   reviewSessionId?: string;
+  planSessionId?: string;
 }
 
 export interface AnswerResult {
@@ -137,6 +138,7 @@ export interface AnswerResult {
   mastery_updated: boolean;
   next_review_at?: string | null;
   completed_review_session_id?: string | null;
+  completed_plan_session_id?: string | null;
   answer?: string;
   observed_at?: string | null;
   learner_note?: string | null;

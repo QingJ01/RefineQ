@@ -21,9 +21,11 @@ from refineq.learning.models import Grounding, LearningMode
 class FakeStructuredTransport:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.message_batches: list[list[dict[str, str]]] = []
 
     def complete(self, *, settings, messages, response_model):
-        del settings, messages
+        del settings
+        self.message_batches.append(messages)
         self.calls.append(response_model.__name__)
         if response_model.__name__ == "QuestionModelOutput":
             return response_model.model_validate(
@@ -98,6 +100,30 @@ def test_generated_question_is_grounded_and_filters_invented_citations(
     assert question.expected_answer
     assert sum(item.max_points for item in question.rubric) == 100
     assert transport.calls == ["QuestionModelOutput"]
+
+
+def test_prior_feedback_is_bounded_by_the_service_and_delimited_as_untrusted(
+    tmp_path: Path,
+) -> None:
+    service, transport = _service(tmp_path)
+
+    service.generate_question(
+        owner_id="owner",
+        workspace_id="calculus",
+        topic_id="limits",
+        topic_name="函数极限",
+        mastery=0.25,
+        difficulty_level=2,
+        prior_feedback=[
+            {"gaps": ["补充左右极限"], "misconceptions": ["把趋近等同于取值"]},
+        ],
+    )
+
+    prompt = "\n".join(message["content"] for message in transport.message_batches[-1])
+    assert "<untrusted_prior_feedback>" in prompt
+    assert "</untrusted_prior_feedback>" in prompt
+    assert "补充左右极限" in prompt
+    assert "把趋近等同于取值" in prompt
 
 
 def test_generated_task_preserves_a_domain_neutral_learning_mode(tmp_path: Path) -> None:
