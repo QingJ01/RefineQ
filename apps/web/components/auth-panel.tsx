@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ArrowRight, Eye, EyeOff, LockKeyhole } from "lucide-react";
 import Image from "next/image";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { api } from "@/lib/api";
@@ -29,6 +29,7 @@ export function AuthPanel({
   const [displayName, setDisplayName] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordResetAvailable, setPasswordResetAvailable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -39,6 +40,40 @@ export function AuthPanel({
     maximum: passwordBytes <= 72,
     matches: mode !== "reset" || (password.length > 0 && password === confirmPassword),
   };
+
+  useEffect(() => {
+    let active = true;
+    void api.getAuthCapabilities()
+      .then((capabilities) => {
+        if (active) setPasswordResetAvailable(capabilities.password_reset_available);
+      })
+      .catch(() => {
+        if (active) setPasswordResetAvailable(false);
+      });
+
+    if (window.location.hash.startsWith("#reset-token=")) {
+      const encodedToken = window.location.hash.slice("#reset-token=".length);
+      try {
+        const token = decodeURIComponent(encodedToken);
+        if (token.length >= 20 && token.length <= 500) {
+          setResetToken(token);
+          setMode("reset");
+        }
+      } catch {
+        setResetToken("");
+      } finally {
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}`,
+        );
+      }
+    }
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function changeMode(next: AuthMode) {
     setMode(next);
@@ -157,7 +192,7 @@ export function AuthPanel({
             <button data-testid="auth-submit" className="primary-action wide" disabled={busy || (needsStrongPassword && (!passwordRules.minimum || !passwordRules.maximum || !passwordRules.matches))}>
               <LockKeyhole size={17} /> {busy ? t("loading") : heading} <ArrowRight size={18} />
             </button>
-            {mode === "login" && <button type="button" data-testid="forgot-password" className="auth-text-button" onClick={() => changeMode("forgot")}>{t("forgotPassword")}</button>}
+            {mode === "login" && passwordResetAvailable && <button type="button" data-testid="forgot-password" className="auth-text-button" onClick={() => changeMode("forgot")}>{t("forgotPassword")}</button>}
             {(mode === "forgot" || mode === "reset") && <button type="button" className="auth-text-button" onClick={() => changeMode("login")}><ArrowLeft size={14} /> {t("backToLogin")}</button>}
           </form>
         </div>
