@@ -522,54 +522,71 @@ class AgentService:
                     turns.pop(next(iter(turns)))
             return data
 
-        if session is not None:
-            with self._sessions.conversation_transaction(owner_id, session_id):
-                try:
-                    latest_session = self._sessions.get(owner_id, session_id)
-                except RecordNotFoundError as error:
-                    raise AgentSessionConflictError(
-                        "Session changed during response generation"
-                    ) from error
-                latest_workspace_id = latest_session.data.get(
-                    "workspace_id"
-                ) or latest_session.data.get("project_id")
-                if latest_workspace_id != project_id:
-                    raise AgentSessionConflictError("Session belongs to another learning space")
-                replayed = replay_turn(latest_session.data)
-                if replayed is not None:
-                    return replayed
-                if latest_session.version != session.version:
-                    raise AgentSessionConflictError("Session changed during response generation")
-                self._sessions.mutate(owner_id, session_id, append_messages)
-        else:
-            with self._sessions.quota_transaction(owner_id):
-                try:
-                    concurrent_session = self._sessions.get(owner_id, session_id)
-                except RecordNotFoundError as error:
-                    if self._sessions.count(owner_id) >= self._max_sessions:
-                        raise AgentSessionLimitError("Agent session quota reached") from error
-                    self._sessions.create(
-                        owner_id,
-                        session_id,
-                        append_messages(
-                            {
-                                "session_id": session_id,
-                                "workspace_id": project_id,
-                                "messages": [],
-                                "turns": {},
-                            }
-                        ),
-                    )
-                else:
-                    concurrent_workspace_id = concurrent_session.data.get(
+        with self._learning.plan_transaction(owner_id, project_id):
+            try:
+                self._projects.get(owner_id, project_id)
+                latest_learning = self._learning.get(owner_id, project_id)
+                if not latest_learning.data.get("progress", {}).get("seeded"):
+                    raise RecordNotFoundError(project_id)
+            except RecordNotFoundError as error:
+                raise AgentSessionConflictError(
+                    "Learning space changed during response generation"
+                ) from error
+
+            if session is not None:
+                with self._sessions.conversation_transaction(owner_id, session_id):
+                    try:
+                        latest_session = self._sessions.get(owner_id, session_id)
+                    except RecordNotFoundError as error:
+                        raise AgentSessionConflictError(
+                            "Session changed during response generation"
+                        ) from error
+                    latest_workspace_id = latest_session.data.get(
                         "workspace_id"
-                    ) or concurrent_session.data.get("project_id")
-                    if concurrent_workspace_id != project_id:
+                    ) or latest_session.data.get("project_id")
+                    if latest_workspace_id != project_id:
                         raise AgentSessionConflictError("Session belongs to another learning space")
-                    replayed = replay_turn(concurrent_session.data)
+                    replayed = replay_turn(latest_session.data)
                     if replayed is not None:
                         return replayed
-                    raise AgentSessionConflictError("Session changed during response generation")
+                    if latest_session.version != session.version:
+                        raise AgentSessionConflictError(
+                            "Session changed during response generation"
+                        )
+                    self._sessions.mutate(owner_id, session_id, append_messages)
+            else:
+                with self._sessions.quota_transaction(owner_id):
+                    try:
+                        concurrent_session = self._sessions.get(owner_id, session_id)
+                    except RecordNotFoundError as error:
+                        if self._sessions.count(owner_id) >= self._max_sessions:
+                            raise AgentSessionLimitError("Agent session quota reached") from error
+                        self._sessions.create(
+                            owner_id,
+                            session_id,
+                            append_messages(
+                                {
+                                    "session_id": session_id,
+                                    "workspace_id": project_id,
+                                    "messages": [],
+                                    "turns": {},
+                                }
+                            ),
+                        )
+                    else:
+                        concurrent_workspace_id = concurrent_session.data.get(
+                            "workspace_id"
+                        ) or concurrent_session.data.get("project_id")
+                        if concurrent_workspace_id != project_id:
+                            raise AgentSessionConflictError(
+                                "Session belongs to another learning space"
+                            )
+                        replayed = replay_turn(concurrent_session.data)
+                        if replayed is not None:
+                            return replayed
+                        raise AgentSessionConflictError(
+                            "Session changed during response generation"
+                        )
         return AgentChatResponse(
             session_id=session_id,
             message=reply_text,

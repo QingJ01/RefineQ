@@ -202,7 +202,7 @@ class WorkspaceService:
             latest = self._workspaces.list(owner_id)
             if decision.workspace_id is None and len(latest) >= self._max_workspaces:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
-            if {item.id for item in latest} != {item.id for item in workspaces}:
+            if latest != workspaces:
                 raise WorkspaceConflictError("Learning workspaces changed during routing")
             return self._commit_resolution(
                 owner_id,

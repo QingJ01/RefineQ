@@ -189,6 +189,46 @@ def test_agent_model_work_runs_outside_database_transaction(tmp_path: Path) -> N
     assert transport.transaction_active is False
 
 
+def test_new_agent_session_is_not_created_after_workspace_deletion(tmp_path: Path) -> None:
+    transport = BlockingModelTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "agent-deleted-workspace@example.com")
+        headers = _headers(user["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习函数极限"},
+        ).json()["workspace"]["id"]
+        _configure_model(app)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    f"/workspaces/{workspace_id}/agent/chat",
+                    headers=headers,
+                    json={
+                        "session_id": "deleted-workspace-session",
+                        "turn_id": "deleted-workspace-turn",
+                        "message": "Explain limits",
+                    },
+                )
+                assert transport.started.wait(timeout=2)
+                app.state.workspace_service.delete(user["user_id"], workspace_id)
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "agent_session_conflict"
+    assert app.state.sessions.count(user["user_id"]) == 0
+
+
 def test_agent_uses_grounded_context_citations_and_persistent_session(
     tmp_path: Path,
 ) -> None:

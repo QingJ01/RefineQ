@@ -103,6 +103,59 @@ def test_workspace_routing_model_runs_outside_database_transaction(tmp_path: Pat
     assert transport.transaction_active is False
 
 
+def test_workspace_routing_rejects_a_stale_metadata_snapshot(tmp_path: Path) -> None:
+    transport = BlockingRoutingTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习函数极限"},
+        ).json()["workspace"]["id"]
+        admin = ensure_admin(
+            app.state.identity,
+            email="routing-snapshot-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="routing-model",
+                api_key="secret-key",
+            ),
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    "/workspaces/resolve",
+                    headers=headers,
+                    json={"intent": "继续学习函数极限"},
+                )
+                assert transport.started.wait(timeout=2)
+                renamed = client.patch(
+                    f"/workspaces/{workspace_id}",
+                    headers=headers,
+                    json={"title": "并发更新后的标题"},
+                )
+                assert renamed.status_code == 200
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "workspace_conflict"
+
+
 def test_concurrent_workspace_resolves_cannot_cross_owner_quota(
     tmp_path: Path, monkeypatch
 ) -> None:

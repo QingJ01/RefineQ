@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -191,10 +191,7 @@ class DiagnosticResultInput(BaseModel):
 class DiagnosticRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    diagnostic_id: str = Field(
-        default="initial",
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-    )
+    diagnostic_id: Literal["initial"] = "initial"
     results: list[DiagnosticResultInput] = Field(min_length=1, max_length=200)
 
 
@@ -506,7 +503,7 @@ class LearningService:
 
         def apply_diagnostic(data: dict[str, Any]) -> dict[str, Any]:
             progress = self._progress(data)
-            if payload.diagnostic_id in progress["diagnostic_runs"]:
+            if progress["diagnostic_runs"]:
                 return data
             seen_topics: set[str] = set()
             for result in payload.results:
@@ -515,6 +512,9 @@ class LearningService:
                 seen_topics.add(result.topic_id)
                 if result.topic_id not in progress["topics"]:
                     raise LearningConflictError(f"Unknown topic: {result.topic_id}")
+            if seen_topics != set(progress["topics"]):
+                raise LearningConflictError("Initial diagnostic must cover every topic")
+            for result in payload.results:
                 state = BKTState.model_validate(progress["bkt_states"][result.topic_id])
                 progress["bkt_states"][result.topic_id] = update_bkt(
                     state,
@@ -1193,7 +1193,11 @@ class LearningService:
             current_difficulty = DifficultyState.model_validate(
                 progress["difficulty_states"][topic_id]
             )
-            already_credited = payload.question_id in current_bkt.credited_question_ids
+            already_credited = payload.question_id in current_bkt.credited_question_ids or any(
+                attempt.get("question_id") == payload.question_id
+                and bool(attempt.get("mastery_updated", True))
+                for attempt in data["attempts"].values()
+            )
             mastery_updated = grade.mastery_evidence and not already_credited
             if mastery_updated:
                 bkt_state = update_bkt(current_bkt, is_correct=is_correct).model_copy(

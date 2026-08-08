@@ -310,24 +310,39 @@ def test_workspace_initial_diagnostic_is_reachable_and_owner_scoped(tmp_path: Pa
             f"/workspaces/{workspace_id}/learning/diagnostic",
             headers=alice_headers,
             json={
-                "diagnostic_id": "initial-ui",
+                "diagnostic_id": "initial",
                 "results": [
                     {"topic_id": topic_id, "is_correct": index % 2 == 0}
                     for index, topic_id in enumerate(topic_ids)
                 ],
             },
         )
+        mastery_after_initial = diagnosed.json()["mastery"]
+        repeated_with_new_id = client.post(
+            f"/workspaces/{workspace_id}/learning/diagnostic",
+            headers=alice_headers,
+            json={
+                "diagnostic_id": "second-pass",
+                "results": [{"topic_id": topic_id, "is_correct": True} for topic_id in topic_ids],
+            },
+        )
+        mastery_after_rejected_repeat = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=alice_headers,
+        ).json()["progress"]["mastery"]
         forbidden = client.post(
             f"/workspaces/{workspace_id}/learning/diagnostic",
             headers=_authorization(bob["token"]),
             json={
-                "diagnostic_id": "stolen",
+                "diagnostic_id": "initial",
                 "results": [{"topic_id": topic_ids[0], "is_correct": True}],
             },
         )
 
     assert diagnosed.status_code == 200
     assert diagnosed.json()["diagnostic_count"] == 1
+    assert repeated_with_new_id.status_code == 422
+    assert mastery_after_rejected_repeat == mastery_after_initial
     assert forbidden.status_code == 404
 
 

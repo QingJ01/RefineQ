@@ -395,6 +395,13 @@ def test_retrying_one_question_cannot_update_mastery_or_difficulty_twice(
                 "answer": substantive_answer,
             },
         ).json()
+
+        def evict_from_bounded_credit_cache(data):
+            state = data["progress"]["bkt_states"][question["topic_id"]]
+            state["credited_question_ids"] = [f"newer-question-{index}" for index in range(50)]
+            return data
+
+        app.state.learning.mutate(owner_id, workspace_id, evict_from_bounded_credit_cache)
         retried = client.post(
             f"/workspaces/{workspace_id}/learning/questions/{question['id']}/retry",
             headers=headers,
