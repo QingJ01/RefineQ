@@ -260,7 +260,8 @@ test("learner completes and restores a capability learning journey", async ({ pa
 
     await page.getByTestId("nav-progress").click();
     await expect(page).toHaveURL(/\/progress$/);
-    await expect(page.locator(".evidence-timeline li")).toHaveCount(2);
+    await expect(page.locator('[data-testid^="attempt-rubric-"]').first()).toBeVisible();
+    await expect(page.locator(".evidence-timeline > li")).toHaveCount(2);
     await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
     await expect(page.getByTestId("review-queue-empty")).toBeVisible();
 
