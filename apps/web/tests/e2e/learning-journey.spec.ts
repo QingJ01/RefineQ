@@ -99,6 +99,32 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(firstSession).toHaveClass(/completed/);
     await firstSession.locator('[data-testid^="complete-session-"]').click();
     await expect(firstSession).not.toHaveClass(/completed/);
+
+    await page.getByTestId("plan-settings-toggle").click();
+    const goal = page.getByTestId("plan-goal");
+    const originalGoal = await goal.inputValue();
+    await goal.fill("");
+    await page.getByTestId("plan-settings-save").click();
+    await expect(goal).toHaveAttribute("aria-invalid", "true");
+    await page.getByTestId("plan-settings-cancel").click();
+    await expect(goal).toHaveValue(originalGoal);
+
+    await goal.fill(`${originalGoal} with a reviewed case study`);
+    await page.getByTestId("plan-daily-minutes").fill("35");
+    const movableTopic = page.locator('[data-testid^="plan-topic-down-"]:not(:disabled)').first();
+    if (await movableTopic.count()) await movableTopic.click();
+    await page.getByTestId("plan-settings-save").click();
+    await expect(page.getByTestId("plan-settings-notice")).toBeVisible();
+    await expect(page.locator(".minute-badge")).toContainText("35");
+
+    await page.getByTestId("plan-settings-regenerate").click();
+    await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(page.getByTestId("confirm-dialog")).toBeHidden();
+    await page.getByTestId("plan-settings-regenerate").click();
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await expect(page.getByTestId("confirm-dialog")).toBeHidden();
+    await expect(page.locator(".plan-session")).toHaveCount(7);
   });
 
   await test.step("keep mobile navigation accessible", async () => {

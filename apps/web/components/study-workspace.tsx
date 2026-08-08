@@ -21,6 +21,7 @@ import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
+import { PlanSettings } from "@/components/plan-settings";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { ProgressInsights } from "@/components/progress-insights";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
@@ -45,6 +46,7 @@ import type {
   LearningWorkspace,
   Locale,
   MaterialRecord,
+  PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
   Progress,
@@ -89,6 +91,7 @@ export function StudyWorkspace({
   const [homeBusy, setHomeBusy] = useState(false);
   const [practiceBusy, setPracticeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
   const [error, setError] = useState("");
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
   const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
@@ -576,6 +579,35 @@ export function StudyWorkspace({
     }
   }
 
+  async function updatePlanSettings(input: PlanUpdateInput) {
+    if (!auth || !workspace) return;
+    setPlanSettingsBusy(true);
+    setError("");
+    try {
+      const updated = await api.updateWorkspacePlan(
+        auth.access_token,
+        workspace.id,
+        input,
+      );
+      setPlan(updated);
+      setWorkspace((current) => current ? { ...current, goal: input.goal } : current);
+      setWorkspaces((current) => current.map((item) => (
+        item.id === workspace.id ? { ...item, goal: input.goal } : item
+      )));
+      setProgress((current) => current ? {
+        ...current,
+        goal: input.goal,
+        plan_id: updated.id,
+        topic_order: [...input.topic_order],
+      } : current);
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    } finally {
+      setPlanSettingsBusy(false);
+    }
+  }
+
   async function undoWorkspaceRoute() {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
     setRoute(null);
@@ -820,6 +852,16 @@ export function StudyWorkspace({
                 <h2>{t("path")}</h2>
                 <p>{locale === "zh" ? "围绕能力目标组织每次学习，而不是堆积重复日程。" : "Each session advances the capability goal without a wall of repeated dates."}</p>
               </div>
+              {plan && progress && (
+                <PlanSettings
+                  locale={locale}
+                  plan={plan}
+                  topics={progress.topics}
+                  topicOrder={progress.topic_order}
+                  busy={planSettingsBusy}
+                  onSave={updatePlanSettings}
+                />
+              )}
               <PlanTimeline
                 plan={plan}
                 locale={locale}

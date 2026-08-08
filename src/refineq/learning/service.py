@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -169,6 +170,16 @@ class PlanSessionUpdate(BaseModel):
     planned_at: datetime | None = None
 
 
+class PlanUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(min_length=1, max_length=500)
+    exam_at: datetime
+    daily_minutes: int = Field(ge=5, le=480)
+    topic_order: list[str] = Field(min_length=1, max_length=200)
+    regenerate: bool = False
+
+
 class ProgressResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -176,6 +187,7 @@ class ProgressResponse(BaseModel):
     goal: str
     mastery: dict[str, float]
     topics: dict[str, str]
+    topic_order: list[str]
     diagnostic_count: int
     attempt_count: int
     plan_id: str | None = None
@@ -220,6 +232,7 @@ class LearningService:
                 topic_id: str(topic.get("name") or topic_id)
                 for topic_id, topic in progress["topics"].items()
             },
+            topic_order=list(progress.get("topic_order") or progress["topics"]),
             diagnostic_count=len(progress["diagnostic_runs"]),
             attempt_count=len(data["attempts"]),
             plan_id=plan["id"] if plan else None,
@@ -247,6 +260,7 @@ class LearningService:
                 "exam_at": payload.exam_at.astimezone(UTC).isoformat(),
                 "daily_minutes": payload.daily_minutes,
                 "topics": {topic.id: topic.model_dump(mode="json") for topic in payload.topics},
+                "topic_order": [topic.id for topic in payload.topics],
                 "bkt_states": {
                     topic.id: DEFAULT_BKT.model_dump(mode="json") for topic in payload.topics
                 },
@@ -373,6 +387,95 @@ class LearningService:
         if updated is None:
             raise LearningServiceError("Study session update failed")
         return StudySession.model_validate(updated)
+
+    def update_plan(
+        self,
+        owner_id: str,
+        project_id: str,
+        payload: PlanUpdateRequest,
+        *,
+        start_at: datetime | None = None,
+    ) -> StudyPlan:
+        self._require_project(owner_id, project_id)
+        if payload.exam_at.tzinfo is None or payload.exam_at.utcoffset() is None:
+            raise LearningConflictError("exam_at must be timezone-aware")
+        exam_at = payload.exam_at.astimezone(UTC)
+        generated: StudyPlan | None = None
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal generated
+            progress = self._progress(data)
+            plan = progress.get("plan")
+            if not plan:
+                raise LearningNotSeededError("Learning plan has not been created")
+            topic_ids = list(progress["topics"])
+            if (
+                len(payload.topic_order) != len(set(payload.topic_order))
+                or set(payload.topic_order) != set(topic_ids)
+            ):
+                raise LearningConflictError("topic_order must contain every learning topic once")
+
+            normalized_goal = payload.goal.strip()
+            observed_at = (start_at or datetime.now(UTC)).astimezone(UTC)
+            try:
+                candidate = build_study_plan(
+                    goal=normalized_goal,
+                    topic_ids=payload.topic_order,
+                    exam_at=exam_at,
+                    daily_minutes=payload.daily_minutes,
+                    start_at=observed_at,
+                )
+            except ValueError as error:
+                raise LearningConflictError(str(error)) from error
+
+            existing = StudyPlan.model_validate(plan)
+            if payload.regenerate:
+                completed_ids = {
+                    session.id for session in existing.sessions if session.status == "completed"
+                }
+                completed_kinds = Counter(
+                    (session.topic_id, session.activity)
+                    for session in existing.sessions
+                    if session.status == "completed"
+                )
+                sessions: list[StudySession] = []
+                for session in candidate.sessions:
+                    key = (session.topic_id, session.activity)
+                    completed = session.id in completed_ids or completed_kinds[key] > 0
+                    if completed and completed_kinds[key] > 0:
+                        completed_kinds[key] -= 1
+                    sessions.append(
+                        StudySession.model_validate(
+                            {
+                                **session.model_dump(mode="json"),
+                                "status": "completed" if completed else "planned",
+                            }
+                        )
+                    )
+                generated = StudyPlan.model_validate(
+                    {**candidate.model_dump(mode="json"), "sessions": sessions}
+                )
+            else:
+                generated = StudyPlan.model_validate(
+                    {
+                        **existing.model_dump(mode="json"),
+                        "goal": normalized_goal,
+                        "exam_at": exam_at,
+                        "daily_minutes": payload.daily_minutes,
+                    }
+                )
+
+            progress["goal"] = normalized_goal
+            progress["exam_at"] = exam_at.isoformat()
+            progress["daily_minutes"] = payload.daily_minutes
+            progress["topic_order"] = list(payload.topic_order)
+            progress["plan"] = generated.model_dump(mode="json")
+            return data
+
+        self._learning.mutate(owner_id, project_id, apply)
+        if generated is None:
+            raise LearningServiceError("Plan update failed")
+        return generated
 
     @staticmethod
     def _question_sources(question: dict[str, Any]) -> list[SearchResult]:

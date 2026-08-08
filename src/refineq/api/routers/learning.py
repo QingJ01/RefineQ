@@ -14,6 +14,7 @@ from refineq.learning.service import (
     LearningNotSeededError,
     LearningServiceError,
     PlanSessionUpdate,
+    PlanUpdateRequest,
     ProgressResponse,
     ProjectNotFoundError,
     QuestionNotFoundError,
@@ -23,6 +24,7 @@ from refineq.learning.service import (
     SavedQuestionResponse,
     SeedRequest,
 )
+from refineq.workspaces.service import WorkspaceNotFoundError
 
 router = APIRouter(prefix="/projects/{project_id}/learning", tags=["learning"])
 workspace_router = APIRouter(
@@ -236,6 +238,28 @@ def update_workspace_plan_session(
             session_id,
             payload,
         )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.put("/plan", response_model=StudyPlan)
+def update_workspace_plan(
+    workspace_id: str,
+    payload: PlanUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> StudyPlan:
+    try:
+        return request.app.state.workspace_service.update_plan(
+            user.id,
+            workspace_id,
+            payload,
+        )
+    except WorkspaceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
     except LearningServiceError as error:
         _raise_api_error(error)
 

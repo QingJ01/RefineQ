@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
@@ -15,6 +16,7 @@ from refineq.learning.planning import build_study_plan
 from refineq.learning.service import (
     AnswerResponse,
     LearningService,
+    PlanUpdateRequest,
     ProgressResponse,
     QuestionResponse,
     SavedQuestionResponse,
@@ -234,6 +236,32 @@ class WorkspaceService:
             )
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
+
+    def update_plan(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        payload: PlanUpdateRequest,
+    ) -> StudyPlan:
+        try:
+            self._workspaces.get(owner_id, workspace_id)
+            original_progress = deepcopy(
+                self._learning.get(owner_id, workspace_id).data["progress"]
+            )
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+
+        plan = self._learning_service.update_plan(owner_id, workspace_id, payload)
+        try:
+            self._workspaces.update(owner_id, workspace_id, goal=payload.goal)
+        except Exception:
+            def restore(data: dict) -> dict:
+                data["progress"] = deepcopy(original_progress)
+                return data
+
+            self._learning.mutate(owner_id, workspace_id, restore)
+            raise
+        return plan
 
     def delete(self, owner_id: str, workspace_id: str) -> None:
         try:

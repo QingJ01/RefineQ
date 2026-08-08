@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
+import { validatePlanSettings } from "../lib/plan-settings";
 import { learningSections, parseLearningSection } from "../lib/learning-routes";
 import {
   clearLearningSession,
@@ -149,14 +150,19 @@ describe("durable learner routing", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const switcherSource = readFileSync(
+      fileURLToPath(new URL("../components/workspace-switcher.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(workspaceSource).toContain('data-testid="workspace-home-link"');
-    expect(workspaceSource).toContain('data-testid="workspace-switcher"');
+    expect(workspaceSource).toContain("<WorkspaceSwitcher");
+    expect(switcherSource).toContain('data-testid="workspace-switcher"');
     expect(workspaceSource).toContain('className="workspace-nav-label"');
     expect(workspaceSource).not.toContain('className="sidebar-learning"');
     expect(workspaceSource).not.toContain('onClick={prepareHomeNavigation}');
     expect(workspaceSource).toContain('data-testid="workspace-route-state"');
-    expect(workspaceSource).toContain('aria-label={`${t("switchSpace")}: ${workspace.title}`}');
+    expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
 
   it("remounts learner state when the URL switches to a different workspace", () => {
@@ -705,6 +711,71 @@ describe("implicit workspace API", () => {
       { path: "/api/workspaces/resolve", method: "POST" },
       { path: "/api/workspaces/math-space/snapshot", method: "GET" },
     ]);
+  });
+
+  it("updates plan settings through the workspace plan contract", async () => {
+    let body: Record<string, unknown> | undefined;
+    const client = new ApiClient("/api", async (input, init) => {
+      expect(String(input)).toBe("/api/workspaces/math-space/learning/plan");
+      expect(init?.method).toBe("PUT");
+      const parsed = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      body = parsed;
+      return new Response(JSON.stringify({
+        id: "plan-2",
+        goal: parsed.goal,
+        exam_at: parsed.exam_at,
+        daily_minutes: parsed.daily_minutes,
+        sessions: [{
+          id: "session-2",
+          topic_id: "limits",
+          planned_at: "2026-08-09T08:00:00Z",
+          minutes: parsed.daily_minutes,
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const plan = await client.updateWorkspacePlan("token-1", "math-space", {
+      goal: "Pass calculus",
+      exam_at: "2026-08-20T23:59:59Z",
+      daily_minutes: 35,
+      topic_order: ["limits"],
+      regenerate: true,
+    });
+
+    expect(body).toEqual({
+      goal: "Pass calculus",
+      exam_at: "2026-08-20T23:59:59Z",
+      daily_minutes: 35,
+      topic_order: ["limits"],
+      regenerate: true,
+    });
+    expect(plan.id).toBe("plan-2");
+  });
+});
+
+describe("plan setting validation", () => {
+  it("requires a goal, a future date, valid minutes, and every topic exactly once", () => {
+    const invalid = validatePlanSettings({
+      goal: " ",
+      examDate: "2026-08-08",
+      dailyMinutes: 4,
+      topicOrder: ["limits", "limits"],
+      availableTopics: ["limits", "derivatives"],
+    }, new Date("2026-08-08T08:00:00Z"));
+
+    expect(invalid).toEqual(expect.objectContaining({
+      goal: expect.any(String),
+      examDate: expect.any(String),
+      dailyMinutes: expect.any(String),
+      topicOrder: expect.any(String),
+    }));
+    expect(validatePlanSettings({
+      goal: "Pass calculus",
+      examDate: "2026-08-20",
+      dailyMinutes: 35,
+      topicOrder: ["derivatives", "limits"],
+      availableTopics: ["limits", "derivatives"],
+    }, new Date("2026-08-08T08:00:00Z"))).toEqual({});
   });
 });
 

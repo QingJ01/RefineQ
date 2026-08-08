@@ -9,6 +9,7 @@ import { LearningHome } from "../components/learning-home";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
+import { PlanSettings } from "../components/plan-settings";
 import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
 import { SourceDrawer } from "../components/source-drawer";
@@ -449,6 +450,39 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="start-session-session-1"');
   });
 
+  it("renders editable plan settings with save, cancel, ordering, and regeneration controls", () => {
+    const html = renderToStaticMarkup(
+      <PlanSettings
+        locale="en"
+        plan={{
+          id: "plan-1",
+          goal: "Pass calculus",
+          exam_at: "2026-08-20T23:59:59Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-1",
+            topic_id: "limits",
+            planned_at: "2026-08-09T08:00:00Z",
+            minutes: 45,
+          }],
+        }}
+        topics={{ limits: "Limits", derivatives: "Derivatives" }}
+        topicOrder={["limits", "derivatives"]}
+        onSave={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="plan-settings"');
+    expect(html).toContain('data-testid="plan-goal"');
+    expect(html).toContain('data-testid="plan-exam-date"');
+    expect(html).toContain('data-testid="plan-daily-minutes"');
+    expect(html).toContain('data-testid="plan-topic-limits"');
+    expect(html).toContain('data-testid="plan-topic-up-derivatives"');
+    expect(html).toContain('data-testid="plan-settings-cancel"');
+    expect(html).toContain('data-testid="plan-settings-save"');
+    expect(html).toContain('data-testid="plan-settings-regenerate"');
+  });
+
   it("keeps long study paths focused until the learner expands them", () => {
     const html = renderToStaticMarkup(
       <PlanTimeline
@@ -517,6 +551,7 @@ describe("focused learning components", () => {
           goal: "Pass calculus",
           mastery: { limits: 0.72, derivatives: 0.34 },
           topics: { limits: "Function limits", derivatives: "Derivatives" },
+          topic_order: ["limits", "derivatives"],
           diagnostic_count: 1,
           attempt_count: 4,
           plan_id: "plan-1",

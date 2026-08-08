@@ -12,12 +12,14 @@ import type {
   IntegrationUpdateInput,
   MaterialRecord,
   PasswordResetAccepted,
+  PlanUpdateInput,
   PracticeRequest,
   PracticeQuestion,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
   SavedPracticeQuestion,
+  StudyPlan,
   StudySession,
   User,
   WorkspaceRoute,
@@ -276,6 +278,18 @@ export class ApiClient {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions/${sessionId}`,
       { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
+  updateWorkspacePlan(
+    token: string,
+    workspaceId: string,
+    input: PlanUpdateInput,
+  ): Promise<StudyPlan> {
+    return this.request<StudyPlan>(
+      `/workspaces/${workspaceId}/learning/plan`,
+      { method: "PUT", body: JSON.stringify(input) },
       token,
     );
   }

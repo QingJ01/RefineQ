@@ -63,10 +63,19 @@ export interface StudyPlan {
   sessions: StudySession[];
 }
 
+export interface PlanUpdateInput {
+  goal: string;
+  exam_at: string;
+  daily_minutes: number;
+  topic_order: string[];
+  regenerate: boolean;
+}
+
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
   topics: Record<string, string>;
+  topic_order: string[];
   diagnostic_count: number;
   attempt_count: number;
   plan_id: string | null;
