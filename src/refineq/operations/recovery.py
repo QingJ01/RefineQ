@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import BinaryIO
 
@@ -104,6 +105,26 @@ class RecoveryLease:
         except Exception:
             handle.close()
             raise
+
+    @classmethod
+    def acquire_wait(
+        cls,
+        path: Path,
+        *,
+        timeout_seconds: float = 1.0,
+        poll_seconds: float = 0.01,
+    ) -> RecoveryLease | None:
+        """Wait briefly for a normal concurrent mutation, then report contention."""
+
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            lease = cls.acquire(path)
+            if lease is not None:
+                return lease
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            time.sleep(min(poll_seconds, remaining))
 
     def release(self) -> None:
         if self._handle.closed:

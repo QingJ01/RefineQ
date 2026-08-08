@@ -28,6 +28,7 @@ from refineq.knowledge.index import (
     SearchResult,
 )
 from refineq.knowledge.policy import MaterialPolicy, MaterialPolicyError, UploadDescriptor
+from refineq.operations.recovery import RecoveryLease
 from refineq.storage.json_store import RecordNotFoundError
 
 router = APIRouter(prefix="/projects/{project_id}/materials", tags=["materials"])
@@ -151,6 +152,15 @@ def _store_and_index(
     material_payloads: list[bytes],
 ) -> list[MaterialRecord]:
     settings = request.app.state.settings
+    lease = RecoveryLease.acquire_wait(request.app.state.material_deletions.lease_path)
+    if lease is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "material_mutation_busy",
+                "message": "Another material operation is in progress",
+            },
+        )
     stored_objects = []
     try:
         indexed_documents: list[MaterialDocument] = []
@@ -174,6 +184,8 @@ def _store_and_index(
         for stored in reversed(stored_objects):
             stored.rollback()
         raise
+    finally:
+        lease.release()
 
 
 def _raise_quota_error(error: MaterialQuotaExceededError) -> None:

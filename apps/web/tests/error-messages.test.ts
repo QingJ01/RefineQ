@@ -22,6 +22,10 @@ describe("localized API errors", () => {
       new ApiError(409, "workspace_quota", "Learning workspace quota reached"),
       "zh",
     )).toBe("学习空间数量已达到上限。");
+    expect(localizeApiError(
+      new ApiError(409, "material_mutation_busy", "Material mutation is busy"),
+      "zh",
+    )).toBe("资料正在被整理，请稍后重试上传。");
   });
 
   it("uses a safe localized fallback for unknown failures", () => {

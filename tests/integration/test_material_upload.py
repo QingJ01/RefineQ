@@ -16,6 +16,7 @@ from refineq.api.app import create_app
 from refineq.config import Settings
 from refineq.database.schema import material_chunks, materials
 from refineq.knowledge.extract import MaterialExtractionLimitError
+from refineq.operations.recovery import RecoveryLease
 
 
 def _register(client: TestClient, email: str) -> str:
@@ -318,6 +319,69 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
     ).id == material["id"]
 
 
+def test_upload_refuses_to_race_an_active_material_object_deletion(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "upload-delete-race@example.com")
+        project_id = _project(client, token)
+        lease = RecoveryLease.acquire(app.state.material_deletions.lease_path)
+        assert lease is not None
+        try:
+            response = client.post(
+                f"/projects/{project_id}/materials",
+                headers=_headers(token),
+                files={"files": ("notes.txt", b"blocked upload", "text/plain")},
+            )
+        finally:
+            lease.release()
+
+        listed = client.get(
+            f"/projects/{project_id}/materials",
+            headers=_headers(token),
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "material_mutation_busy"
+    assert listed.json() == []
+
+
+def test_workspace_delete_restores_material_objects_when_index_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token = _register(client, "workspace-delete-compensation@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study durable workspace deletion"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"workspace material", "text/plain")},
+        ).json()[0]
+
+        def fail_delete(**kwargs):
+            del kwargs
+            raise RuntimeError("index unavailable")
+
+        monkeypatch.setattr(app.state.knowledge, "delete_materials", fail_delete)
+        failed = client.delete(f"/workspaces/{workspace_id}", headers=headers)
+        restored = client.get(
+            f"/workspaces/{workspace_id}/materials/{material['id']}/download",
+            headers=headers,
+        )
+
+    assert failed.status_code == 500
+    assert restored.status_code == 200
+    assert restored.content == b"workspace material"
+
+
 def test_pending_bulk_material_delete_is_recovered_after_process_interruption(
     tmp_path: Path,
 ) -> None:
@@ -411,7 +475,7 @@ def test_failed_material_index_delete_restores_the_original_object(
             del kwargs
             raise RuntimeError("index unavailable")
 
-        monkeypatch.setattr(app.state.knowledge, "delete_material", fail_delete)
+        monkeypatch.setattr(app.state.knowledge, "delete_materials", fail_delete)
         failed = client.delete(
             f"/projects/{project_id}/materials/{uploaded['id']}",
             headers=_headers(token),
@@ -421,7 +485,7 @@ def test_failed_material_index_delete_restores_the_original_object(
             headers=_headers(token),
         )
 
-    assert failed.status_code == 500
+    assert failed.status_code == 503
     assert restored.status_code == 200
     assert restored.content == b"Durable notes"
 

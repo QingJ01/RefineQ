@@ -333,3 +333,72 @@ export interface AdminOverview {
   users: number;
   integrations_configured: number;
 }
+
+export interface AdminQuotaValues {
+  materials: number;
+  material_bytes: number;
+  workspaces: number;
+}
+
+export interface AdminUserSummary extends User {
+  usage: AdminQuotaValues;
+  quotas: AdminQuotaValues;
+}
+
+export interface AdminUsersPage {
+  items: AdminUserSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export interface AdminJobSummary {
+  id: "material_index" | "embedding_backfill";
+  status: "idle" | "pending";
+  pending: number;
+  completed: number;
+  failed: number;
+  total: number;
+  last_activity_at: string | null;
+}
+
+export interface AdminJobsResponse {
+  items: AdminJobSummary[];
+  observed_at: string;
+}
+
+export interface AdminAuditEntry {
+  id: number;
+  actor_id: string;
+  actor_email: string;
+  action: string;
+  target: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AdminAuditPage {
+  items: AdminAuditEntry[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export interface ManagedBackup {
+  id: string;
+  created_at: string;
+  size: number;
+  file_count: number;
+  total_bytes: number;
+}
+
+export interface ManagedBackupsResponse {
+  items: ManagedBackup[];
+  total: number;
+}
+
+export interface RestoreValidationResponse extends ManagedBackup {
+  status: "validated";
+}

@@ -328,6 +328,28 @@ describe("focused learning components", () => {
     expect(html).not.toContain('data-testid="integration-card-embedding"');
   });
 
+  it("renders the administrator operations control plane with guarded backups", () => {
+    const html = renderToStaticMarkup(
+      <AdminConsole
+        token="admin-token"
+        locale="en"
+        activeSection="operations"
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="admin-operations"');
+    expect(html).toContain('data-testid="admin-users"');
+    expect(html).toContain('data-testid="admin-activity"');
+    expect(html).toContain('data-testid="admin-jobs"');
+    expect(html).toContain('data-testid="admin-backups"');
+    expect(html).toContain('data-testid="admin-create-backup"');
+    expect(html).toContain("Users and quotas");
+    expect(html).toContain("Audit activity");
+    expect(html).toContain("Material jobs");
+  });
+
   it("presents authentication as a calm RefineQ welcome card", () => {
     const html = renderToStaticMarkup(
       <AuthPanel t={translator("zh")} onAuthenticated={() => undefined} />,

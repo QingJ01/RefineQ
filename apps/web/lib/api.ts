@@ -5,6 +5,9 @@ import type {
   AgentSessionDetail,
   AgentSessionSummary,
   AdminOverview,
+  AdminAuditPage,
+  AdminJobsResponse,
+  AdminUsersPage,
   AnswerResult,
   AttemptFeedbackInput,
   AttemptFeedbackResponse,
@@ -16,6 +19,8 @@ import type {
   IntegrationUpdateInput,
   MaterialRecord,
   MaterialUpdateInput,
+  ManagedBackup,
+  ManagedBackupsResponse,
   PasswordResetAccepted,
   PlanUpdateInput,
   PracticeRequest,
@@ -24,6 +29,7 @@ import type {
   PublicModelSettings,
   SearchSource,
   SavedPracticeQuestion,
+  RestoreValidationResponse,
   StudyPlan,
   StudySession,
   User,
@@ -544,6 +550,40 @@ export class ApiClient {
 
   getAdminOverview(token: string): Promise<AdminOverview> {
     return this.request("/admin/overview", {}, token);
+  }
+
+  listAdminUsers(token: string, page = 1, pageSize = 20): Promise<AdminUsersPage> {
+    return this.request(`/admin/users?page=${page}&page_size=${pageSize}`, {}, token);
+  }
+
+  getAdminJobs(token: string): Promise<AdminJobsResponse> {
+    return this.request("/admin/jobs", {}, token);
+  }
+
+  listAdminAudit(token: string, page = 1, pageSize = 20): Promise<AdminAuditPage> {
+    return this.request(`/admin/audit?page=${page}&page_size=${pageSize}`, {}, token);
+  }
+
+  listAdminBackups(token: string): Promise<ManagedBackupsResponse> {
+    return this.request("/admin/backups", {}, token);
+  }
+
+  createAdminBackup(token: string): Promise<ManagedBackup> {
+    return this.request("/admin/backups", { method: "POST" }, token);
+  }
+
+  validateAdminRestore(
+    token: string,
+    backupId: string,
+  ): Promise<RestoreValidationResponse> {
+    return this.request(
+      `/admin/backups/${backupId}/restore-validation`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmation: `RESTORE ${backupId}` }),
+      },
+      token,
+    );
   }
 
   listIntegrations(token: string): Promise<PublicIntegrationSettings[]> {

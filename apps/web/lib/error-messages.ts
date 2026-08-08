@@ -5,6 +5,7 @@ import type { Locale } from "./types";
 const messages: Record<Locale, Record<string, string>> = {
   zh: {
     material_bulk_delete_failed: "所选资料未能安全删除，原文件与索引已尽力恢复。",
+    material_mutation_busy: "资料正在被整理，请稍后重试上传。",
     invalid_credentials: "邮箱或密码错误",
     unauthorized: "登录状态已失效，请重新登录。",
     model_not_configured: "学习 Agent 尚未配置模型，你仍可继续使用本地学习功能。",
@@ -24,6 +25,7 @@ const messages: Record<Locale, Record<string, string>> = {
   },
   en: {
     material_bulk_delete_failed: "The selected materials could not be deleted safely. Files and indexes were restored where possible.",
+    material_mutation_busy: "Materials are being organized. Try the upload again shortly.",
     invalid_credentials: "Invalid email or password.",
     unauthorized: "Your session has expired. Sign in again.",
     model_not_configured: "The learning Agent has not been configured. Local learning tools remain available.",

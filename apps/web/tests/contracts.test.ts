@@ -57,6 +57,9 @@ describe("administrator routing", () => {
     const integrationPage = fileURLToPath(
       new URL("../app/admin/integrations/[kind]/page.tsx", import.meta.url),
     );
+    const operationsPage = fileURLToPath(
+      new URL("../app/admin/operations/page.tsx", import.meta.url),
+    );
     const workspaceSource = readFileSync(
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
@@ -64,9 +67,69 @@ describe("administrator routing", () => {
 
     expect(existsSync(adminPage)).toBe(true);
     expect(existsSync(integrationPage)).toBe(true);
+    expect(existsSync(operationsPage)).toBe(true);
     expect(workspaceSource).toContain('router.push("/admin")');
     expect(workspaceSource).not.toContain('section === "admin"');
     expect(workspaceSource).not.toContain('"coach" | "admin"');
+  });
+
+  it("uses typed administrator operation endpoints and exact restore confirmations", async () => {
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      const path = String(input);
+      requests.push({
+        path,
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      if (path.includes("/users")) {
+        return new Response(JSON.stringify({ items: [], page: 1, page_size: 20, total: 0, pages: 0 }));
+      }
+      if (path.includes("/jobs")) {
+        return new Response(JSON.stringify({ items: [], observed_at: "2026-08-08T00:00:00Z" }));
+      }
+      if (path.includes("/audit")) {
+        return new Response(JSON.stringify({ items: [], page: 1, page_size: 20, total: 0, pages: 0 }));
+      }
+      if (path.endsWith("/backups") && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          id: "backup_20260808T000000000000Z_12345678",
+          created_at: "2026-08-08T00:00:00Z",
+          size: 10,
+          file_count: 1,
+          total_bytes: 5,
+        }), { status: 201 });
+      }
+      if (path.includes("restore-validation")) {
+        return new Response(JSON.stringify({
+          status: "validated",
+          id: "backup_20260808T000000000000Z_12345678",
+          created_at: "2026-08-08T00:00:00Z",
+          size: 10,
+          file_count: 1,
+          total_bytes: 5,
+        }));
+      }
+      return new Response(JSON.stringify({ items: [], total: 0 }));
+    });
+
+    const backupId = "backup_20260808T000000000000Z_12345678";
+    await client.listAdminUsers("token", 1, 20);
+    await client.getAdminJobs("token");
+    await client.listAdminAudit("token", 1, 20);
+    await client.listAdminBackups("token");
+    await client.createAdminBackup("token");
+    await client.validateAdminRestore("token", backupId);
+
+    expect(requests.map((item) => item.path)).toEqual([
+      "/api/admin/users?page=1&page_size=20",
+      "/api/admin/jobs",
+      "/api/admin/audit?page=1&page_size=20",
+      "/api/admin/backups",
+      "/api/admin/backups",
+      `/api/admin/backups/${backupId}/restore-validation`,
+    ]);
+    expect(requests.at(-1)?.body).toEqual({ confirmation: `RESTORE ${backupId}` });
   });
 });
 
