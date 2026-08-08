@@ -51,7 +51,8 @@ export function AuthPanel({
         if (active) setPasswordResetAvailable(false);
       });
 
-    if (window.location.hash.startsWith("#reset-token=")) {
+    function applyResetTokenFromHash() {
+      if (!active || !window.location.hash.startsWith("#reset-token=")) return;
       const encodedToken = window.location.hash.slice("#reset-token=".length);
       try {
         const token = decodeURIComponent(encodedToken);
@@ -60,7 +61,7 @@ export function AuthPanel({
           setMode("reset");
         }
       } catch {
-        setResetToken("");
+        // Ignore malformed external input and leave the login form usable.
       } finally {
         window.history.replaceState(
           null,
@@ -69,9 +70,13 @@ export function AuthPanel({
         );
       }
     }
+    const initialHashCheck = window.setTimeout(applyResetTokenFromHash, 0);
+    window.addEventListener("hashchange", applyResetTokenFromHash);
 
     return () => {
       active = false;
+      window.clearTimeout(initialHashCheck);
+      window.removeEventListener("hashchange", applyResetTokenFromHash);
     };
   }, []);
 
