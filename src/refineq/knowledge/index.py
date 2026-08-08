@@ -35,6 +35,11 @@ from refineq.knowledge.embeddings import Embedder
 from refineq.storage.json_store import validate_identifier
 
 logger = logging.getLogger(__name__)
+CHUNK_OVERLAP_RATIO = 0.12
+MIN_SEMANTIC_SIMILARITY = 0.2
+RRF_K = 60
+LEXICAL_RRF_WEIGHT = 0.35
+SEMANTIC_RRF_WEIGHT = 0.65
 
 
 def _lexical_terms(query: str) -> list[str]:
@@ -52,6 +57,41 @@ def _lexical_terms(query: str) -> list[str]:
         else:
             terms.append(segment)
     return list(dict.fromkeys(term for term in terms if term))[:20]
+
+
+def _weighted_rank_fusion(
+    lexical_scores: dict[tuple[str, int], float],
+    semantic_scores: dict[tuple[str, int], float] | None,
+) -> dict[tuple[str, int], float]:
+    """Fuse incomparable retrieval scores by rank, with a semantic noise floor."""
+
+    lexical_ranked = sorted(
+        (item for item in lexical_scores.items() if item[1] > 0),
+        key=lambda item: (-item[1], item[0]),
+    )
+    semantic_ranked = (
+        sorted(
+            (item for item in semantic_scores.items() if item[1] >= MIN_SEMANTIC_SIMILARITY),
+            key=lambda item: (-item[1], item[0]),
+        )
+        if semantic_scores is not None
+        else []
+    )
+    fused: dict[tuple[str, int], float] = {}
+    for rank, (key, _) in enumerate(lexical_ranked, start=1):
+        fused[key] = fused.get(key, 0.0) + LEXICAL_RRF_WEIGHT / (RRF_K + rank)
+    for rank, (key, _) in enumerate(semantic_ranked, start=1):
+        fused[key] = fused.get(key, 0.0) + SEMANTIC_RRF_WEIGHT / (RRF_K + rank)
+
+    enabled_weight = LEXICAL_RRF_WEIGHT + (
+        SEMANTIC_RRF_WEIGHT if semantic_scores is not None else 0.0
+    )
+    maximum = enabled_weight / (RRF_K + 1)
+    ranked = sorted(
+        ((key, score / maximum) for key, score in fused.items()),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return dict(ranked)
 
 
 def _postgres_cosine_distance(column: object, query_embedding: list[float]):
@@ -129,6 +169,8 @@ class KnowledgeIndex:
             database = Database(f"sqlite+pysqlite:///{path.as_posix()}")
             database.initialize()
         self.database = database
+        if chunk_chars < 1:
+            raise ValueError("chunk_chars must be positive")
         self.chunk_chars = chunk_chars
         self.embedder = embedder
         if embedding_batch_size < 1:
@@ -146,19 +188,37 @@ class KnowledgeIndex:
             return cls._locks.setdefault(key, RLock())
 
     def _chunks(self, text: str) -> list[str]:
-        paragraphs = [paragraph.strip() for paragraph in text.split("\n") if paragraph.strip()]
+        normalized = text.strip()
+        if not normalized:
+            return []
+        overlap = max(1, round(self.chunk_chars * CHUNK_OVERLAP_RATIO))
         chunks: list[str] = []
-        current = ""
-        for paragraph in paragraphs:
-            if current and len(current) + len(paragraph) + 1 > self.chunk_chars:
-                chunks.append(current)
-                current = ""
-            while len(paragraph) > self.chunk_chars:
-                chunks.append(paragraph[: self.chunk_chars])
-                paragraph = paragraph[self.chunk_chars :]
-            current = f"{current}\n{paragraph}".strip()
-        if current:
-            chunks.append(current)
+        start = 0
+        while start < len(normalized):
+            hard_end = min(len(normalized), start + self.chunk_chars)
+            end = hard_end
+            if hard_end < len(normalized):
+                minimum = start + max(1, round(self.chunk_chars * 0.6))
+                paragraph = normalized.rfind("\n\n", minimum, hard_end)
+                newline = normalized.rfind("\n", minimum, hard_end)
+                sentence_matches = list(
+                    re.finditer(r"[.!?。！？；;]", normalized[minimum:hard_end])
+                )
+                if paragraph >= 0:
+                    end = paragraph + 2
+                elif newline >= 0:
+                    end = newline + 1
+                elif sentence_matches:
+                    end = minimum + sentence_matches[-1].end()
+            chunk = normalized[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= len(normalized):
+                break
+            next_start = max(start + 1, end - overlap)
+            while next_start < end and normalized[next_start].isspace():
+                next_start += 1
+            start = next_start
         return chunks
 
     def _embed_or_none(self, texts: list[str]) -> list[list[float] | None]:
@@ -583,32 +643,36 @@ class KnowledgeIndex:
             else:
                 rows = session.execute(select(material_chunks).where(*scope)).all()
 
-        scored: list[tuple[float, object]] = []
         if self.database.is_postgresql:
-            lexical_scores = [
-                lexical_by_key.get((row.material_id, int(row.chunk_index)), 0.0) for row in rows
-            ]
+            lexical_scores = {
+                (row.material_id, int(row.chunk_index)): lexical_by_key.get(
+                    (row.material_id, int(row.chunk_index)), 0.0
+                )
+                for row in rows
+            }
         else:
-            lexical_scores = [self._lexical_score(row.content, query) for row in rows]
-        lexical_max = max(lexical_scores, default=0.0)
-        for row, lexical in zip(rows, lexical_scores, strict=True):
-            semantic = database_scores.get((row.material_id, int(row.chunk_index)), 0.0)
-            if (
-                not self.database.is_postgresql
-                and query_embedding is not None
-                and row.embedding is not None
-            ):
-                semantic = self._cosine(list(row.embedding), query_embedding)
-            if query_embedding is None and lexical <= 0:
+            lexical_scores = {
+                (row.material_id, int(row.chunk_index)): self._lexical_score(row.content, query)
+                for row in rows
+            }
+        semantic_scores = dict(database_scores)
+        if not self.database.is_postgresql and query_embedding is not None:
+            for row in rows:
+                if row.embedding is None:
+                    continue
+                key = (row.material_id, int(row.chunk_index))
+                semantic_scores[key] = self._cosine(list(row.embedding), query_embedding)
+        fused = _weighted_rank_fusion(
+            lexical_scores,
+            semantic_scores if query_embedding is not None else None,
+        )
+        rows_by_key = {(row.material_id, int(row.chunk_index)): row for row in rows}
+        scored: list[tuple[float, object]] = []
+        for key, score in fused.items():
+            row = rows_by_key.get(key)
+            if row is None:
                 continue
-            normalized_lexical = lexical / lexical_max if lexical_max else 0.0
-            score = (
-                normalized_lexical
-                if query_embedding is None
-                else 0.35 * normalized_lexical + 0.65 * max(0.0, semantic)
-            )
-            if score > 0:
-                scored.append((score, row))
+            scored.append((score, row))
 
         scored.sort(key=lambda item: (-item[0], item[1].material_id, item[1].chunk_index))
         return [

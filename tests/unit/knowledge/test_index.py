@@ -82,6 +82,33 @@ def test_search_matches_chinese_topic_terms_without_whitespace(tmp_path: Path) -
     assert [result.material_id for result in results] == ["pipeline-notes"]
 
 
+def test_chunk_overlap_keeps_a_fact_that_crosses_a_hard_window_boundary(
+    tmp_path: Path,
+) -> None:
+    index = KnowledgeIndex(tmp_path, chunk_chars=60)
+    fact = "BLUE ORCHID identifies the release"
+    text = f"{'x' * 54} {fact}. The remaining explanation follows."
+
+    chunks = index._chunks(text)
+
+    assert len(chunks) >= 2
+    assert all(len(chunk) <= 60 for chunk in chunks)
+    assert any(fact in chunk for chunk in chunks)
+
+
+def test_chunk_size_must_guarantee_forward_progress(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="chunk_chars"):
+        KnowledgeIndex(tmp_path, chunk_chars=0)
+
+
+def test_chunks_prefer_a_sentence_boundary_near_the_window_end(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path, chunk_chars=50)
+
+    chunks = index._chunks(f"{'a' * 35}. {'b' * 45}")
+
+    assert chunks[0].endswith(".")
+
+
 def test_reindexing_one_material_replaces_its_old_chunks(tmp_path: Path) -> None:
     index = KnowledgeIndex(tmp_path)
     inputs = {
