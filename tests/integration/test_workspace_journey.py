@@ -11,9 +11,11 @@ from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 
+from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
 from refineq.learning.service import AnswerRequest, PlanUpdateRequest
+from refineq.operations.admin import ensure_admin
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
 
@@ -29,6 +31,129 @@ def _register(client: TestClient) -> tuple[str, str]:
     )
     body = response.json()
     return body["access_token"], body["user"]["id"]
+
+
+class BlockingRoutingTransport:
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+        self.transaction_active: bool | None = None
+        self.inspect_transaction = lambda: False
+
+    def complete(self, *, settings, messages, response_model):
+        del settings, messages
+        self.transaction_active = self.inspect_transaction()
+        self.started.set()
+        self.release.wait(timeout=3)
+        return response_model.model_validate(
+            {
+                "action": "created",
+                "workspace_id": None,
+                "title": "Calculus learning",
+                "subject": "mathematics",
+                "topics": ["limits"],
+                "keywords": ["calculus", "limits"],
+                "confidence": 0.93,
+                "reason": "The learner requested a new calculus capability.",
+            }
+        )
+
+
+def test_workspace_routing_model_runs_outside_database_transaction(tmp_path: Path) -> None:
+    transport = BlockingRoutingTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=transport,
+    )
+    transport.inspect_transaction = lambda: app.state.store._active_session.get() is not None
+
+    with TestClient(app) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        admin = ensure_admin(
+            app.state.identity,
+            email="routing-transaction-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="routing-model",
+                api_key="secret-key",
+            ),
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    "/workspaces/resolve",
+                    headers=headers,
+                    json={"intent": "学习函数极限"},
+                )
+                assert transport.started.wait(timeout=2)
+                assert app.state.workspaces.list(owner_id) == []
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 200
+    assert transport.transaction_active is False
+
+
+def test_workspace_routing_rejects_a_stale_metadata_snapshot(tmp_path: Path) -> None:
+    transport = BlockingRoutingTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习函数极限"},
+        ).json()["workspace"]["id"]
+        admin = ensure_admin(
+            app.state.identity,
+            email="routing-snapshot-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="routing-model",
+                api_key="secret-key",
+            ),
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    "/workspaces/resolve",
+                    headers=headers,
+                    json={"intent": "继续学习函数极限"},
+                )
+                assert transport.started.wait(timeout=2)
+                renamed = client.patch(
+                    f"/workspaces/{workspace_id}",
+                    headers=headers,
+                    json={"title": "并发更新后的标题"},
+                )
+                assert renamed.status_code == 200
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "workspace_conflict"
 
 
 def test_concurrent_workspace_resolves_cannot_cross_owner_quota(
@@ -131,8 +256,164 @@ def test_intents_create_reuse_switch_and_restore_learning_spaces(
         assert body["progress"]["workspace_id"] == math_id
         assert "project_id" not in body["progress"]
         assert body["progress"]["goal"] == "我要在两周内复习高数极限"
+        assert body["progress"]["stable"] == {
+            topic_id: False for topic_id in body["progress"]["mastery"]
+        }
         assert body["plan"]["sessions"]
         assert body["materials"][0]["filename"] == "limits.md"
+
+
+def test_material_topic_suggestions_require_owner_confirmation_and_ignore_body(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习高等数学极限"},
+        ).json()["workspace"]["id"]
+        before = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files=[
+                (
+                    "files",
+                    (
+                        "opaque.md",
+                        b"SECRET_BODY_TOPIC must never become a learning topic.",
+                        "text/markdown",
+                    ),
+                )
+            ],
+        ).json()[0]
+        updated = client.patch(
+            f"/workspaces/{workspace_id}/materials/{uploaded['id']}",
+            headers=headers,
+            json={"title": "Continuity guide", "tags": ["epsilon-delta"]},
+        )
+        bob = client.post(
+            "/auth/register",
+            json={
+                "email": "topic-suggestion-bob@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Bob",
+            },
+        ).json()
+
+        suggestions = client.get(
+            f"/workspaces/{workspace_id}/topic-suggestions",
+            headers=headers,
+        )
+        forbidden = client.get(
+            f"/workspaces/{workspace_id}/topic-suggestions",
+            headers={"Authorization": f"Bearer {bob['access_token']}"},
+        )
+        unchanged = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+
+        assert updated.status_code == 200
+        assert suggestions.status_code == 200
+        by_name = {item["name"]: item for item in suggestions.json()}
+        assert {"Continuity guide", "epsilon-delta"} <= set(by_name)
+        assert "SECRET_BODY_TOPIC" not in " ".join(by_name)
+        assert forbidden.status_code == 404
+        assert unchanged["workspace"]["topics"] == before["workspace"]["topics"]
+        assert unchanged["progress"]["topics"] == before["progress"]["topics"]
+
+        forbidden_accept = client.post(
+            f"/workspaces/{workspace_id}/topic-suggestions/{by_name['epsilon-delta']['id']}/accept",
+            headers={"Authorization": f"Bearer {bob['access_token']}"},
+        )
+
+        accepted = client.post(
+            f"/workspaces/{workspace_id}/topic-suggestions/{by_name['epsilon-delta']['id']}/accept",
+            headers=headers,
+        )
+        replayed = client.post(
+            f"/workspaces/{workspace_id}/topic-suggestions/{by_name['epsilon-delta']['id']}/accept",
+            headers=headers,
+        )
+
+    assert accepted.status_code == 200
+    assert replayed.status_code == 200
+    assert forbidden_accept.status_code == 404
+    accepted_body = accepted.json()
+    assert "epsilon-delta" in accepted_body["workspace"]["topics"]
+    accepted_topic_id = by_name["epsilon-delta"]["id"]
+    assert accepted_body["progress"]["topics"][accepted_topic_id] == "epsilon-delta"
+    assert any(
+        session["topic_id"] == accepted_topic_id for session in accepted_body["plan"]["sessions"]
+    )
+    assert all(item["id"] != accepted_topic_id for item in accepted_body["topic_suggestions"])
+    assert replayed.json()["workspace"]["topics"].count("epsilon-delta") == 1
+
+
+def test_material_topic_acceptance_rolls_back_both_records_on_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    owner = app.state.identity.register(
+        email="topic-rollback@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Rollback Learner",
+    )
+    workspace = app.state.workspace_service.resolve(
+        owner.id,
+        WorkspaceResolveRequest(intent="学习高等数学极限"),
+        now=datetime(2026, 8, 8, tzinfo=UTC),
+    ).workspace
+    app.state.knowledge.add_document(
+        owner_id=owner.id,
+        project_id=workspace.id,
+        material_id="continuity-material",
+        filename="continuity.md",
+        text="material body",
+        content_type="text/markdown",
+    )
+    app.state.knowledge.update_material_metadata(
+        owner_id=owner.id,
+        project_id=workspace.id,
+        material_id="continuity-material",
+        tags=[f"tag-{index}" for index in range(12)],
+    )
+    suggestions = app.state.workspace_service.topic_suggestions(owner.id, workspace.id)
+    suggestion = next(item for item in suggestions if item.name == "continuity.md")
+    assert len(suggestions) == 12
+    workspace_before = app.state.workspaces.snapshot(owner.id, workspace.id)
+    learning_before = app.state.learning.get(owner.id, workspace.id)
+    original_add_topic = app.state.workspace_learning_service.add_topic
+
+    def fail_after_learning_write(*args, **kwargs):
+        original_add_topic(*args, **kwargs)
+        raise RuntimeError("simulated second-record failure")
+
+    monkeypatch.setattr(
+        app.state.workspace_learning_service,
+        "add_topic",
+        fail_after_learning_write,
+    )
+
+    with pytest.raises(RuntimeError, match="second-record failure"):
+        app.state.workspace_service.accept_topic_suggestion(
+            owner.id,
+            workspace.id,
+            suggestion.id,
+            now=datetime(2026, 8, 8, 1, tzinfo=UTC),
+        )
+
+    assert (
+        app.state.workspaces.get(owner.id, workspace.id).model_dump(mode="json")
+        == workspace_before.data
+    )
+    assert app.state.learning.get(owner.id, workspace.id).data == learning_before.data
 
 
 def test_workspace_snapshot_is_owner_scoped(tmp_path: Path) -> None:

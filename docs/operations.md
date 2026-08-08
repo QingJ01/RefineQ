@@ -3,6 +3,19 @@
 Production state spans PostgreSQL and the object store selected in the administrator console. Stop
 writes before backup or restore so both snapshots represent the same point in time.
 
+## Health and model-call observability
+
+The public reverse proxy sends `/health` directly to the API. Container health checks use the same
+readiness semantics with short startup intervals; a successful response proves the process and its
+required local dependencies are ready, not that every optional AI provider is reachable. Do not put
+credentials, user data, or provider responses in this endpoint.
+
+Question generation, workspace routing, and Agent replies release their database transactions before
+waiting on model providers. A slow provider should therefore increase request latency without holding
+an idle database transaction. Safe fallback logs contain only an event name, reason category, elapsed
+time, and generation mode. Answers, material text, tokens, email addresses, owner identifiers, and
+provider endpoints must not be added to those events.
+
 ## Administrator account
 
 Local development:
@@ -49,10 +62,17 @@ Fernet key separately; without it, saved API and object-storage credentials cann
 ## Managed backups in the administrator console
 
 Open **System administration → Platform operations** to inspect user quotas, background indexing
-jobs, recent audit activity, and backups managed under `REFINEQ_DATA_ROOT`. **Create backup** produces
+jobs, recent audit activity, and backups managed under `REFINEQ_BACKUP_ROOT`. **Create backup** produces
 a verified archive and records the action in the administrator audit log. The backup list exposes
 only generated identifiers, timestamps, counts, and byte sizes; absolute server paths are never sent
 to the browser.
+
+The Compose deployment mounts `REFINEQ_BACKUP_ROOT=/backups` from the separate
+`refineq-backups` volume. Keeping archives outside `/data` prevents recursive backups, and the
+dedicated writable mount keeps managed backup creation working while the container root filesystem
+is read-only. Copy both the PostgreSQL dump and this volume to storage with an independent failure
+domain; a volume on the same host is durable across container replacement, not a disaster-recovery
+copy by itself.
 
 The restore action in the console is validation-only: it verifies the selected archive and records
 the validation result, but does not replace a running system's state. For an actual restore, stop

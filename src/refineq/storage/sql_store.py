@@ -87,6 +87,11 @@ class SqlRecordStore:
         with self._lock_for(lock_key):
             active = self._active_session.get()
             if active is not None:
+                if self.database.is_postgresql:
+                    active.execute(
+                        text("SELECT pg_advisory_xact_lock(:key)"),
+                        {"key": self._advisory_key(owner_id, scope)},
+                    )
                 yield
                 return
             with self.database.session() as session:

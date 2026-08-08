@@ -183,3 +183,31 @@ def test_optional_password_delivery_and_demo_credentials_are_runtime_configured(
     assert "REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN=false" in example
     assert 'refineq-demo = "refineq.operations.demo_cli:main"' in _read("pyproject.toml")
     assert "api refineq-demo" in _read("docs/deployment.md")
+
+
+def test_compose_trusts_only_the_pinned_reverse_proxy_address() -> None:
+    compose = _read("infra/compose.yml")
+    example = _read(".env.example")
+
+    assert 'REFINEQ_FORWARDED_ALLOW_IPS: "${REFINEQ_FORWARDED_ALLOW_IPS:-172.30.0.2}"' in compose
+    assert "REFINEQ_FORWARDED_ALLOW_IPS=172.30.0.2" in example
+    assert "ipv4_address: 172.30.0.2" in compose
+    assert "subnet: 172.30.0.0/24" in compose
+    assert "REFINEQ_FORWARDED_ALLOW_IPS=*" not in example
+
+
+def test_runtime_operations_are_reachable_and_use_persistent_storage() -> None:
+    compose = _read("infra/compose.yml")
+    caddy = _read("infra/Caddyfile")
+    api_image = _read("infra/Dockerfile.api")
+    web_image = _read("infra/Dockerfile.web")
+    example = _read(".env.example")
+
+    assert 'REFINEQ_BACKUP_ROOT: "${REFINEQ_BACKUP_ROOT:-/backups}"' in compose
+    assert "refineq-backups:/backups" in compose
+    assert "refineq-backups:" in compose
+    assert "REFINEQ_BACKUP_ROOT=/backups" in example
+    assert "handle /health/*" in caddy
+    assert "reverse_proxy api:8000" in caddy
+    assert "HEALTHCHECK --interval=5s" in api_image
+    assert "HEALTHCHECK --interval=5s" in web_image

@@ -736,8 +736,9 @@ describe("authentication and API errors", () => {
     expect(materialSource).toContain("controller.abort()");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
-    expect(workspaceSource).toContain('session.activity === "review"');
-    expect(workspaceSource).toContain("startReviewSession(session.topic_id, session.id)");
+    expect(workspaceSource).toContain("learningModeForActivity(session.activity");
+    expect(workspaceSource).toContain("planSessionId: session.id");
+    expect(workspaceSource).toContain("onStartSession={startPlanSession}");
     expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
@@ -875,7 +876,7 @@ describe("recoverable client workflows", () => {
 
 
 describe("targeted and saved practice API", () => {
-  it("sends topic, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
+  it("sends topic, plan session, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
     let requestedInit: RequestInit | undefined;
     const client = new ApiClient("/api", async (input, init) => {
@@ -899,6 +900,7 @@ describe("targeted and saved practice API", () => {
       learningMode: "case",
       difficulty: 4,
       replace: true,
+      planSessionId: "plan-session-1",
     });
 
     expect(requestedPath).toBe("/api/workspaces/workspace-1/learning/question");
@@ -909,6 +911,7 @@ describe("targeted and saved practice API", () => {
       difficulty: 4,
       mode: "case",
       replace: true,
+      plan_session_id: "plan-session-1",
     });
   });
 
@@ -1156,6 +1159,57 @@ describe("persistent personal learning session", () => {
 
 
 describe("implicit workspace API", () => {
+  it("lists and explicitly accepts owner-scoped material topic suggestions", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({ path: String(input), method: String(init?.method ?? "GET") });
+      const body = String(input).endsWith("/accept") ? {} : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.listWorkspaceTopicSuggestions("token", "math-space");
+    await client.acceptWorkspaceTopicSuggestion("token", "math-space", "topic_epsilon");
+
+    expect(requests).toEqual([
+      { path: "/api/workspaces/math-space/topic-suggestions", method: "GET" },
+      {
+        path: "/api/workspaces/math-space/topic-suggestions/topic_epsilon/accept",
+        method: "POST",
+      },
+    ]);
+  });
+
+  it("submits the initial diagnostic through the owner-scoped workspace route", async () => {
+    let requestedPath = "";
+    let requestedBody: unknown;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        goal: "Pass calculus",
+        mastery: { limits: 0.4 },
+        topics: { limits: "Limits" },
+        topic_order: ["limits"],
+        diagnostic_count: 1,
+        attempt_count: 0,
+        plan_id: "plan-1",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.submitWorkspaceDiagnostic("token", "math-space", [
+      { topic_id: "limits", is_correct: true },
+    ]);
+
+    expect(requestedPath).toBe("/api/workspaces/math-space/learning/diagnostic");
+    expect(requestedBody).toEqual({
+      diagnostic_id: "initial",
+      results: [{ topic_id: "limits", is_correct: true }],
+    });
+  });
+
   it("resolves an intent and restores a workspace snapshot", async () => {
     const requests: Array<{ path: string; method: string }> = [];
     const client = new ApiClient("/api", async (input, init) => {

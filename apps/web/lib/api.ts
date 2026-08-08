@@ -26,6 +26,7 @@ import type {
   PlanUpdateInput,
   PracticeRequest,
   PracticeQuestion,
+  Progress,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
@@ -33,6 +34,7 @@ import type {
   RestoreValidationResponse,
   StudyPlan,
   StudySession,
+  TopicSuggestion,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -250,6 +252,40 @@ export class ApiClient {
     return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
   }
 
+  listWorkspaceTopicSuggestions(
+    token: string,
+    workspaceId: string,
+  ): Promise<TopicSuggestion[]> {
+    return this.request(`/workspaces/${workspaceId}/topic-suggestions`, {}, token);
+  }
+
+  acceptWorkspaceTopicSuggestion(
+    token: string,
+    workspaceId: string,
+    suggestionId: string,
+  ): Promise<WorkspaceSnapshot> {
+    return this.request(
+      `/workspaces/${workspaceId}/topic-suggestions/${suggestionId}/accept`,
+      { method: "POST" },
+      token,
+    );
+  }
+
+  submitWorkspaceDiagnostic(
+    token: string,
+    workspaceId: string,
+    results: Array<{ topic_id: string; is_correct: boolean }>,
+  ): Promise<Progress> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/diagnostic`,
+      {
+        method: "POST",
+        body: JSON.stringify({ diagnostic_id: "initial", results }),
+      },
+      token,
+    );
+  }
+
   getWorkspaceQuestion(
     token: string,
     workspaceId: string,
@@ -280,6 +316,7 @@ export class ApiClient {
           mode: options.learningMode ?? "concept",
           replace: options.replace ?? false,
           review_session_id: options.reviewSessionId,
+          plan_session_id: options.planSessionId,
         }),
       },
       token,

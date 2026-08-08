@@ -343,7 +343,12 @@ class RequestLimitMiddleware(BaseHTTPMiddleware):
         call_next: RequestResponseEndpoint,
     ) -> Response:
         client = self._client_key(request)
-        is_auth_request = request.url.path in {"/auth/register", "/auth/login"}
+        is_auth_request = request.url.path in {
+            "/auth/register",
+            "/auth/login",
+            "/auth/password-reset/request",
+            "/auth/password-reset/complete",
+        }
         if is_auth_request:
             retry_after = self._limiter.check(
                 f"auth:{client}",

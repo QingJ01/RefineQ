@@ -7,6 +7,7 @@ import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
 import { LearningHome } from "../components/learning-home";
+import { InitialDiagnostic } from "../components/initial-diagnostic";
 import { LearningReport } from "../components/learning-report";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
@@ -27,6 +28,26 @@ import type { SearchSource } from "../lib/types";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders an accessible initial self-assessment for every topic", () => {
+    const html = renderToStaticMarkup(
+      <InitialDiagnostic
+        locale="en"
+        topics={{ limits: "Function limits", derivatives: "Derivatives" }}
+        busy={false}
+        onSubmit={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="initial-diagnostic"');
+    expect(html).toContain("Function limits");
+    expect(html).toContain("Derivatives");
+    expect(html).toContain('name="diagnostic-limits"');
+    expect(html).toContain('name="diagnostic-derivatives"');
+    expect(html).toContain('type="radio"');
+    expect(html).toContain('data-testid="submit-initial-diagnostic"');
+    expect(html).toContain("disabled");
+  });
+
   it("renders a complete account and security center with an explicit danger zone", () => {
     const html = renderToStaticMarkup(
       <AccountCenter
@@ -358,6 +379,7 @@ describe("focused learning components", () => {
           explanation: "这道题用于检验你能否从行为证据识别真实需求。",
           grounding,
           sources,
+          mode: "ai",
         } : null}
         answer=""
         result={reflect ? {
@@ -372,7 +394,7 @@ describe("focused learning components", () => {
           feedback: "已经区分了表面诉求与行为证据。",
           strengths: ["引用了行为证据"],
           gaps: [],
-          misconceptions: [],
+          misconceptions: ["misread observed behavior as stated preference"],
           citations: [],
           sources,
           grounding,
@@ -401,6 +423,7 @@ describe("focused learning components", () => {
     const recoveryHtml = renderGrounding("material", [source], true, false);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
+    expect(materialHtml).toContain('data-testid="question-generation-mode"');
     expect(materialHtml).toContain('data-testid="question-explanation"');
     expect(materialHtml).toContain("这道题用于检验你能否从行为证据识别真实需求。");
     expect(materialHtml).toContain("材料依据");
@@ -410,6 +433,9 @@ describe("focused learning components", () => {
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
+    expect(feedbackHtml).toContain('data-testid="grading-mode"');
+    expect(feedbackHtml).toContain('data-testid="feedback-misconceptions"');
+    expect(feedbackHtml).toContain("misread observed behavior as stated preference");
     expect(feedbackHtml).toContain("材料依据");
     expect(feedbackHtml).toContain('data-testid="feedback-sources"');
     expect(feedbackHtml).toContain("用户访谈原文.md");
@@ -848,6 +874,47 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="practice-recommended-topic"');
   });
 
+  it("breaks equal-mastery recommendation ties by topic id", () => {
+    const html = renderToStaticMarkup(
+      <ProgressInsights
+        t={t}
+        progress={{
+          goal: "Pass calculus",
+          mastery: { topic_z: 0.2, topic_a: 0.2 },
+          topics: { topic_z: "Zeta", topic_a: "Alpha" },
+          topic_order: ["topic_z", "topic_a"],
+          diagnostic_count: 0,
+          attempt_count: 0,
+          plan_id: "plan-1",
+        }}
+        onPracticeTopic={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/progress-recommendation[\s\S]*<strong>Alpha<\/strong>/);
+  });
+
+  it("labels mastery only after the backend marks the evidence stable", () => {
+    const baseProgress = {
+      goal: "Pass calculus",
+      mastery: { limits: 0.99 },
+      topics: { limits: "Limits" },
+      topic_order: ["limits"],
+      diagnostic_count: 0,
+      attempt_count: 1,
+      plan_id: "plan-1",
+    };
+    const unstable = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={{ ...baseProgress, stable: { limits: false } }} />,
+    );
+    const stable = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={{ ...baseProgress, stable: { limits: true } }} />,
+    );
+
+    expect(unstable).not.toContain("Mastered");
+    expect(stable).toContain("Mastered");
+  });
+
   it("renders due reviews and a topic drill-down with stable empty states", () => {
     const reviewHtml = renderToStaticMarkup(
       <ReviewQueue
@@ -1066,6 +1133,12 @@ describe("focused learning components", () => {
         onDelete={() => undefined}
         onUpdate={async () => undefined}
         onBulkDelete={async () => undefined}
+        topicSuggestions={[{
+          id: "topic_epsilon_delta",
+          name: "epsilon-delta",
+          source_material_ids: ["material-1"],
+        }]}
+        onAcceptTopicSuggestion={async () => undefined}
       />,
     );
 
@@ -1083,6 +1156,9 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="material-download-material-1"');
     expect(html).toContain('data-testid="material-delete-material-1"');
     expect(html).toContain('data-testid="material-metadata-material-1"');
+    expect(html).toContain('data-testid="material-topic-suggestions"');
+    expect(html).toContain('data-testid="accept-topic-topic_epsilon_delta"');
+    expect(html).toContain("Add topic");
     expect(html).toContain("12 B");
     expect(html).toContain("text/plain");
   });

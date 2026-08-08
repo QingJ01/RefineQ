@@ -76,6 +76,23 @@ def diagnose(
         _raise_api_error(error)
 
 
+@workspace_router.post("/diagnostic", response_model=ProgressResponse)
+def diagnose_workspace(
+    workspace_id: str,
+    payload: DiagnosticRequest,
+    request: Request,
+    user: CurrentUser,
+) -> ProgressResponse:
+    try:
+        return request.app.state.workspace_learning_service.diagnose(
+            user.id,
+            workspace_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
 @router.post("/plan", response_model=StudyPlan)
 def create_plan(project_id: str, request: Request, user: CurrentUser) -> StudyPlan:
     try:
@@ -101,6 +118,7 @@ def create_question(
             replace_pending=payload.replace,
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
+            plan_session_id=payload.plan_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -123,6 +141,7 @@ def create_workspace_question(
             replace_pending=payload.replace,
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
+            plan_session_id=payload.plan_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)

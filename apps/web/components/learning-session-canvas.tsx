@@ -66,6 +66,7 @@ const interfaceCopy = {
     score: "本次评价",
     strength: "做得好的地方",
     gap: "下一步改进",
+    misconception: "需要纠正的误区",
     noStrengths: "这次还没有识别到明确亮点",
     noGaps: "请先补充完整回答，再生成针对性改进建议",
     review: "后续巩固",
@@ -95,6 +96,7 @@ const interfaceCopy = {
     score: "Evaluation",
     strength: "What worked",
     gap: "Improve next",
+    misconception: "Misconceptions to correct",
     noStrengths: "No clear strength was identified in this response yet",
     noGaps: "Add a complete response to receive a focused improvement suggestion",
     review: "Follow-up review",
@@ -328,6 +330,11 @@ export function LearningSessionCanvas({
               <span className={`session-grounding-badge ${taskGrounding}`} data-testid="practice-grounding">
                 {groundingLabel}
               </span>
+              {question.mode && (
+                <span className="session-grounding-badge" data-testid="question-generation-mode">
+                  {question.mode === "ai" ? t("aiQuestion") : t("fallbackQuestion")}
+                </span>
+              )}
               <h2>{question.prompt}</h2>
               {question.explanation && (
                 <div className="question-explanation" data-testid="question-explanation">
@@ -396,6 +403,9 @@ export function LearningSessionCanvas({
               <span className={`session-grounding-badge ${taskGrounding}`} data-testid="feedback-grounding">
                 {groundingLabel}
               </span>
+              <span className="session-grounding-badge" data-testid="grading-mode">
+                {result.grading_mode === "ai" ? t("aiGrading") : t("fallbackGrading")}
+              </span>
               <h2>{result.feedback}</h2>
               {taskSources.length > 0 && (
                 <button
@@ -420,6 +430,12 @@ export function LearningSessionCanvas({
                     ? <ul>{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul>
                     : <p className="feedback-empty">{text.noGaps}</p>}
                 </section>
+                {result.misconceptions.length > 0 && (
+                  <section data-testid="feedback-misconceptions">
+                    <h3>{text.misconception}</h3>
+                    <ul>{result.misconceptions.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </section>
+                )}
               </div>
               {result.mastery_updated && masteryBefore !== null ? (
                 <div className="session-mastery-change" data-testid="mastery-change">

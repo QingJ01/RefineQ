@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from refineq.agent.settings import ModelSettings, ModelSettingsRepository
+from refineq.agent.settings import ModelNotConfiguredError, ModelSettings, ModelSettingsRepository
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
 from refineq.workspaces.models import LearningWorkspace
 
@@ -50,18 +50,28 @@ class RoutingTransport:
         )
 
 
-def _settings(tmp_path: Path, *, configured: bool) -> ModelSettingsRepository:
-    repository = ModelSettingsRepository(tmp_path)
-    if configured:
-        repository.save(
-            "owner",
+class FakeModelSettings:
+    def __init__(self, *, configured: bool) -> None:
+        self.settings = (
             ModelSettings(
                 base_url="https://api.openai.com/v1",
                 model="routing-model",
                 api_key="secret-key",
-            ),
+            )
+            if configured
+            else None
         )
-    return repository
+
+    def load(self, owner_id: str) -> ModelSettings:
+        del owner_id
+        if self.settings is None:
+            raise ModelNotConfiguredError("Model settings have not been configured")
+        return self.settings
+
+
+def _settings(tmp_path: Path, *, configured: bool) -> ModelSettingsRepository:
+    del tmp_path
+    return FakeModelSettings(configured=configured)
 
 
 def test_configured_model_can_select_a_valid_existing_workspace(tmp_path: Path) -> None:

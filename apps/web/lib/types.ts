@@ -51,6 +51,13 @@ export interface WorkspaceSnapshot {
   saved_questions?: SavedPracticeQuestion[];
   active_question?: PracticeQuestion | null;
   last_answer?: AnswerResult | null;
+  topic_suggestions?: TopicSuggestion[];
+}
+
+export interface TopicSuggestion {
+  id: string;
+  name: string;
+  source_material_ids: string[];
 }
 
 export interface StudySession {
@@ -81,11 +88,17 @@ export interface PlanUpdateInput {
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
+  stable?: Record<string, boolean>;
   topics: Record<string, string>;
   topic_order: string[];
   diagnostic_count: number;
   attempt_count: number;
   plan_id: string | null;
+}
+
+export interface DiagnosticResultInput {
+  topic_id: string;
+  is_correct: boolean;
 }
 
 export interface PracticeQuestion {
@@ -114,6 +127,7 @@ export interface PracticeRequest {
   difficulty?: number;
   replace?: boolean;
   reviewSessionId?: string;
+  planSessionId?: string;
 }
 
 export interface AnswerResult {
@@ -136,6 +150,7 @@ export interface AnswerResult {
   mastery_updated: boolean;
   next_review_at?: string | null;
   completed_review_session_id?: string | null;
+  completed_plan_session_id?: string | null;
   answer?: string;
   observed_at?: string | null;
   learner_note?: string | null;

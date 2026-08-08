@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from threading import Event
 from time import monotonic
@@ -266,7 +267,7 @@ def test_plan_move_uses_the_learners_timezone_for_relative_weekdays() -> None:
     assert shanghai.planned_at != los_angeles.planned_at
 
 
-def test_bounded_intent_executor_rejects_work_instead_of_queueing() -> None:
+def test_bounded_intent_executor_rejects_work_instead_of_queueing(caplog) -> None:
     executor = BoundedIntentExecutor(max_workers=1)
     started = Event()
     release = Event()
@@ -281,8 +282,10 @@ def test_bounded_intent_executor_rejects_work_instead_of_queueing() -> None:
     assert started.wait(timeout=1)
 
     observed_at = monotonic()
-    assert executor.submit(lambda: "queued") is None
+    with caplog.at_level(logging.WARNING):
+        assert executor.submit(lambda: "queued") is None
     assert monotonic() - observed_at < 0.1
+    assert "event=intent_extraction_skipped reason=capacity" in caplog.text
 
     release.set()
     assert first.result(timeout=1) == "first"

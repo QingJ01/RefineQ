@@ -39,9 +39,7 @@ class AdminOperations:
     def __init__(self, database: Database, settings: Settings) -> None:
         self.database = database
         self.settings = settings
-        self.backup_root = (
-            settings.data_root.parent / f"{settings.data_root.name}-backups"
-        ).resolve()
+        self.backup_root = settings.resolved_backup_root
 
     @staticmethod
     def _aware(value: datetime | None) -> datetime | None:

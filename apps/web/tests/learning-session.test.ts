@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSessionSteps,
   inferLearningMode,
+  learningModeForActivity,
   sessionStage,
 } from "../lib/learning-session";
 
@@ -21,6 +22,13 @@ describe("universal capability learning session", () => {
     expect(sessionStage(null, null)).toBe("learn");
     expect(sessionStage({ id: "task-1" }, null)).toBe("practice");
     expect(sessionStage({ id: "task-1" }, { score: 86 })).toBe("reflect");
+  });
+
+  it("maps every plan activity to the learning behavior it promises", () => {
+    expect(learningModeForActivity("learn")).toBe("concept");
+    expect(learningModeForActivity("practice")).toBe("case");
+    expect(learningModeForActivity("apply")).toBe("project");
+    expect(learningModeForActivity("review")).toBe("exam");
   });
 
   it("defaults open-ended capabilities to case or project learning", () => {
