@@ -175,12 +175,24 @@ test("learner completes and restores a capability learning journey", async ({ pa
   });
 
   await test.step("return to personal home and recover the same workspace with browser history", async () => {
+    const repeatedRestoreRequests: string[] = [];
+    const recordRestoreRequest = (request: { url(): string }) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname.endsWith("/api/auth/me")
+        || /\/api\/workspaces\/?$/.test(url.pathname)
+        || url.pathname.endsWith("/snapshot")
+      ) repeatedRestoreRequests.push(url.pathname);
+    };
+    page.on("request", recordRestoreRequest);
     await page.getByTestId("workspace-home-link").click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId("learning-intent")).toBeVisible();
     await page.goBack();
     await expect(page).toHaveURL(/\/learn\/[^/]+\/path$/);
     await expect(page.getByTestId("learning-path-view")).toBeVisible();
+    page.off("request", recordRestoreRequest);
+    expect(repeatedRestoreRequests).toEqual([]);
   });
 
   await test.step("upload a real interview source", async () => {
@@ -323,6 +335,24 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
     await page.waitForTimeout(450);
     await page.screenshot({ path: testInfo.outputPath("capability-learning-desktop.png") });
+  });
+
+  await test.step("show a localized recovery error even before authentication is restored", async () => {
+    await page.route("**/api/auth/me", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "service_unavailable", message: "temporary" } }),
+      });
+    });
+    await page.reload();
+    await expect(page.getByTestId("auth-restore-error")).toBeVisible();
+    await page.unroute("**/api/auth/me");
+    await page.reload();
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
+    for (let index = browserErrors.length - 1; index >= 0; index -= 1) {
+      if (browserErrors[index].includes("status of 503")) browserErrors.splice(index, 1);
+    }
   });
 
   await test.step("update and export the account without losing the active workspace", async () => {

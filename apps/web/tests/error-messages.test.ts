@@ -63,5 +63,13 @@ describe("localized API errors", () => {
       .toBe("找不到这次作答记录。");
     expect(localizeApiError(new ApiError(409, "integration_not_configured", "raw"), "en"))
       .toBe("This integration has not been configured.");
+    expect(localizeApiError(new ApiError(408, "upload_body_timeout", "raw"), "zh"))
+      .toBe("上传耗时过长，请检查网络后重试。");
+    expect(localizeApiError(new ApiError(422, "invalid_integration", "raw"), "en"))
+      .toBe("The integration settings are invalid. Check them and try again.");
+    expect(localizeApiError(new ApiError(422, "model_endpoint_not_allowed", "raw"), "zh"))
+      .toBe("模型服务地址不在允许范围内。");
+    expect(localizeApiError(new ApiError(500, "workspace_error", "raw"), "en"))
+      .toBe("The learning space could not finish this action. Try again shortly.");
   });
 });

@@ -1,7 +1,7 @@
 import { ArrowUpRight, Target } from "lucide-react";
 
 import type { Translator } from "@/lib/i18n";
-import type { LearningInsights, Progress } from "@/lib/types";
+import type { LearningInsights, Locale, Progress } from "@/lib/types";
 
 
 export function ProgressInsights({
@@ -13,6 +13,7 @@ export function ProgressInsights({
   topicLabels = {},
   busy = false,
   loading = false,
+  locale = "en",
 }: {
   progress: Progress | null;
   t: Translator;
@@ -22,11 +23,14 @@ export function ProgressInsights({
   topicLabels?: Record<string, string>;
   busy?: boolean;
   loading?: boolean;
+  locale?: Locale;
 }) {
   const labels = { ...(progress?.topics ?? {}), ...topicLabels };
   const topics = Object.entries(progress?.mastery ?? {})
     .sort((left, right) => left[1] - right[1]);
   const recommended = topics[0];
+  const topicLabel = (topic: string) => labels[topic]
+    ?? (locale === "zh" ? "未命名主题" : "Untitled topic");
 
   if (loading) {
     return <section className="content-card progress-insights" data-testid="progress-insights-loading"><div className="empty-note">{t("loading")}</div></section>;
@@ -62,10 +66,10 @@ export function ProgressInsights({
               data-testid={`progress-topic-${topic}`}
               onClick={() => onSelectTopic?.(topic)}
             >
-              <span>{labels[topic] ?? topic}</span>
+              <span>{topicLabel(topic)}</span>
               {topicInsight && <small>{topicInsight.attempt_count} · {topicInsight.error_count}</small>}
             </button>
-            <div role="progressbar" aria-label={labels[topic] ?? topic} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mastery * 100)}>
+            <div role="progressbar" aria-label={topicLabel(topic)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mastery * 100)}>
               <i style={{ width: `${Math.round(mastery * 100)}%` }} />
             </div>
             <strong>{Math.round(mastery * 100)}%</strong>
@@ -76,7 +80,7 @@ export function ProgressInsights({
       {recommended && (
         <div className="progress-recommendation" data-testid="progress-recommendation">
           <ArrowUpRight size={17} />
-          <span>{t("recommendedNext")} <strong>{labels[recommended[0]] ?? recommended[0]}</strong></span>
+          <span>{t("recommendedNext")} <strong>{topicLabel(recommended[0])}</strong></span>
           <button
             type="button"
             data-testid="practice-recommended-topic"

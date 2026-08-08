@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clearWorkspaceSnapshots,
   consumeWorkspaceSnapshot,
   saveWorkspaceSnapshot,
 } from "../lib/workspace-snapshot-handoff";
@@ -13,6 +14,8 @@ class MemoryStorage {
   getItem(key: string) { return this.values.get(key) ?? null; }
   setItem(key: string, value: string) { this.values.set(key, value); }
   removeItem(key: string) { this.values.delete(key); }
+  key(index: number) { return Array.from(this.values.keys())[index] ?? null; }
+  get length() { return this.values.size; }
 }
 
 const snapshot = {
@@ -57,5 +60,21 @@ describe("workspace snapshot handoff", () => {
     saveWorkspaceSnapshot(storage, snapshot);
 
     expect(consumeWorkspaceSnapshot(storage, "workspace-2")).toBeNull();
+  });
+
+  it("clears every cached workspace snapshot without touching unrelated session state", () => {
+    const storage = new MemoryStorage();
+    saveWorkspaceSnapshot(storage, snapshot);
+    saveWorkspaceSnapshot(storage, {
+      ...snapshot,
+      workspace: { ...snapshot.workspace, id: "workspace-2" },
+    });
+    storage.setItem("refineq.learning-session", "keep");
+
+    clearWorkspaceSnapshots(storage);
+
+    expect(consumeWorkspaceSnapshot(storage, "workspace-1")).toBeNull();
+    expect(consumeWorkspaceSnapshot(storage, "workspace-2")).toBeNull();
+    expect(storage.getItem("refineq.learning-session")).toBe("keep");
   });
 });

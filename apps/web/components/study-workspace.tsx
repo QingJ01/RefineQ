@@ -79,6 +79,7 @@ import type {
 } from "@/lib/types";
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
 import {
+  clearWorkspaceSnapshots,
   consumeWorkspaceSnapshot,
   saveWorkspaceSnapshot,
 } from "@/lib/workspace-snapshot-handoff";
@@ -171,6 +172,12 @@ export function StudyWorkspace({
   const activeCoachWorkspaceIdRef = useRef<string | null>(null);
   const pendingPracticeActionRef = useRef<PracticeNavigationAction | null>(null);
   const [draftConfirmOpen, setDraftConfirmOpen] = useState(false);
+  const authRef = useRef(auth);
+  const workspaceRef = useRef(workspace);
+  const localeRef = useRef(locale);
+  authRef.current = auth;
+  workspaceRef.current = workspace;
+  localeRef.current = locale;
 
   const applySnapshot = useCallback((snapshot: WorkspaceSnapshot) => {
     if (activeCoachWorkspaceIdRef.current !== snapshot.workspace.id) {
@@ -261,6 +268,44 @@ export function StudyWorkspace({
   useEffect(() => {
     let active = true;
     async function restore() {
+      const currentAuth = authRef.current;
+      if (currentAuth) {
+        if (!initialWorkspaceId) {
+          setWorkspace(null);
+          if (active) setRestoring(false);
+          return;
+        }
+        if (workspaceRef.current?.id === initialWorkspaceId) {
+          if (active) setRestoring(false);
+          return;
+        }
+        setRestoring(true);
+        try {
+          const snapshot = consumeWorkspaceSnapshot(window.sessionStorage, initialWorkspaceId)
+            ?? await api.getWorkspaceSnapshot(currentAuth.access_token, initialWorkspaceId);
+          if (!active) return;
+          applySnapshot(snapshot);
+          saveLearningSession(window.sessionStorage, {
+            token: currentAuth.access_token,
+            workspaceId: initialWorkspaceId,
+            locale: localeRef.current,
+          });
+        } catch (caught) {
+          if (!active) return;
+          if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+            clearWorkspaceSnapshots(window.sessionStorage);
+            resetAuthentication();
+            router.replace("/");
+          } else if (caught instanceof ApiError && caught.status === 404) {
+            redirectUnavailableWorkspace();
+          } else {
+            setError(localizeApiError(caught, localeRef.current));
+          }
+        } finally {
+          if (active) setRestoring(false);
+        }
+        return;
+      }
       const saved = loadLearningSession(window.sessionStorage)
         ?? await requestSessionHandoff(window.sessionStorage);
       if (!saved) {
@@ -331,6 +376,7 @@ export function StudyWorkspace({
       } catch (caught) {
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+          clearWorkspaceSnapshots(window.sessionStorage);
           clearLearningSession(window.sessionStorage);
           router.replace("/");
         } else if (caught instanceof ApiError && caught.status === 404 && initialWorkspaceId) {
@@ -348,6 +394,7 @@ export function StudyWorkspace({
     applySnapshot,
     initialWorkspaceId,
     redirectUnavailableWorkspace,
+    resetAuthentication,
     router,
     setAuth,
     setError,
@@ -574,13 +621,13 @@ export function StudyWorkspace({
     });
   }
 
-  function startReview(review: DueReviewInsight) {
+  function startReviewSession(topicId: string, sessionId: string) {
     runGuardedPracticeAction(async () => {
       if (!workspace) return;
       router.push(learningPath(workspace.id, "today"));
       await getQuestion({
-        topicId: review.topic_id,
-        reviewSessionId: review.session_id,
+        topicId,
+        reviewSessionId: sessionId,
         learningMode,
         replace: question !== null,
       });
@@ -591,6 +638,10 @@ export function StudyWorkspace({
         });
       });
     });
+  }
+
+  function startReview(review: DueReviewInsight) {
+    startReviewSession(review.topic_id, review.session_id);
   }
 
   function retryAttempt(attempt: AttemptInsight) {
@@ -989,10 +1040,23 @@ export function StudyWorkspace({
         locale,
       });
     }
+    if (workspace && progress) {
+      saveWorkspaceSnapshot(window.sessionStorage, {
+        workspace,
+        progress,
+        plan,
+        evidence,
+        materials,
+        saved_questions: savedQuestions,
+        active_question: question,
+        last_answer: result,
+      });
+    }
     setWorkspace(null);
   }
 
   function logout() {
+    clearWorkspaceSnapshots(window.sessionStorage);
     resetAuthentication();
     clearWorkspaceState();
     clearPracticeState();
@@ -1011,7 +1075,19 @@ export function StudyWorkspace({
   }
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
-  if (!auth) return <AuthPanel t={t} locale={locale} onAuthenticated={authenticated} />;
+  if (!auth) {
+    return (
+      <>
+        {error && (
+          <div className="error-banner auth-restore-error" data-testid="auth-restore-error" role="alert">
+            <strong>{t("error")}</strong>
+            <span>{error}</span>
+          </div>
+        )}
+        <AuthPanel t={t} locale={locale} onAuthenticated={authenticated} />
+      </>
+    );
+  }
   if (!workspace && initialWorkspaceId) {
     const retryTarget = workspaces.find((item) => item.id === initialWorkspaceId);
     return (
@@ -1081,7 +1157,7 @@ export function StudyWorkspace({
           data-testid="workspace-home-link"
           className="workspace-home-link"
           href="/"
-          onClick={prepareRouteNavigation}
+          onClick={prepareHomeNavigation}
         >
           <House size={18} />
           <span>{t("learningHome")}</span>
@@ -1233,7 +1309,7 @@ export function StudyWorkspace({
               onCoachTurnHandled={() => { pendingTurnIdRef.current = null; }}
             />
           )}
-          {section === "today" && (insights?.due_reviews.length ?? 0) > 0 && (
+          {section === "today" && (insightsLoading || (insights?.due_reviews.length ?? 0) > 0) && (
             <ReviewQueue
               locale={locale}
               reviews={insights?.due_reviews ?? []}
@@ -1264,7 +1340,9 @@ export function StudyWorkspace({
                 locale={locale}
                 t={t}
                 onUpdateSession={(session, input) => { void updatePlanSession(session, input); }}
-                onStartSession={(session) => practiceTopic(session.topic_id)}
+                onStartSession={(session) => session.activity === "review"
+                  ? startReviewSession(session.topic_id, session.id)
+                  : practiceTopic(session.topic_id)}
                 practiceBusy={practiceBusy}
                 busySessionId={busySessionId}
                 topicLabels={progress?.topics}
@@ -1314,6 +1392,7 @@ export function StudyWorkspace({
               <ProgressInsights
                 progress={progress}
                 t={t}
+                locale={locale}
                 onPracticeTopic={practiceTopic}
                 topicLabels={progress?.topics}
                 insights={insights}

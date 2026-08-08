@@ -40,7 +40,7 @@ MAX_QUESTION_REQUESTS = 100
 MAX_REVIEW_SESSIONS = 20
 
 
-def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) -> None:
+def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) -> datetime:
     """Keep one pending review per topic and bound persisted review history."""
 
     sessions = raw_plan["sessions"]
@@ -54,7 +54,21 @@ def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) ->
             and item.get("status", "planned") != "completed"
         )
     ]
-    sessions.append(candidate.model_dump(mode="json"))
+    planned_review = min(
+        (
+            StudySession.model_validate(item)
+            for item in sessions
+            if item.get("activity") == "review"
+            and not str(item.get("id", "")).startswith("review_")
+            and item.get("topic_id") == candidate.topic_id
+            and item.get("status", "planned") != "completed"
+        ),
+        key=lambda session: (session.planned_at, session.id),
+        default=None,
+    )
+    selected_review = planned_review or candidate
+    if planned_review is None:
+        sessions.append(candidate.model_dump(mode="json"))
 
     reviews = [
         item
@@ -74,6 +88,7 @@ def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) ->
         remove_ids = {item["id"] for item in removable}
         sessions[:] = [item for item in sessions if item.get("id") not in remove_ids]
     sessions.sort(key=lambda item: item["planned_at"])
+    return selected_review.planned_at
 
 
 class LearningServiceError(RuntimeError):
@@ -1045,8 +1060,7 @@ class LearningService:
                         minutes=min(30, int(progress["daily_minutes"])),
                         activity="review",
                     )
-                    _upsert_review_session(raw_plan, review_session)
-                    next_review_at = review_session.planned_at
+                    next_review_at = _upsert_review_session(raw_plan, review_session)
 
             result = {
                 "attempt_id": payload.attempt_id,

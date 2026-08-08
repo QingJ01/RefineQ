@@ -498,7 +498,7 @@
   align-items: center;
   width: fit-content;
   margin-left: 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px 8px;
   color: var(--muted-strong);
@@ -3429,7 +3429,6 @@ textarea:focus {
 
 /* Focus content */
 .plan-card,
-.practice-card,
 .ledger,
 .materials-card,
 .agent-card {
@@ -3721,268 +3720,12 @@ textarea:focus {
   font-size: 10px;
 }
 
-.practice-glyph {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 14px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 18px;
-  font-weight: 760;
-}
-
-.practice-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: -4px 0 18px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--surface-soft);
-}
-
-.practice-toolbar label {
-  color: var(--muted-strong);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.practice-toolbar select {
-  min-width: 128px;
-  min-height: 36px;
-  padding: 0 30px 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.practice-question-actions,
-.practice-result-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin: 0 0 14px;
-}
-
-.practice-question-actions button {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--muted-strong);
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 650;
-  transition: border-color 160ms ease, color 160ms ease, transform 160ms ease;
-}
-
-.practice-question-actions button:hover {
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
-
-.practice-question-actions button:active,
-.practice-result-actions button:active {
-  transform: scale(0.98);
-}
-
-.practice-result-actions {
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.practice-result-actions .primary-action {
-  margin-left: auto;
-}
-
-.saved-question-list {
-  margin-top: 20px;
-  border-top: 1px solid var(--border);
-  padding-top: 15px;
-}
-
-.saved-question-list > summary {
-  width: fit-content;
-  color: var(--muted-strong);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.saved-question-list > summary span {
-  display: inline-grid;
-  min-width: 20px;
-  min-height: 20px;
-  place-items: center;
-  margin-left: 5px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 9px;
-}
-
-.saved-question-list ul {
-  display: grid;
-  gap: 8px;
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.saved-question-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 12px;
-  border-radius: 10px;
-  background: var(--surface-soft);
-}
-
-.saved-question-list li > div {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.saved-question-list li span {
-  color: var(--accent);
-  font-size: 8px;
-  font-weight: 720;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.saved-question-list li strong {
-  overflow: hidden;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.saved-question-list li button {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.question-sheet h3 {
-  margin: 12px 0 20px;
-  font-size: 19px;
-  line-height: 1.45;
-}
-
-.topic-label,
 .evidence-kind {
   color: var(--accent);
   font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.practice-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.practice-meta > span {
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: var(--surface-soft);
-  color: var(--muted-strong);
-  font-size: 9px;
-  font-weight: 650;
-}
-
-.practice-meta > .topic-label {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.result-meta {
-  margin-top: 6px;
-}
-
-.question-sheet textarea {
-  min-height: 150px;
-  margin-bottom: 15px;
-  background: var(--surface-soft);
-  line-height: 1.7;
-}
-
-.practice-result {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 18px 0;
-  padding: 15px;
-  border: 1px solid #cfe8de;
-  border-radius: 13px;
-  background: var(--success-soft);
-  color: #286a54;
-}
-
-.practice-result.revise {
-  border-color: #efdfbd;
-  background: var(--warning-soft);
-  color: #7e571c;
-}
-
-.practice-result > div {
-  width: 100%;
-  display: grid;
-  gap: 3px;
-}
-
-.practice-result span {
-  color: currentColor;
-  font-size: 10px;
-  opacity: 0.8;
-}
-
-.practice-result p {
-  margin: 7px 0;
-  color: var(--text);
-  line-height: 1.6;
-}
-
-.practice-result section {
-  margin-top: 8px;
-}
-
-.practice-result section b {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.practice-result ul {
-  margin: 5px 0 0;
-  padding-left: 18px;
-  color: var(--muted-strong);
-  font-size: 11px;
-  line-height: 1.6;
 }
 
 .progress-insights {
@@ -6581,7 +6324,6 @@ textarea:focus {
   }
 
   .plan-card,
-  .practice-card,
   .ledger,
   .materials-card,
   .agent-card {
@@ -6608,35 +6350,17 @@ textarea:focus {
   }
 
   .plan-session-actions button,
-  .practice-question-actions button,
-  .saved-question-list li button,
   .progress-recommendation button {
     min-height: 40px;
   }
 
-  .practice-toolbar,
   .progress-recommendation {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .practice-toolbar select,
   .progress-recommendation button {
     width: 100%;
-  }
-
-  .practice-result-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .practice-result-actions .primary-action {
-    grid-column: 1 / -1;
-    margin-left: 0;
-  }
-
-  .saved-question-list li {
-    grid-template-columns: 1fr;
   }
 
   .workspace-route-notice {
@@ -7019,7 +6743,7 @@ textarea:focus {
   display: grid;
   gap: 0.25rem;
   padding: 1rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
 }
 
 .learning-report-grid strong {

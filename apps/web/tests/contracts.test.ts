@@ -8,7 +8,11 @@ import { shouldClearAccountSession } from "../components/account-center";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
 import { validatePlanSettings } from "../lib/plan-settings";
-import { learningSections, parseLearningSection } from "../lib/learning-routes";
+import {
+  learningSections,
+  parseLearningSection,
+  resolveLearningShellPath,
+} from "../lib/learning-routes";
 import {
   clearLearningSession,
   installSessionHandoff,
@@ -19,6 +23,7 @@ import {
 } from "../lib/session";
 import {
   clearSelectedFiles,
+  createSerialTaskQueue,
   isAbortError,
   runSerially,
   validateUploadFile,
@@ -267,8 +272,18 @@ describe("durable learner routing", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const layoutSource = readFileSync(
+      fileURLToPath(new URL("../app/layout.tsx", import.meta.url)),
+      "utf8",
+    );
+    const shellSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-app-shell.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(learningPage)).toBe(true);
+    expect(layoutSource).toContain("<LearningAppShell>{children}</LearningAppShell>");
+    expect(shellSource).toContain("resolveLearningShellPath(usePathname())");
     expect(workspaceSource).toContain('import Link from "next/link"');
     expect(workspaceSource).toContain("href={learningPath(workspace.id, id)}");
     expect(workspaceSource).toContain('aria-current={section === id ? "page" : undefined}');
@@ -289,18 +304,27 @@ describe("durable learner routing", () => {
     expect(switcherSource).toContain('data-testid="workspace-switcher"');
     expect(workspaceSource).toContain('className="workspace-nav-label"');
     expect(workspaceSource).not.toContain('className="sidebar-learning"');
-    expect(workspaceSource).not.toContain('onClick={prepareHomeNavigation}');
+    expect(workspaceSource).toContain('onClick={prepareHomeNavigation}');
     expect(workspaceSource).toContain('data-testid="workspace-route-state"');
     expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
 
-  it("reuses learner state when the URL switches to a prefetched workspace", () => {
-    const routeSource = readFileSync(
-      fileURLToPath(new URL("../components/learning-route.tsx", import.meta.url)),
+  it("reuses one learner shell while home and learning URLs change", () => {
+    const shellSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-app-shell.tsx", import.meta.url)),
       "utf8",
     );
 
-    expect(routeSource).not.toContain("key={workspaceId}");
+    expect(shellSource.match(/<StudyWorkspace/g)).toHaveLength(2);
+    expect(shellSource).not.toContain("key={route.workspaceId}");
+    expect(resolveLearningShellPath("/")).toEqual({ kind: "home" });
+    expect(resolveLearningShellPath("/learn/space%201/materials")).toEqual({
+      kind: "workspace",
+      workspaceId: "space 1",
+      section: "materials",
+    });
+    expect(resolveLearningShellPath("/learn/space-1/unknown")).toEqual({ kind: "other" });
+    expect(resolveLearningShellPath("/admin")).toEqual({ kind: "other" });
   });
 
   it("renders the automatic routing decision with correction controls", () => {
@@ -639,6 +663,43 @@ describe("authentication and API errors", () => {
     ]);
   });
 
+  it("keeps separately selected upload batches in one serial queue", async () => {
+    const events: string[] = [];
+    const releases: Array<() => void> = [];
+    const uploads = createSerialTaskQueue<string>(async (item) => {
+      events.push(`start:${item}`);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      events.push(`finish:${item}`);
+    });
+
+    uploads.enqueue(["one", "two"]);
+    uploads.enqueue(["three"]);
+    await vi.waitFor(() => expect(events).toEqual(["start:one"]));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(events).toEqual(["start:one", "finish:one", "start:two"]));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(events).toContain("start:three"));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(events.at(-1)).toBe("finish:three"));
+  });
+
+  it("does not start queued uploads after the queue is closed", async () => {
+    const events: string[] = [];
+    let release: (() => void) | undefined;
+    const uploads = createSerialTaskQueue<string>(async (item) => {
+      events.push(item);
+      await new Promise<void>((resolve) => { release = resolve; });
+    });
+
+    uploads.enqueue(["one", "two"]);
+    await vi.waitFor(() => expect(events).toEqual(["one"]));
+    uploads.close();
+    release?.();
+    await Promise.resolve();
+    expect(events).toEqual(["one"]);
+    expect(uploads.pendingCount()).toBe(0);
+  });
+
   it("keeps upload cleanup and route redirects explicit in the workspace UI", () => {
     const materialSource = readFileSync(
       fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
@@ -653,6 +714,8 @@ describe("authentication and API errors", () => {
     expect(materialSource).toContain("controller.abort()");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
+    expect(workspaceSource).toContain('session.activity === "review"');
+    expect(workspaceSource).toContain("startReviewSession(session.topic_id, session.id)");
     expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
@@ -1501,6 +1564,7 @@ describe("learning view models", () => {
 
     expect(rows.map((row) => row.sequence)).toEqual([1, 2]);
     expect(rows[0].topic).toBe("Function limits");
+    expect(rows[1].topic).toBe("Untitled topic");
     expect(rows[0].minutesLabel).toBe("45 min");
   });
 
@@ -1534,6 +1598,7 @@ it("routes workspace restoration failures through the safe localized mapper", ()
 
   expect(restoreSource).toContain("localizeApiError(caught, saved.locale ?? \"zh\")");
   expect(restoreSource).not.toContain("caught.message");
+  expect(workspaceSource).toContain('data-testid="auth-restore-error"');
 });
 
 

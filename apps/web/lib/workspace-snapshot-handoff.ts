@@ -7,6 +7,11 @@ interface SnapshotStorage {
   removeItem(key: string): void;
 }
 
+interface EnumerableSnapshotStorage extends SnapshotStorage {
+  readonly length: number;
+  key(index: number): string | null;
+}
+
 const SNAPSHOT_PREFIX = "refineq.workspace-snapshot:";
 
 function snapshotKey(workspaceId: string) {
@@ -34,4 +39,13 @@ export function consumeWorkspaceSnapshot(
   } catch {
     return null;
   }
+}
+
+export function clearWorkspaceSnapshots(storage: EnumerableSnapshotStorage): void {
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(SNAPSHOT_PREFIX)) keys.push(key);
+  }
+  keys.forEach((key) => storage.removeItem(key));
 }

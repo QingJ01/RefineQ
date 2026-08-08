@@ -56,16 +56,14 @@ def test_upsert_review_session_deduplicates_topics_and_bounds_history() -> None:
         activity="review",
     )
 
-    _upsert_review_session(plan, replacement)
+    next_review_at = _upsert_review_session(plan, replacement)
 
     reviews = [item for item in plan["sessions"] if item["activity"] == "review"]
     pending_algebra = [
         item for item in reviews if item["topic_id"] == "algebra" and item["status"] != "completed"
     ]
-    assert {item["id"] for item in pending_algebra} == {
-        "review_new-pending",
-        "session-plan-review",
-    }
+    assert {item["id"] for item in pending_algebra} == {"session-plan-review"}
+    assert next_review_at == NOW + timedelta(days=2)
     assert len([item for item in reviews if item["id"].startswith("review_")]) == (
         MAX_REVIEW_SESSIONS
     )

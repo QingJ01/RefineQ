@@ -23,7 +23,8 @@ export function buildPlanRows(
   return plan.sessions.map((session, index) => ({
     id: session.id,
     sequence: index + 1,
-    topic: topicLabels[session.topic_id] ?? session.topic_id,
+    topic: topicLabels[session.topic_id]
+      ?? (locale.toLowerCase().startsWith("zh") ? "未命名主题" : "Untitled topic"),
     dateLabel: new Intl.DateTimeFormat(locale, {
       month: "short",
       day: "numeric",
