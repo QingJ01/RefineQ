@@ -735,6 +735,21 @@ describe("recoverable material and Agent interactions", () => {
     expect(agentSource).toContain("SourceDrawer");
   });
 
+  it("mounts the complete Agent experience from the production learning session", () => {
+    const canvasSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-session-canvas.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(canvasSource).toContain("<AgentPanel");
+    expect(canvasSource).toContain('data-testid="workspace-agent"');
+    expect(workspaceSource).toContain("agentToken={auth.access_token}");
+  });
+
   it("ships complete material search states and Agent guidance", () => {
     const materialSource = readFileSync(
       fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),

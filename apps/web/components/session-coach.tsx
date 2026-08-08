@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowUp, LoaderCircle, Settings2, Sparkles } from "lucide-react";
+import { ArrowUp, LoaderCircle, MessageCircleMore, Settings2, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import type { AgentReply, Locale } from "@/lib/types";
@@ -17,6 +17,7 @@ const copy = {
     error: "暂时无法连接教练，你仍可以继续当前学习任务。",
     modelMissing: "学习 Agent 尚未配置模型。练习、资料和进度仍可继续使用。",
     configure: "前往配置",
+    fullCoach: "完整对话与历史",
   },
   en: {
     title: "RefineQ coach · Current step",
@@ -27,6 +28,7 @@ const copy = {
     error: "The coach is temporarily unavailable. You can continue the current task.",
     modelMissing: "The learning Agent has not been configured. Practice, material, and progress remain available.",
     configure: "Open settings",
+    fullCoach: "Full conversation and history",
   },
 } as const;
 
@@ -36,12 +38,14 @@ export function SessionCoach({
   modelConfigured = true,
   isAdmin = false,
   onConfigure,
+  onOpenFullCoach,
 }: {
   locale: Locale;
   onAsk: (message: string) => Promise<AgentReply>;
   modelConfigured?: boolean;
   isAdmin?: boolean;
   onConfigure?: () => void;
+  onOpenFullCoach?: () => void;
 }) {
   const text = copy[locale];
   const [message, setMessage] = useState("");
@@ -88,6 +92,16 @@ export function SessionCoach({
         </div>
       </div>
       <p className="coach-intro">{reply || text.intro}</p>
+      {onOpenFullCoach && (
+        <button
+          type="button"
+          className="coach-full-link"
+          data-testid="open-full-coach"
+          onClick={onOpenFullCoach}
+        >
+          <MessageCircleMore size={14} /> {text.fullCoach}
+        </button>
+      )}
       {!modelConfigured && (
         <div className="coach-capability-notice" role="status">
           <p>{text.modelMissing}</p>

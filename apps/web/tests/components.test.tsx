@@ -681,4 +681,50 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="coach-configure-model"');
     expect(html).toContain("前往配置");
   });
+
+  it("makes the complete conversation workspace reachable from today's session", () => {
+    const html = renderToStaticMarkup(
+      <LearningSessionCanvas
+        locale="en"
+        t={translator("en")}
+        workspace={{
+          id: "workspace-1",
+          title: "Product thinking",
+          subject: "product",
+          goal: "Validate real user needs",
+          topics: ["User research"],
+          keywords: ["research"],
+          routing_summary: "Capability learning",
+          archived: false,
+          created_at: "2026-08-08T00:00:00Z",
+          last_active_at: "2026-08-08T00:00:00Z",
+        }}
+        plan={null}
+        progress={null}
+        materials={[]}
+        question={null}
+        answer=""
+        result={null}
+        busy={false}
+        learningMode="case"
+        savedQuestions={[]}
+        agentToken="token"
+        isAdmin
+        onOpenAgentSettings={() => undefined}
+        onLearningModeChange={() => undefined}
+        onAnswerChange={() => undefined}
+        onStartTask={async () => undefined}
+        onSubmit={async () => undefined}
+        onNextTask={async () => undefined}
+        onToggleSaved={async () => undefined}
+        onOpenLibrary={() => undefined}
+        onAskCoach={async () => ({ session_id: "session-1", message: "reply", citations: [], sources: [] })}
+      />,
+    );
+
+    expect(html).toContain('data-testid="open-full-coach"');
+    expect(html).toContain('data-testid="workspace-agent"');
+    expect(html).toContain('data-testid="agent-history"');
+    expect(html).toContain('data-testid="agent-new-conversation"');
+  });
 });

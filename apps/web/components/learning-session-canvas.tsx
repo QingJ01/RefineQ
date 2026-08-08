@@ -14,8 +14,9 @@ import {
   RotateCcw,
   Target,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
+import { AgentPanel } from "@/components/agent-panel";
 import { SessionCoach } from "@/components/session-coach";
 import { SourceDrawer } from "@/components/source-drawer";
 import type { Translator } from "@/lib/i18n";
@@ -133,6 +134,9 @@ export function LearningSessionCanvas({
   busy,
   learningMode,
   savedQuestions,
+  agentToken,
+  isAdmin = false,
+  onOpenAgentSettings,
   onLearningModeChange,
   onAnswerChange,
   onStartTask,
@@ -154,6 +158,9 @@ export function LearningSessionCanvas({
   busy: boolean;
   learningMode: LearningMode;
   savedQuestions: SavedPracticeQuestion[];
+  agentToken?: string;
+  isAdmin?: boolean;
+  onOpenAgentSettings?: () => void;
   onLearningModeChange: (mode: LearningMode) => void;
   onAnswerChange: (answer: string) => void;
   onStartTask: () => void | Promise<void>;
@@ -176,6 +183,7 @@ export function LearningSessionCanvas({
     ? progress?.topics?.[activeTopicId] ?? activeTopicId
     : workspace.topics[0] ?? workspace.title;
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
+  const agentRef = useRef<HTMLDetailsElement>(null);
   const sourceRecords = materials.slice(0, 2);
   const taskSources = result?.sources?.length ? result.sources : question?.sources ?? [];
   const nextReview = result?.next_review_at
@@ -185,6 +193,12 @@ export function LearningSessionCanvas({
   const isSaved = question
     ? Boolean(question.saved || savedQuestions.some((saved) => saved.id === question.id))
     : false;
+
+  function openFullCoach() {
+    if (!agentRef.current) return;
+    agentRef.current.open = true;
+    agentRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <section className="learning-session-canvas" data-testid="learning-session-canvas">
@@ -357,13 +371,32 @@ export function LearningSessionCanvas({
             <strong>{modeCopy[locale][learningMode]}</strong>
             <p>{locale === "zh" ? "Agent 会按当前方式组织内容、任务与反馈。" : "The Agent adapts content, tasks, and feedback to this method."}</p>
           </section>
-          <SessionCoach locale={locale} onAsk={onAskCoach} />
+          <SessionCoach
+            locale={locale}
+            onAsk={onAskCoach}
+            isAdmin={isAdmin}
+            onConfigure={onOpenAgentSettings}
+            onOpenFullCoach={agentToken ? openFullCoach : undefined}
+          />
           <section className="session-next-review">
             <Clock3 size={18} />
             <div><span>{text.review}</span><strong>{nextReview ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", weekday: "short" }).format(new Date(nextReview)) : text.reviewHint}</strong></div>
           </section>
         </aside>
       </div>
+      {agentToken && (
+        <details ref={agentRef} className="workspace-agent-disclosure" data-testid="workspace-agent">
+          <summary>{locale === "zh" ? "完整对话、历史与资料引用" : "Full conversation, history, and sources"}</summary>
+          <AgentPanel
+            token={agentToken}
+            workspaceId={workspace.id}
+            t={t}
+            locale={locale}
+            isAdmin={isAdmin}
+            onOpenSettings={onOpenAgentSettings}
+          />
+        </details>
+      )}
       {selectedSources.length > 0 && (
         <SourceDrawer
           title={text.sourceLabel}

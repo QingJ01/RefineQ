@@ -792,6 +792,9 @@ export function StudyWorkspace({
               busy={practiceBusy}
               learningMode={learningMode}
               savedQuestions={savedQuestions}
+              agentToken={auth.access_token}
+              isAdmin={auth.user.role === "admin"}
+              onOpenAgentSettings={() => router.push("/admin/integrations/chat")}
               onLearningModeChange={changeLearningMode}
               onAnswerChange={(value) => {
                 setAnswer(value);

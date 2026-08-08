@@ -775,6 +775,74 @@
   border: 0;
 }
 
+.coach-full-link {
+  width: 100%;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 10px 0 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.coach-capability-notice {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #efdfbd;
+  border-radius: 10px;
+  background: var(--warning-soft);
+  color: #7e571c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.coach-capability-notice p {
+  margin: 0;
+}
+
+.coach-capability-notice button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.workspace-agent-disclosure {
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.workspace-agent-disclosure > summary {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.workspace-agent-disclosure > .agent-card {
+  margin: 0 28px 28px;
+}
+
 .page-section-heading {
   margin-bottom: 20px;
 }
