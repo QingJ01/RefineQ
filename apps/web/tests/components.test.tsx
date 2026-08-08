@@ -40,6 +40,17 @@ const sidebarWorkspaces = [{
   archived: false,
   created_at: "2026-08-01T00:00:00Z",
   last_active_at: "2026-08-08T00:00:00Z",
+}, {
+  id: "history-space",
+  title: "History",
+  subject: "History",
+  goal: "Prepare the essay",
+  topics: ["Reformation"],
+  keywords: ["history"],
+  routing_summary: "History study",
+  archived: false,
+  created_at: "2026-08-02T00:00:00Z",
+  last_active_at: "2026-08-07T00:00:00Z",
 }];
 
 
@@ -63,7 +74,6 @@ describe("shared authenticated sidebar", () => {
     expect(html).toContain('data-testid="app-nav-calendar"');
     expect(html).toContain('href="/calendar"');
     expect(html).toContain('aria-current="page"');
-    expect(html).toContain('href="/#recent-learning"');
     expect(html).toContain('href="/learn/math-space/today"');
     expect(html).toContain('data-testid="app-nav-admin"');
     expect(html).toContain('data-testid="app-nav-account"');
@@ -86,6 +96,80 @@ describe("shared authenticated sidebar", () => {
     expect(html).not.toContain('data-testid="app-nav-admin"');
     expect(html).toContain("学习首页");
     expect(html).toContain("总日历");
+  });
+
+  it("keeps administration navigation separate from learner spaces", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="admin"
+        workspaces={sidebarWorkspaces}
+        isAdmin
+        contextLabel="系统管理"
+        contextNavigation={<a href="/admin/operations">运维</a>}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("运维");
+    expect(html).not.toContain('data-testid="app-sidebar-spaces"');
+    expect(html).not.toContain('href="/learn/math-space/today"');
+    expect(html).toContain('data-testid="app-nav-home"');
+  });
+
+  it("marks the current administration page once, not twice", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="admin"
+        workspaces={sidebarWorkspaces}
+        isAdmin
+        contextOwnsActive
+        contextLabel="系统管理"
+        contextNavigation={<span>系统概览</span>}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="app-nav-admin"');
+    expect(html).not.toMatch(/data-testid="app-nav-admin"[^>]*aria-current="page"/);
+  });
+
+  it("keeps account navigation separate from learner spaces", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="account"
+        workspaces={sidebarWorkspaces}
+        contextLabel="账户与安全"
+        contextNavigation={<a href="#profile">个人资料</a>}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain('data-testid="app-sidebar-spaces"');
+    expect(html).not.toContain('href="/learn/math-space/today"');
+  });
+
+  it("omits the open workspace from the recent list so only one entry is current", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="workspace"
+        workspaces={sidebarWorkspaces}
+        currentWorkspaceId="math-space"
+        contextLabel="空间内学习"
+        contextNavigation={<span>今日</span>}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain('href="/learn/math-space/today"');
+    expect(html).toContain('href="/learn/history-space/today"');
   });
 });
 
@@ -740,7 +824,9 @@ describe("focused learning components", () => {
 
       expect(html).toContain('class="admin-console"');
       expect(html).toContain('data-testid="app-sidebar"');
-      expect(html).toMatch(/data-testid="app-nav-admin"[^>]*aria-current="page"/);
+      // Position is marked once, by the administration context navigation.
+      expect(html).not.toMatch(/data-testid="app-nav-admin"[^>]*aria-current="page"/);
+      expect(html).not.toContain('data-testid="app-sidebar-spaces"');
     expect(html).toContain('data-testid="admin-overview"');
     expect(html).toContain('data-testid="admin-system-status"');
     expect(html).toContain('data-testid="admin-next-action"');

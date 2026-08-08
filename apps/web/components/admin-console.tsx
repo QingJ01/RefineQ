@@ -1067,6 +1067,7 @@ export function AdminConsole({
           active="admin"
           workspaces={workspaces}
           isAdmin
+          contextOwnsActive
           contextLabel={c.title}
           contextNavigation={(
           <div className="admin-nav">

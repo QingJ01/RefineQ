@@ -1,12 +1,10 @@
 "use client";
 
 import {
-  ArrowRight,
   BookOpen,
   CalendarDays,
   House,
   Languages,
-  LayoutGrid,
   LogOut,
   Settings2,
   UserRound,
@@ -27,9 +25,8 @@ const copy = {
     global: "全局导航",
     home: "学习首页",
     calendar: "总日历",
-    spaces: "学习空间",
-    allSpaces: "全部学习空间",
-    recent: "最近使用",
+    spaces: "最近使用",
+    otherSpaces: "切换到其他空间",
     account: "账户设置",
     admin: "系统管理",
     language: "EN",
@@ -39,9 +36,8 @@ const copy = {
     global: "Global navigation",
     home: "Learning home",
     calendar: "Global calendar",
-    spaces: "Learning spaces",
-    allSpaces: "All learning spaces",
-    recent: "Recent",
+    spaces: "Recent spaces",
+    otherSpaces: "Switch to another space",
     account: "Account settings",
     admin: "System admin",
     language: "中文",
@@ -57,6 +53,7 @@ export function AppSidebar({
   isAdmin = false,
   contextLabel,
   contextNavigation,
+  contextOwnsActive = false,
   onToggleLocale,
   onLogout,
   onNavigate,
@@ -69,13 +66,21 @@ export function AppSidebar({
   isAdmin?: boolean;
   contextLabel?: string;
   contextNavigation?: ReactNode;
+  /** Set when the context navigation already marks the current route, so the
+   *  utility entry point stays a plain link instead of a second highlight. */
+  contextOwnsActive?: boolean;
   onToggleLocale: () => void;
   onLogout: () => void;
   onNavigate?: () => void;
   onHomeNavigate?: () => void;
 }) {
   const text = copy[locale];
-  const recent = workspaces.filter((workspace) => !workspace.archived).slice(0, 5);
+  // Settings areas own the context slot; stacking the learner space list there
+  // would show two unrelated navigations at once.
+  const showSpaces = active === "home" || active === "calendar" || active === "workspace";
+  const recent = workspaces
+    .filter((workspace) => !workspace.archived && workspace.id !== currentWorkspaceId)
+    .slice(0, 5);
 
   return (
     <aside className="app-sidebar" data-testid="app-sidebar">
@@ -107,23 +112,22 @@ export function AppSidebar({
         </Link>
       </nav>
 
-      <section className="app-sidebar-spaces" aria-labelledby="app-sidebar-spaces-label">
-        <span id="app-sidebar-spaces-label" className="app-sidebar-label">{text.spaces}</span>
-        <Link className="app-spaces-all" href="/#recent-learning" onClick={onHomeNavigate ?? onNavigate}>
-          <LayoutGrid size={17} />
-          <span>{text.allSpaces}</span>
-          <ArrowRight size={14} />
-        </Link>
-        {recent.length > 0 && (
+      {showSpaces && recent.length > 0 && (
+        <section
+          className="app-sidebar-spaces"
+          data-testid="app-sidebar-spaces"
+          aria-labelledby="app-sidebar-spaces-label"
+        >
+          <span id="app-sidebar-spaces-label" className="app-sidebar-label">
+            {active === "workspace" ? text.otherSpaces : text.spaces}
+          </span>
           <div className="app-recent-spaces">
-            <small>{text.recent}</small>
             {recent.map((workspace) => (
               <Link
                 key={workspace.id}
-                className={workspace.id === currentWorkspaceId ? "app-space-link active" : "app-space-link"}
+                className="app-space-link"
                 href={learningPath(workspace.id, "today")}
                 onClick={onNavigate}
-                aria-current={workspace.id === currentWorkspaceId ? "location" : undefined}
               >
                 <i data-color={workspaceColorIndex(workspace.id)} />
                 <BookOpen size={16} />
@@ -131,8 +135,8 @@ export function AppSidebar({
               </Link>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {contextNavigation && (
         <section className="app-sidebar-context">
@@ -154,10 +158,12 @@ export function AppSidebar({
         {isAdmin && (
           <Link
             data-testid="app-nav-admin"
-            className={active === "admin" ? "app-utility-link active" : "app-utility-link"}
+            className={
+              active === "admin" && !contextOwnsActive ? "app-utility-link active" : "app-utility-link"
+            }
             href="/admin"
             onClick={onNavigate}
-            aria-current={active === "admin" ? "page" : undefined}
+            aria-current={active === "admin" && !contextOwnsActive ? "page" : undefined}
           >
             <Settings2 size={18} /> <span>{text.admin}</span>
           </Link>
