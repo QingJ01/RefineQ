@@ -68,6 +68,13 @@ export function ScheduleCalendar({
   );
   const monthTitle = new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { year: "numeric", month: "long" }).format(month);
   const weekdays = zh ? ["日", "一", "二", "三", "四", "五", "六"] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const activityLabel = (activity: StudySession["activity"]) => ({
+    learn: zh ? "学习" : "Learn",
+    practice: zh ? "练习" : "Practice",
+    apply: zh ? "应用" : "Apply",
+    review: zh ? "复习" : "Review",
+  }[activity ?? "learn"]);
+  const topicLabel = (topicId: string) => topicLabels[topicId] ?? (zh ? "未命名主题" : "Untitled topic");
 
   function beginEdit(session: StudySession) {
     setEditingId(session.id);
@@ -91,7 +98,14 @@ export function ScheduleCalendar({
     setEditingId(null);
   }
 
-  if (!plan) return <div className="empty-note">{zh ? "确认学习范围后，时间表会出现在这里。" : "Confirm your learning scope to create a schedule."}</div>;
+  if (!plan) return (
+    <section className="content-card guided-empty-state" data-testid="schedule-empty-guide">
+      <CalendarDays size={28} strokeWidth={1.5} />
+      <span className="kicker">SCHEDULE / READY</span>
+      <h2>{zh ? "还没有可安排的学习日程" : "No study schedule yet"}</h2>
+      <p>{zh ? "先在今日学习中确认目标。生成学习路径后，每次学习与复习会自动排进这里。" : "Confirm the goal in Today first. Learning and review sessions will appear here after the study path is generated."}</p>
+    </section>
+  );
 
   return (
     <section className="schedule-page" data-testid="schedule-calendar">
@@ -120,7 +134,7 @@ export function ScheduleCalendar({
               return (
                 <button type="button" key={key} className={selectedDate === key ? "calendar-day selected" : "calendar-day"} onClick={() => setSelectedDate(key)}>
                   <span>{date.getDate()}</span>
-                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4}`} key={session.id}><time>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(session.planned_at))}</time>{topicLabels[session.topic_id] ?? session.topic_id}</i>)}</div>
+                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} key={session.id}><time>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(session.planned_at))}</time>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</i>)}</div>
                 </button>
               );
             })}
@@ -168,7 +182,7 @@ export function ScheduleCalendar({
                   style={{ top: `${top}px`, minHeight: `${height}px` }}
                   onClick={() => beginEdit(session)}
                 >
-                  <strong>{topicLabels[session.topic_id] ?? session.topic_id}</strong>
+                  <strong>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</strong>
                   <small>{timeFormat.format(start)}–{timeFormat.format(end)} · {session.minutes} {zh ? "分钟" : "min"}</small>
                 </button>;
               })}

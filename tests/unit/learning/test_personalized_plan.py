@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -31,6 +32,9 @@ class FakeLearning:
     def mutate(self, _owner_id, _workspace_id, transform):
         self.data = transform(self.data)
         return SimpleNamespace(data=self.data)
+
+    def plan_transaction(self, _owner_id, _workspace_id):
+        return nullcontext()
 
 
 class FakeAnalyses:

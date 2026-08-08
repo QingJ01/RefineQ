@@ -37,18 +37,25 @@ from refineq.api.routers.settings import router as settings_router
 from refineq.api.routers.workspaces import router as workspaces_router
 from refineq.config import Settings
 from refineq.database.engine import Database
+from refineq.identity.deletion import AccountDeletionCoordinator
+from refineq.identity.password_reset import (
+    PasswordResetDelivery,
+    build_password_reset_delivery,
+)
 from refineq.identity.service import IdentityService
 from refineq.integrations.model_settings import PlatformModelSettingsRepository
 from refineq.integrations.object_storage import ConfiguredObjectStorage
 from refineq.integrations.ocr import OcrService
 from refineq.integrations.repository import IntegrationRepository
 from refineq.integrations.service import IntegrationTester
+from refineq.knowledge.deletion import MaterialDeletionCoordinator
 from refineq.knowledge.embeddings import PlatformEmbeddingService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.personalized import TargetedPlanService
 from refineq.learning.service import LearningService
 from refineq.materials.service import MaterialAnalysisService
+from refineq.operations.admin import AdminOperations
 from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.material_analyses import MaterialAnalysisRepository
@@ -67,6 +74,7 @@ def create_app(
     learning_model_transport: StructuredModelTransport | None = None,
     agent_intent_transport: StructuredModelTransport | None = None,
     database: Database | None = None,
+    password_reset_delivery: PasswordResetDelivery | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
 
@@ -86,6 +94,7 @@ def create_app(
     app.state.settings = settings or Settings()
     app.state.database = database or Database(app.state.settings.resolved_database_url)
     app.state.database.initialize()
+    app.state.admin_operations = AdminOperations(app.state.database, app.state.settings)
     app.state.rate_limiter = SlidingWindowRateLimiter()
     app.state.upload_admission = UploadAdmissionController(
         max_global=app.state.settings.material_upload_max_concurrent_global,
@@ -105,7 +114,7 @@ def create_app(
         body_total_timeout_seconds=app.state.settings.material_upload_body_total_timeout_seconds,
         admission=app.state.upload_admission,
     )
-    app.state.store = SqlRecordStore(app.state.database)
+    app.state.store = SqlRecordStore(app.state.database, enforce_owner_state=True)
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
@@ -123,6 +132,18 @@ def create_app(
         app.state.integrations,
         data_root=app.state.settings.data_root,
     )
+    app.state.identity = IdentityService(app.state.database)
+    app.state.password_reset_delivery = (
+        password_reset_delivery
+        if password_reset_delivery is not None
+        else build_password_reset_delivery(app.state.settings)
+    )
+    app.state.account_deletions = AccountDeletionCoordinator(
+        data_root=app.state.settings.data_root,
+        identity=app.state.identity,
+        object_storage=app.state.object_storage,
+    )
+    app.state.account_deletions.recover_pending()
     app.state.ocr = OcrService(
         app.state.integrations,
         max_pages=app.state.settings.material_ocr_max_pages,
@@ -135,7 +156,14 @@ def create_app(
     app.state.knowledge = KnowledgeIndex(
         app.state.database,
         embedder=app.state.embedding_service,
+        enforce_owner_state=True,
     )
+    app.state.material_deletions = MaterialDeletionCoordinator(
+        data_root=app.state.settings.data_root,
+        knowledge=app.state.knowledge,
+        object_storage=app.state.object_storage,
+    )
+    app.state.material_deletions.recover_pending()
     app.state.model_settings = PlatformModelSettingsRepository(
         app.state.integrations,
         allowed_hosts=app.state.settings.allowed_model_hosts,
@@ -181,7 +209,7 @@ def create_app(
         learning=app.state.learning,
         learning_service=app.state.workspace_learning_service,
         knowledge=app.state.knowledge,
-        object_storage=app.state.object_storage,
+        material_deletions=app.state.material_deletions,
         sessions=app.state.sessions,
         routing=WorkspaceRoutingIntelligence(
             app.state.model_settings,
@@ -209,7 +237,6 @@ def create_app(
         intent_transport=resolved_intent_transport,
         max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
-    app.state.identity = IdentityService(app.state.database)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
     app.add_exception_handler(InvalidIdentifierError, invalid_identifier_exception_handler)
@@ -225,6 +252,8 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(workspaces_router)
     app.include_router(admin_router)
+    app.router.add_event_handler("shutdown", app.state.account_deletions.close)
+    app.router.add_event_handler("shutdown", app.state.material_deletions.close)
     app.router.add_event_handler("shutdown", app.state.database.close)
     return app
 

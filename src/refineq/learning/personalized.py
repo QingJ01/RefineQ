@@ -192,6 +192,10 @@ class TargetedPlanService:
                 progress["difficulty_states"].setdefault(
                     topic_id, DifficultyState().model_dump(mode="json")
                 )
+            progress.setdefault("topic_order", list(progress["topics"]))
+            for topic_id in topic_ids.values():
+                if topic_id not in progress["topic_order"]:
+                    progress["topic_order"].append(topic_id)
             existing_data = progress.get("plan")
             existing = StudyPlan.model_validate(existing_data) if existing_data else current_plan
             if existing:
@@ -241,5 +245,6 @@ class TargetedPlanService:
             progress["plan"] = merged_plan.model_dump(mode="json")
             return data
 
-        self.learning.mutate(owner_id, workspace_id, apply)
+        with self.learning.plan_transaction(owner_id, workspace_id):
+            self.learning.mutate(owner_id, workspace_id, apply)
         return merged_plan

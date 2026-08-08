@@ -31,7 +31,6 @@ describe("coach action execution", () => {
       applyAdjust,
       applyPlanUpdate: vi.fn(async () => true),
       applySaveQuestion: vi.fn(async () => true),
-      refreshSnapshot: vi.fn(async () => undefined),
     });
 
     expect(outcome.status).toBe("confirmation_required");
@@ -51,7 +50,6 @@ describe("coach action execution", () => {
       applyAdjust,
       applyPlanUpdate: vi.fn(async () => true),
       applySaveQuestion: vi.fn(async () => true),
-      refreshSnapshot: vi.fn(async () => undefined),
     };
 
     expect((await executeCoachAction(adjustProposal, options)).status).toBe("applied");
@@ -83,7 +81,6 @@ describe("coach action execution", () => {
       applyAdjust: vi.fn(async () => true),
       applyPlanUpdate,
       applySaveQuestion,
-      refreshSnapshot: vi.fn(async () => undefined),
     };
 
     expect((await executeCoachAction(planProposal, base)).status).toBe("applied");
@@ -92,24 +89,6 @@ describe("coach action execution", () => {
     expect(applySaveQuestion).toHaveBeenCalledWith(saveProposal);
   });
 
-  it("refreshes state instead of writing when a proposal predates the page lifecycle", async () => {
-    const refreshSnapshot = vi.fn(async () => undefined);
-    const applyAdjust = vi.fn(async () => true);
-
-    const outcome = await executeCoachAction(adjustProposal, {
-      appliedActionIds: new Set(),
-      hasDraft: false,
-      historical: true,
-      applyAdjust,
-      applyPlanUpdate: vi.fn(async () => true),
-      applySaveQuestion: vi.fn(async () => true),
-      refreshSnapshot,
-    });
-
-    expect(outcome.status).toBe("synced");
-    expect(refreshSnapshot).toHaveBeenCalledOnce();
-    expect(applyAdjust).not.toHaveBeenCalled();
-  });
 });
 
 describe("coach turn identity", () => {

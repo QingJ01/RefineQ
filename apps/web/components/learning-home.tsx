@@ -14,6 +14,7 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -140,6 +141,13 @@ export function LearningHome({
           </button>
         )}
         <div className="home-sidebar-actions">
+          <Link
+            data-testid="home-account"
+            className="home-nav-item home-admin-link"
+            href="/account"
+          >
+            <UserRound size={19} /><span>{t("account")}</span>
+          </Link>
           <button
             data-testid="home-language"
             className="home-nav-item home-admin-link"

@@ -16,9 +16,19 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } fr
 
 import { SourceDrawer } from "@/components/source-drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CoachActionCard, type CoachActionCardState } from "@/components/session-coach";
 import { api, ApiError } from "@/lib/api";
+import type { CoachActionOutcome } from "@/lib/coach-actions";
+import { localizeApiError } from "@/lib/error-messages";
 import type { Translator } from "@/lib/i18n";
-import type { AgentMessage, AgentSessionSummary, SearchSource } from "@/lib/types";
+import { resolveModelCapability } from "@/lib/model-capability";
+import type {
+  AgentMessage,
+  AgentSessionSummary,
+  ExecutableActionProposal,
+  Locale,
+  SearchSource,
+} from "@/lib/types";
 
 
 interface ChatMessage extends AgentMessage {
@@ -32,26 +42,39 @@ interface AgentTurn {
   turnId: string;
 }
 
-function errorMessage(caught: unknown, t: Translator): string {
+function errorMessage(caught: unknown, t: Translator, locale: Locale): string {
   if (caught instanceof ApiError && caught.code === "model_not_configured") {
     return t("modelRequired");
   }
-  if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
-  return caught instanceof Error ? caught.message : t("error");
+  if (caught instanceof ApiError) return localizeApiError(caught, locale);
+  return t("error");
 }
 
 export function AgentPanel({
   token,
   workspaceId,
   t,
+  locale = "en",
+  modelConfigured: configuredFromWorkspace,
+  onModelUnavailable,
+  onRecheck,
   isAdmin = false,
   onOpenSettings,
+  onApplyAction,
 }: {
   token: string;
   workspaceId: string;
   t: Translator;
+  locale?: Locale;
+  modelConfigured?: boolean | null;
+  onModelUnavailable?: () => void;
+  onRecheck?: () => Promise<boolean | null>;
   isAdmin?: boolean;
   onOpenSettings?: () => void;
+  onApplyAction?: (
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean },
+  ) => Promise<CoachActionOutcome>;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
@@ -59,13 +82,19 @@ export function AgentPanel({
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
+  const [detectedModelConfigured, setDetectedModelConfigured] = useState<boolean | null>(null);
+  const [checkingModel, setCheckingModel] = useState(configuredFromWorkspace == null);
+  const modelConfigured = resolveModelCapability(
+    configuredFromWorkspace,
+    detectedModelConfigured,
+  );
   const [error, setError] = useState("");
   const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AgentSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [actionState, setActionState] = useState<CoachActionCardState | null>(null);
   const requestController = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,6 +103,31 @@ export function AgentPanel({
     "agentSuggestionQuiz",
     "agentSuggestionPlan",
   ] as const;
+  const actionBusy = actionState?.status === "executing";
+
+  async function applyAction(
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean },
+  ) {
+    setActionState({ status: "executing", proposal });
+    if (!onApplyAction) {
+      setActionState({ status: "failed", proposal });
+      return;
+    }
+    try {
+      const outcome = await onApplyAction(proposal, options);
+      setActionState({
+        status: outcome.status === "confirmation_required"
+          ? "confirmation_required"
+          : outcome.status === "applied"
+            ? "applied"
+            : "failed",
+        proposal,
+      });
+    } catch {
+      setActionState({ status: "failed", proposal });
+    }
+  }
 
   const loadSessions = useCallback(async () => {
     setSessions(await api.listWorkspaceAgentSessions(token, workspaceId));
@@ -81,19 +135,39 @@ export function AgentPanel({
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.getModelSettings(token), api.listWorkspaceAgentSessions(token, workspaceId)])
+    const settingsRequest = configuredFromWorkspace == null
+      ? api.getModelSettings(token)
+      : Promise.resolve(null);
+    if (configuredFromWorkspace == null) {
+      void Promise.resolve().then(() => {
+        if (active) setCheckingModel(true);
+      });
+    }
+    Promise.all([settingsRequest, api.listWorkspaceAgentSessions(token, workspaceId)])
       .then(([settings, history]) => {
         if (!active) return;
-        setModelConfigured(settings.configured);
+        if (settings) setDetectedModelConfigured(settings.configured);
         setSessions(history);
       }).catch((caught: unknown) => {
-        if (active) setError(errorMessage(caught, t));
+        if (active) setError(errorMessage(caught, t, locale));
+      }).finally(() => {
+        if (active) setCheckingModel(false);
       });
     return () => {
       active = false;
       requestController.current?.abort();
     };
-  }, [token, workspaceId, t]);
+  }, [token, workspaceId, t, locale, configuredFromWorkspace]);
+
+  async function recheckCapability() {
+    if (!onRecheck) return;
+    setCheckingModel(true);
+    try {
+      setDetectedModelConfigured(await onRecheck());
+    } finally {
+      setCheckingModel(false);
+    }
+  }
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -104,7 +178,7 @@ export function AgentPanel({
   }, []);
 
   async function sendMessage(sent: string, retry?: AgentTurn) {
-    if (!sent || busy) return;
+    if (!sent || busy || actionBusy) return;
     const turn = retry ?? {
       message: sent,
       sessionId: sessionId ?? crypto.randomUUID().replaceAll("-", ""),
@@ -142,6 +216,14 @@ export function AgentPanel({
           sources: reply.sources,
         },
       ]);
+      const proposal = reply.action_proposal;
+      if (!proposal) {
+        setActionState(null);
+      } else if (proposal.type === "rejected") {
+        setActionState({ status: "rejected", proposal });
+      } else {
+        await applyAction(proposal);
+      }
       await loadSessions();
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -150,9 +232,10 @@ export function AgentPanel({
         setMessage(turn.message);
       } else {
         setFailedTurn(turn);
-        setError(errorMessage(caught, t));
+        setError(errorMessage(caught, t, locale));
         if (caught instanceof ApiError && caught.code === "model_not_configured") {
-          setModelConfigured(false);
+          setDetectedModelConfigured(false);
+          onModelUnavailable?.();
         }
       }
     } finally {
@@ -177,6 +260,7 @@ export function AgentPanel({
     setMessage("");
     setError("");
     setFailedTurn(null);
+    setActionState(null);
     setHistoryOpen(false);
   }
 
@@ -186,9 +270,10 @@ export function AgentPanel({
       const detail = await api.getWorkspaceAgentSession(token, workspaceId, id);
       setSessionId(detail.id);
       setMessages(detail.messages);
+      setActionState(null);
       setHistoryOpen(false);
     } catch (caught) {
-      setError(errorMessage(caught, t));
+      setError(errorMessage(caught, t, locale));
     }
   }
 
@@ -198,7 +283,7 @@ export function AgentPanel({
       setSessions((current) => current.filter((item) => item.id !== id));
       if (id === sessionId) newConversation();
     } catch (caught) {
-      setError(errorMessage(caught, t));
+      setError(errorMessage(caught, t, locale));
     }
   }
 
@@ -242,11 +327,20 @@ export function AgentPanel({
           <button type="button" data-testid="agent-history" className="quiet-button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((current) => !current)}><History size={15} /> {t("conversationHistory")}</button>
           <button type="button" data-testid="agent-new-conversation" className="quiet-button" onClick={newConversation}><Plus size={15} /> {t("newConversation")}</button>
           <span data-testid="model-status" className={modelConfigured ? "agent-model-status ready" : modelConfigured === null ? "agent-model-status checking" : "agent-model-status"}>
-            {t(modelConfigured ? "aiReady" : modelConfigured === null ? "checkingModel" : "adminSetupRequired")}
+            {t(modelConfigured
+              ? "aiReady"
+              : modelConfigured === null
+                ? checkingModel ? "checkingModel" : "modelStatusUnavailable"
+                : "adminSetupRequired")}
           </span>
           {modelConfigured === false && isAdmin && (
             <button type="button" className="quiet-button agent-settings-link" onClick={onOpenSettings}>
               <Settings2 size={14} /> {t("configureModel")}
+            </button>
+          )}
+          {modelConfigured === null && onRecheck && (
+            <button type="button" className="quiet-button" data-testid="agent-recheck-model" onClick={() => void recheckCapability()}>
+              <RotateCcw size={14} /> {t("recheckModel")}
             </button>
           )}
         </div>
@@ -271,6 +365,23 @@ export function AgentPanel({
           )}
         </div>
       )}
+      {actionState && (
+        <CoachActionCard
+          locale={locale}
+          state={actionState}
+          onConfirm={() => {
+            if (actionState.status !== "rejected") {
+              void applyAction(actionState.proposal, { confirmed: true });
+            }
+          }}
+          onCancel={() => setActionState(null)}
+          onRetry={() => {
+            if (actionState.status !== "rejected") {
+              void applyAction(actionState.proposal, { confirmed: true });
+            }
+          }}
+        />
+      )}
       <div className="chat-log" role="log" aria-live="polite" aria-busy={busy}>
         {messages.length === 0 && (
           <div className="agent-empty">
@@ -278,7 +389,7 @@ export function AgentPanel({
             <p>{t("messagePlaceholder")}</p>
             <div className="agent-suggestions">
               {suggestionKeys.map((key) => (
-                <button key={key} type="button" data-testid="agent-suggestion" onClick={() => setMessage(t(key))}>
+                <button key={key} type="button" data-testid="agent-suggestion" disabled={modelConfigured === false || actionBusy} onClick={() => setMessage(t(key))}>
                   {t(key)}
                 </button>
               ))}
@@ -301,11 +412,11 @@ export function AgentPanel({
         <div ref={logEndRef} aria-hidden="true" />
       </div>
       <form className="chat-composer" onSubmit={send}>
-        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} />
+        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} disabled={modelConfigured === false || actionBusy} />
         {busy ? (
           <button type="button" data-testid="agent-stop" className="secondary-action" onClick={stopResponse}><Square size={15} /> {t("stop")}</button>
         ) : (
-          <button className="primary-action" disabled={!message.trim()}>{t("send")} <Send size={17} /></button>
+          <button className="primary-action" disabled={!message.trim() || modelConfigured === false || actionBusy}>{t("send")} <Send size={17} /></button>
         )}
       </form>
       {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} t={t} onClose={() => setSelectedSources([])} />}

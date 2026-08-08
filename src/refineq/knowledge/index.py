@@ -29,11 +29,29 @@ from sqlalchemy import (
 )
 
 from refineq.database.engine import Database
+from refineq.database.owner_state import lock_writable_owner
 from refineq.database.schema import EMBEDDING_DIMENSIONS, material_chunks, materials
 from refineq.knowledge.embeddings import Embedder
 from refineq.storage.json_store import validate_identifier
 
 logger = logging.getLogger(__name__)
+
+
+def _lexical_terms(query: str) -> list[str]:
+    """Return bounded search terms, including bigrams for unsegmented CJK text."""
+
+    segments = re.findall(
+        r"[\u3400-\u4dbf\u4e00-\u9fff]+|[^\W_]+",
+        query.casefold(),
+        flags=re.UNICODE,
+    )
+    terms: list[str] = []
+    for segment in segments:
+        if re.fullmatch(r"[\u3400-\u4dbf\u4e00-\u9fff]+", segment):
+            terms.extend(segment[index : index + 2] for index in range(max(1, len(segment) - 1)))
+        else:
+            terms.append(segment)
+    return list(dict.fromkeys(term for term in terms if term))[:20]
 
 
 def _postgres_cosine_distance(column: object, query_embedding: list[float]):
@@ -51,6 +69,8 @@ class MaterialRecord(BaseModel):
     id: str
     project_id: str
     filename: str
+    title: str
+    tags: list[str]
     content_type: str
     size: int = Field(ge=0)
     status: str
@@ -102,6 +122,7 @@ class KnowledgeIndex:
         chunk_chars: int = 1_200,
         embedder: Embedder | None = None,
         embedding_batch_size: int = 64,
+        enforce_owner_state: bool = False,
     ) -> None:
         if isinstance(database, Path):
             path = database.expanduser().resolve() / "system" / "refineq.sqlite3"
@@ -113,6 +134,11 @@ class KnowledgeIndex:
         if embedding_batch_size < 1:
             raise ValueError("embedding_batch_size must be positive")
         self.embedding_batch_size = embedding_batch_size
+        self.enforce_owner_state = enforce_owner_state
+
+    def _lock_owner_write(self, session, owner_id: str) -> None:
+        if self.enforce_owner_state:
+            lock_writable_owner(session, self.database, owner_id)
 
     @classmethod
     def _lock_for(cls, key: str) -> RLock:
@@ -166,6 +192,8 @@ class KnowledgeIndex:
             id=row.material_id,
             project_id=row.project_id,
             filename=row.filename,
+            title=row.title or row.filename,
+            tags=list(row.tags or []),
             content_type=row.content_type,
             size=int(row.size),
             status=row.status,
@@ -210,6 +238,7 @@ class KnowledgeIndex:
         owner_id, prepared = self._prepare_documents(owner_id=owner_id, documents=documents)
         embeddings = self._embed_prepared(prepared)
         with self._lock_for(owner_id), self.database.session() as session:
+            self._lock_owner_write(session, owner_id)
             self._write_prepared(
                 session=session,
                 owner_id=owner_id,
@@ -233,6 +262,7 @@ class KnowledgeIndex:
         owner_id, prepared = self._prepare_documents(owner_id=owner_id, documents=documents)
         embeddings = self._embed_prepared(prepared)
         with self._lock_for(owner_id), self.database.session() as session:
+            self._lock_owner_write(session, owner_id)
             if self.database.is_postgresql:
                 session.execute(
                     sql_text("SELECT pg_advisory_xact_lock(hashtextextended(:owner_id, 0))"),
@@ -301,6 +331,8 @@ class KnowledgeIndex:
                 id=material_id,
                 project_id=project_id,
                 filename=document.filename,
+                title=document.filename,
+                tags=[],
                 content_type=document.content_type,
                 size=len(encoded) if document.size is None else document.size,
                 status="indexed",
@@ -347,6 +379,8 @@ class KnowledgeIndex:
                     project_id=record.project_id,
                     material_id=record.id,
                     filename=record.filename,
+                    title=record.title,
+                    tags=record.tags,
                     content_type=record.content_type,
                     size=record.size,
                     status=record.status,
@@ -388,10 +422,10 @@ class KnowledgeIndex:
         query_lower = query.strip().casefold()
         if not query_lower:
             raise ValueError("Search query must contain a word")
-        tokens = re.findall(r"\w+", query_lower, flags=re.UNICODE)
-        if not tokens:
+        terms = _lexical_terms(query_lower)
+        if not terms:
             raise ValueError("Search query must contain a word")
-        score = sum(content_lower.count(token) for token in tokens[:20])
+        score = sum(content_lower.count(term) for term in terms)
         if query_lower in content_lower:
             score += 2
         return float(score)
@@ -485,6 +519,9 @@ class KnowledgeIndex:
         query = query.strip()
         if not query:
             raise ValueError("Search query must contain a word")
+        lexical_terms = _lexical_terms(query)
+        if not lexical_terms:
+            raise ValueError("Search query must contain a word")
         bounded_limit = max(1, min(limit, 50))
         candidate_limit = max(50, bounded_limit * 8)
         query_embedding = self._query_embedding(query)
@@ -499,10 +536,18 @@ class KnowledgeIndex:
                 search_config = literal_column("'simple'::regconfig")
                 search_query = func.websearch_to_tsquery(search_config, query)
                 search_document = func.to_tsvector(search_config, material_chunks.c.content)
-                escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                substring_match = material_chunks.c.content.ilike(
-                    f"%{escaped_query}%",
-                    escape="\\",
+                escaped_terms = (
+                    term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    for term in lexical_terms
+                )
+                substring_match = or_(
+                    *(
+                        material_chunks.c.content.ilike(
+                            f"%{term}%",
+                            escape="\\",
+                        )
+                        for term in escaped_terms
+                    )
                 )
                 lexical_rank = func.greatest(
                     func.ts_rank_cd(search_document, search_query),
@@ -673,44 +718,141 @@ class KnowledgeIndex:
         project_id: str,
         material_id: str,
     ) -> str:
-        storage_key = self.get_material_storage_key(
+        deleted = self.delete_materials(
             owner_id=owner_id,
             project_id=project_id,
-            material_id=material_id,
+            material_ids=[material_id],
         )
+        return deleted[0][1]
+
+    def delete_materials(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        material_ids: list[str],
+    ) -> list[tuple[MaterialRecord, str]]:
+        """Delete a validated owner-scoped material selection in one transaction."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        project_id = validate_identifier(project_id, field="project_id")
+        normalized_ids = [
+            validate_identifier(material_id, field="material_id") for material_id in material_ids
+        ]
+        if not normalized_ids:
+            raise ValueError("At least one material ID is required")
+        if len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("Material IDs must be unique")
         with self._lock_for(owner_id), self.database.session() as session:
-            scope = (
-                materials.c.owner_id == owner_id,
-                materials.c.project_id == project_id,
-                materials.c.material_id == material_id,
-            )
+            self._lock_owner_write(session, owner_id)
+            rows = session.execute(
+                select(materials).where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == project_id,
+                    materials.c.material_id.in_(normalized_ids),
+                )
+            ).all()
+            by_id = {row.material_id: row for row in rows}
+            if len(by_id) != len(normalized_ids):
+                missing = next(
+                    material_id for material_id in normalized_ids if material_id not in by_id
+                )
+                raise MaterialNotFoundError(missing)
             session.execute(
                 delete(material_chunks).where(
                     material_chunks.c.owner_id == owner_id,
                     material_chunks.c.project_id == project_id,
-                    material_chunks.c.material_id == material_id,
+                    material_chunks.c.material_id.in_(normalized_ids),
                 )
             )
-            deleted = session.execute(delete(materials).where(*scope))
-            if deleted.rowcount != 1:
+            deleted = session.execute(
+                delete(materials).where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == project_id,
+                    materials.c.material_id.in_(normalized_ids),
+                )
+            )
+            if deleted.rowcount != len(normalized_ids):
+                raise MaterialNotFoundError(normalized_ids[0])
+        return [
+            (self._material_record(by_id[material_id]), str(by_id[material_id].storage_key))
+            for material_id in normalized_ids
+        ]
+
+    def update_material_metadata(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        material_id: str,
+        title: str | None = None,
+        tags: list[str] | None = None,
+    ) -> MaterialRecord:
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        project_id = validate_identifier(project_id, field="project_id")
+        material_id = validate_identifier(material_id, field="material_id")
+        values: dict[str, object] = {}
+        if title is not None:
+            values["title"] = title
+        if tags is not None:
+            values["tags"] = tags
+        if not values:
+            raise ValueError("At least one metadata field is required")
+        with self._lock_for(owner_id), self.database.session() as session:
+            self._lock_owner_write(session, owner_id)
+            changed = session.execute(
+                update(materials)
+                .where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == project_id,
+                    materials.c.material_id == material_id,
+                )
+                .values(**values)
+            )
+            if changed.rowcount != 1:
                 raise MaterialNotFoundError(material_id)
-        return storage_key
+            row = session.execute(
+                select(materials).where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == project_id,
+                    materials.c.material_id == material_id,
+                )
+            ).one()
+        return self._material_record(row)
 
     def list_materials(
         self,
         *,
         owner_id: str,
         project_id: str,
+        status: str | None = None,
+        tag: str | None = None,
+        sort: str = "newest",
     ) -> list[MaterialRecord]:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
+        filters = [
+            materials.c.owner_id == owner_id,
+            materials.c.project_id == project_id,
+        ]
+        if status is not None:
+            filters.append(materials.c.status == status)
         with self.database.session() as session:
-            rows = session.execute(
-                select(materials)
-                .where(
-                    materials.c.owner_id == owner_id,
-                    materials.c.project_id == project_id,
-                )
-                .order_by(materials.c.indexed_at.desc(), materials.c.material_id)
-            ).all()
-        return [self._material_record(row) for row in rows]
+            rows = session.execute(select(materials).where(*filters)).all()
+        records = [self._material_record(row) for row in rows]
+        if tag is not None:
+            normalized_tag = tag.casefold()
+            records = [
+                record
+                for record in records
+                if any(item.casefold() == normalized_tag for item in record.tags)
+            ]
+        if sort == "newest":
+            return sorted(records, key=lambda record: (-record.indexed_at.timestamp(), record.id))
+        if sort == "oldest":
+            return sorted(records, key=lambda record: (record.indexed_at.timestamp(), record.id))
+        if sort == "title":
+            return sorted(records, key=lambda record: (record.title.casefold(), record.id))
+        if sort == "size_desc":
+            return sorted(records, key=lambda record: (-record.size, record.id))
+        raise ValueError("Unsupported material sort order")

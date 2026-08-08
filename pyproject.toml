@@ -32,6 +32,7 @@ dependencies = [
 
 [project.scripts]
 refineq-admin = "refineq.operations.admin_cli:main"
+refineq-demo = "refineq.operations.demo_cli:main"
 refineq-migrate-postgres = "refineq.operations.migration_cli:main"
 
 [project.optional-dependencies]

@@ -46,6 +46,23 @@ Also back up the `refineq-data` volume when local object storage is enabled. Whe
 storage is enabled, use that provider's versioned backup or replication facility. Preserve the
 Fernet key separately; without it, saved API and object-storage credentials cannot be decrypted.
 
+## Managed backups in the administrator console
+
+Open **System administration → Platform operations** to inspect user quotas, background indexing
+jobs, recent audit activity, and backups managed under `REFINEQ_DATA_ROOT`. **Create backup** produces
+a verified archive and records the action in the administrator audit log. The backup list exposes
+only generated identifiers, timestamps, counts, and byte sizes; absolute server paths are never sent
+to the browser.
+
+The restore action in the console is validation-only: it verifies the selected archive and records
+the validation result, but does not replace a running system's state. For an actual restore, stop
+writes and use the supported restore command below against an empty destination. This separation
+prevents an accidental browser action from replacing live data.
+
+Backup creation is compensated if its audit record cannot be written, so a failed request does not
+leave an untracked archive. If an operation fails, retry from the localized error banner and inspect
+server logs using the request time; the UI intentionally does not expose internal exception text.
+
 ## Legacy local backup
 
 ```powershell

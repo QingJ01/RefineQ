@@ -164,3 +164,33 @@ def test_writing_and_research_goals_are_first_class_capabilities() -> None:
     assert research.subject == "research"
     assert research.title == "研究能力"
     assert "证据检索与综合" in research.topics
+
+
+def test_chinese_computer_science_intent_gets_readable_title_and_topics() -> None:
+    decision = route_workspace(
+        "10月25日考计算机组成原理期中，每天能学90分钟，先补流水线和缓存",
+        [],
+    )
+
+    assert decision.subject == "computing"
+    assert decision.title == "计算机组成原理"
+    assert decision.topics == ["流水线与冒险", "缓存与存储层次"]
+    assert all("每天能学" not in topic for topic in decision.topics)
+    assert all(len(topic) <= 20 for topic in decision.topics)
+
+
+def test_database_intent_is_not_general() -> None:
+    decision = route_workspace("下周考数据库系统，重点是事务和索引", [])
+
+    assert decision.subject == "computing"
+    assert decision.title == "数据库"
+    assert decision.topics == ["事务与并发控制", "索引与查询优化"]
+
+
+def test_general_title_removes_schedule_noise() -> None:
+    decision = route_workspace("10月25日考试，每天能学90分钟，准备量子纠缠", [])
+
+    assert decision.subject == "general"
+    assert "10月25日" not in decision.title
+    assert "每天能学" not in decision.title
+    assert len(decision.title) <= 20

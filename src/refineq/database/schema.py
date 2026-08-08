@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 EMBEDDING_DIMENSIONS = 1536
 
 naming_convention = {
@@ -69,6 +69,7 @@ users = Table(
     Column("display_name", String(100), nullable=False),
     Column("password_hash", String(128), nullable=False),
     Column("role", String(20), nullable=False, default="learner"),
+    Column("deletion_id", String(64), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, default=utc_now),
     Column("updated_at", DateTime(timezone=True), nullable=False, default=utc_now),
     CheckConstraint("role IN ('learner', 'admin')", name="valid_role"),
@@ -139,6 +140,8 @@ materials = Table(
     Column("project_id", String(128), nullable=False),
     Column("material_id", String(128), nullable=False),
     Column("filename", String(500), nullable=False),
+    Column("title", String(500), nullable=False),
+    Column("tags", json_document, nullable=False, default=list),
     Column("content_type", String(200), nullable=False),
     Column("size", BigInteger, nullable=False),
     Column("status", String(32), nullable=False),

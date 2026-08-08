@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from refineq.database.engine import Database
+from refineq.database.owner_state import lock_writable_owner
 from refineq.database.schema import records, utc_now
 from refineq.storage.json_store import (
     RecordAlreadyExistsError,
@@ -31,8 +32,9 @@ class SqlRecordStore:
     _locks_guard = Lock()
     _locks: dict[str, RLock] = {}
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, enforce_owner_state: bool = False) -> None:
         self.database = database
+        self.enforce_owner_state = enforce_owner_state
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"refineq_sql_store_session_{id(self)}",
             default=None,
@@ -73,6 +75,10 @@ class SqlRecordStore:
         digest = blake2b(f"{owner_id}:{scope}".encode(), digest_size=8).digest()
         return int.from_bytes(digest, "big", signed=True)
 
+    def _lock_owner_write(self, session: Session, owner_id: str) -> None:
+        if self.enforce_owner_state:
+            lock_writable_owner(session, self.database, owner_id)
+
     @contextmanager
     def owner_transaction(self, owner_id: str, scope: str) -> Iterator[None]:
         owner_id = validate_identifier(owner_id, field="owner_id")
@@ -109,6 +115,7 @@ class SqlRecordStore:
         identity = self._identity(owner_id, collection, record_id)
         lock_key = ":".join(identity.values())
         with self._lock_for(lock_key), self._session() as session:
+            self._lock_owner_write(session, identity["owner_id"])
             if not self.database.is_postgresql:
                 exists = session.scalar(select(records.c.record_id).filter_by(**identity))
                 if exists is not None:
@@ -151,6 +158,47 @@ class SqlRecordStore:
                 raise RecordNotFoundError(":".join(identity.values()))
             return self._stored(row)
 
+    def restore(
+        self,
+        owner_id: str,
+        collection: str,
+        record_id: str,
+        record: StoredRecord,
+    ) -> StoredRecord:
+        """Restore an exact deleted record without overwriting a concurrent survivor."""
+
+        identity = self._identity(owner_id, collection, record_id)
+        lock_key = ":".join(identity.values())
+        with self._lock_for(lock_key), self._session() as session:
+            self._lock_owner_write(session, identity["owner_id"])
+            statement = select(records).filter_by(**identity)
+            if self.database.is_postgresql:
+                statement = statement.with_for_update()
+            row = session.execute(statement).one_or_none()
+            if row is not None:
+                return self._stored(row)
+
+            try:
+                with session.begin_nested():
+                    session.execute(
+                        insert(records).values(
+                            **identity,
+                            schema_version=record.schema_version,
+                            version=record.version,
+                            data=deepcopy(record.data),
+                            updated_at=utc_now(),
+                        )
+                    )
+                    session.flush()
+            except IntegrityError:
+                survivor = session.execute(select(records).filter_by(**identity)).one()
+                return self._stored(survivor)
+            return StoredRecord(
+                schema_version=record.schema_version,
+                version=record.version,
+                data=deepcopy(record.data),
+            )
+
     def delete(self, owner_id: str, collection: str, record_id: str) -> None:
         identity = self._identity(owner_id, collection, record_id)
         with self._lock_for(":".join(identity.values())), self._session() as session:
@@ -182,6 +230,7 @@ class SqlRecordStore:
         identity = self._identity(owner_id, collection, record_id)
         lock_key = ":".join(identity.values())
         with self._lock_for(lock_key), self._session() as session:
+            self._lock_owner_write(session, identity["owner_id"])
             statement = select(records).filter_by(**identity)
             if self.database.is_postgresql:
                 statement = statement.with_for_update()
@@ -216,6 +265,7 @@ class SqlRecordStore:
         identity = self._identity(owner_id, collection, record_id)
         lock_key = ":".join(identity.values())
         with self._lock_for(lock_key), self._session() as session:
+            self._lock_owner_write(session, identity["owner_id"])
             statement = select(records).filter_by(**identity)
             if self.database.is_postgresql:
                 statement = statement.with_for_update()

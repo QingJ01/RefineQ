@@ -14,8 +14,9 @@ import {
   RotateCcw,
   Target,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
+import { AgentPanel } from "@/components/agent-panel";
 import { SessionCoach } from "@/components/session-coach";
 import { SourceDrawer } from "@/components/source-drawer";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
@@ -41,6 +42,7 @@ const modeCopy: Record<Locale, Record<LearningMode, string>> = {
   zh: { concept: "概念学习", case: "案例拆解", project: "项目实战", exam: "模拟考试" },
   en: { concept: "Concept", case: "Case study", project: "Project", exam: "Mock exam" },
 };
+const SESSION_RENDERED_AT = Date.now();
 
 const interfaceCopy = {
   zh: {
@@ -69,6 +71,8 @@ const interfaceCopy = {
     review: "后续巩固",
     reviewHint: "系统会依据本次反馈安排下一次回顾。",
     sourceLabel: "参考来源",
+    materialGrounding: "材料依据",
+    generalGrounding: "通用生成",
   },
   en: {
     today: "Today",
@@ -96,6 +100,8 @@ const interfaceCopy = {
     review: "Follow-up review",
     reviewHint: "The next review will be scheduled from this feedback.",
     sourceLabel: "Sources",
+    materialGrounding: "Material-grounded",
+    generalGrounding: "General practice",
   },
 } as const;
 
@@ -132,15 +138,25 @@ export function LearningSessionCanvas({
   question,
   answer,
   result,
+  masteryBefore = null,
   busy,
   learningMode,
   savedQuestions,
+  agentToken,
+  modelConfigured,
+  onModelUnavailable,
+  onRecheckModel,
+  isAdmin = false,
+  onOpenAgentSettings,
   onLearningModeChange,
   onAnswerChange,
   onStartTask,
   onSubmit,
   onNextTask,
+  onRetryTask,
+  onViewProgress,
   onToggleSaved,
+  onPracticeSaved,
   onOpenLibrary,
   onAskCoach,
   onApplyCoachAction,
@@ -155,20 +171,30 @@ export function LearningSessionCanvas({
   question: PracticeQuestion | null;
   answer: string;
   result: AnswerResult | null;
+  masteryBefore?: number | null;
   busy: boolean;
   learningMode: LearningMode;
   savedQuestions: SavedPracticeQuestion[];
+  agentToken?: string;
+  modelConfigured?: boolean | null;
+  onModelUnavailable?: () => void;
+  onRecheckModel?: () => Promise<boolean | null>;
+  isAdmin?: boolean;
+  onOpenAgentSettings?: () => void;
   onLearningModeChange: (mode: LearningMode) => void;
   onAnswerChange: (answer: string) => void;
   onStartTask: () => void | Promise<void>;
   onSubmit: () => void | Promise<void>;
   onNextTask: () => void | Promise<void>;
+  onRetryTask?: () => void | Promise<void>;
+  onViewProgress?: () => void;
   onToggleSaved: (question: PracticeQuestion, saved: boolean) => void | Promise<void>;
+  onPracticeSaved?: (question: SavedPracticeQuestion) => void | Promise<void>;
   onOpenLibrary: () => void;
   onAskCoach: (message: string) => Promise<AgentReply>;
   onApplyCoachAction?: (
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) => Promise<CoachActionOutcome>;
   onCoachTurnHandled?: () => void;
 }) {
@@ -182,11 +208,18 @@ export function LearningSessionCanvas({
   );
   const activeTopicId = question?.topic_id ?? nextSession?.topic_id;
   const topic = activeTopicId
-    ? progress?.topics?.[activeTopicId] ?? activeTopicId
+    ? progress?.topics?.[activeTopicId] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")
     : workspace.topics[0] ?? workspace.title;
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
+  const agentRef = useRef<HTMLDetailsElement>(null);
   const sourceRecords = materials.slice(0, 2);
   const taskSources = result?.sources?.length ? result.sources : question?.sources ?? [];
+  const taskGrounding = result?.grounding
+    ?? question?.grounding
+    ?? (taskSources.length > 0 ? "material" : "general");
+  const groundingLabel = taskGrounding === "material"
+    ? text.materialGrounding
+    : text.generalGrounding;
   const nextReview = result?.next_review_at
     ?? plan?.sessions.find(
       (item) => item.activity === "review" && item.status !== "completed",
@@ -194,6 +227,16 @@ export function LearningSessionCanvas({
   const isSaved = question
     ? Boolean(question.saved || savedQuestions.some((saved) => saved.id === question.id))
     : false;
+  const daysUntilExam = plan?.exam_at
+    ? Math.max(0, Math.ceil((new Date(plan.exam_at).getTime() - SESSION_RENDERED_AT) / 86_400_000))
+    : null;
+
+  function openFullCoach() {
+    if (!agentRef.current) return;
+    agentRef.current.open = true;
+    agentRef.current.focus({ preventScroll: true });
+    agentRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <section className="learning-session-canvas" data-testid="learning-session-canvas">
@@ -202,7 +245,14 @@ export function LearningSessionCanvas({
           <span className="kicker">REFINEQ / SESSION</span>
           <h1>{topic} · {text.today}</h1>
         </div>
-        <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+        <div className="session-title-meta">
+          {daysUntilExam !== null && (
+            <span className="session-exam-countdown" data-testid="exam-countdown">
+              <Target size={16} /> {daysUntilExam} {t("daysLeft")}
+            </span>
+          )}
+          <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+        </div>
       </header>
 
       <div className="session-layout">
@@ -247,22 +297,44 @@ export function LearningSessionCanvas({
                 <div><Target size={17} /><span>{text.capability}</span><strong>{workspace.goal}</strong></div>
                 <div><Layers3 size={17} /><span>{text.currentOutput}</span><strong>{text.outputHint}</strong></div>
               </section>
-              <button
-                type="button"
-                className="primary-action session-primary"
-                data-testid="session-start-task"
-                disabled={busy}
-                onClick={() => void onStartTask()}
-              >
-                {text.startTask} <ArrowRight size={18} />
-              </button>
+              {materials.length === 0 && (
+                <div className="session-upload-prompt" data-testid="session-upload-prompt">
+                  <div>
+                    <strong>{t("uploadFirstSourceTitle")}</strong>
+                    <p>{t("uploadFirstSourceHint")}</p>
+                  </div>
+                  <button type="button" className="secondary-action" onClick={onOpenLibrary}>
+                    {t("uploadFirstSourceAction")} <ArrowRight size={16} />
+                  </button>
+                </div>
+              )}
+              <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
+                <button
+                  type="button"
+                  className="primary-action session-primary"
+                  data-testid="session-start-task"
+                  disabled={busy}
+                  onClick={() => void onStartTask()}
+                >
+                  {text.startTask} <ArrowRight size={18} />
+                </button>
+              </div>
             </article>
           )}
 
           {stage === "practice" && question && (
             <article className="session-task" data-testid="session-practice-stage" data-question-id={question.id}>
               <span className="session-section-label"><Target size={15} /> {steps[2].label}</span>
+              <span className={`session-grounding-badge ${taskGrounding}`} data-testid="practice-grounding">
+                {groundingLabel}
+              </span>
               <h2>{question.prompt}</h2>
+              {question.explanation && (
+                <div className="question-explanation" data-testid="question-explanation">
+                  <strong>{locale === "zh" ? "为什么考这道题" : "Why this task matters"}</strong>
+                  <p>{question.explanation}</p>
+                </div>
+              )}
               {taskSources[0]?.text && (
                 <blockquote className="session-case-evidence">
                   <span>{locale === "zh" ? "真实材料线索" : "Source evidence"}</span>
@@ -303,15 +375,17 @@ export function LearningSessionCanvas({
                 <button type="button" className="secondary-action" data-testid="skip-question" disabled={busy} onClick={() => void onNextTask()}>
                   <RotateCcw size={16} /> {text.replace}
                 </button>
-                <button
-                  type="button"
-                  className="primary-action"
-                  data-testid="submit-answer"
-                  disabled={busy || !answer.trim()}
-                  onClick={() => void onSubmit()}
-                >
-                  {text.submit} <ArrowRight size={18} />
-                </button>
+                <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
+                  <button
+                    type="button"
+                    className="primary-action"
+                    data-testid="submit-answer"
+                    disabled={busy || !answer.trim()}
+                    onClick={() => void onSubmit()}
+                  >
+                    {text.submit} <ArrowRight size={18} />
+                  </button>
+                </div>
               </div>
             </article>
           )}
@@ -319,7 +393,20 @@ export function LearningSessionCanvas({
           {stage === "reflect" && result && question && (
             <article className="session-feedback" data-testid="session-reflect-stage" role="status">
               <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
+              <span className={`session-grounding-badge ${taskGrounding}`} data-testid="feedback-grounding">
+                {groundingLabel}
+              </span>
               <h2>{result.feedback}</h2>
+              {taskSources.length > 0 && (
+                <button
+                  type="button"
+                  className="session-source-link"
+                  data-testid="feedback-sources"
+                  onClick={() => setSelectedSources(taskSources)}
+                >
+                  <ExternalLink size={15} /> {text.sourceLabel} · {taskSources[0].filename}
+                </button>
+              )}
               <div className="feedback-columns">
                 <section>
                   <h3>{text.strength}</h3>
@@ -334,6 +421,18 @@ export function LearningSessionCanvas({
                     : <p className="feedback-empty">{text.noGaps}</p>}
                 </section>
               </div>
+              {result.mastery_updated && masteryBefore !== null ? (
+                <div className="session-mastery-change" data-testid="mastery-change">
+                  <span>{locale === "zh" ? "掌握度" : "Mastery"}</span>
+                  <strong>{Math.round(masteryBefore * 100)}%</strong>
+                  <ArrowRight size={16} />
+                  <strong>{Math.round(result.mastery * 100)}%</strong>
+                </div>
+              ) : !result.mastery_updated ? (
+                <p className="session-mastery-unchanged" data-testid="mastery-unchanged">
+                  {t("masteryNotUpdated")}
+                </p>
+              ) : null}
               <div className="session-review-note">
                 <Clock3 size={17} />
                 <div>
@@ -346,11 +445,71 @@ export function LearningSessionCanvas({
                     : text.reviewHint}</span>
                 </div>
               </div>
-              <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
-                {text.next} <ArrowRight size={18} />
-              </button>
+              <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
+                <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
+                  {text.next} <ArrowRight size={18} />
+                </button>
+              </div>
+              <div className="session-reflect-actions">
+                <button type="button" className="secondary-action" data-testid="reflect-view-progress" disabled={!onViewProgress} onClick={onViewProgress}>
+                  {locale === "zh" ? "看进步" : "View progress"}
+                </button>
+                <button type="button" className="secondary-action" data-testid="reflect-retry-question" disabled={busy || !onRetryTask} onClick={() => void onRetryTask?.()}>
+                  <RotateCcw size={16} /> {locale === "zh" ? "重做这题" : "Retry this task"}
+                </button>
+                <button type="button" className="secondary-action" data-testid="reflect-save-question" aria-pressed={isSaved} disabled={busy} onClick={() => void onToggleSaved(question, !isSaved)}>
+                  {isSaved ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                  {isSaved ? text.saved : text.save}
+                </button>
+              </div>
             </article>
           )}
+          {stage === "reflect" && result && !question && (
+            <article className="session-feedback" data-testid="reflect-recovery" role="status">
+              <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
+              <h2>{result.feedback}</h2>
+              <p>{locale === "zh" ? "原题题面暂时无法恢复，你仍可继续下一题或查看已保存的进度。" : "The original prompt could not be restored, but you can continue or review your saved progress."}</p>
+              <div className="session-reflect-actions">
+                <button type="button" className="secondary-action" data-testid="reflect-view-progress" disabled={!onViewProgress} onClick={onViewProgress}>
+                  {locale === "zh" ? "看进步" : "View progress"}
+                </button>
+                <button type="button" className="primary-action" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
+                  {text.next} <ArrowRight size={18} />
+                </button>
+              </div>
+            </article>
+          )}
+          <section className="session-saved-questions" aria-labelledby="saved-question-heading">
+            <div className="session-saved-heading">
+              <h2 id="saved-question-heading">{t("savedQuestions")}</h2>
+              <span>{savedQuestions.length}</span>
+            </div>
+            {savedQuestions.length > 0 ? (
+              <ul data-testid="saved-question-list">
+                {savedQuestions.map((saved) => (
+                  <li key={saved.id}>
+                    <div>
+                      <span>{progress?.topics?.[saved.topic_id] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")}</span>
+                      <strong>{saved.prompt}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      data-testid="practice-saved-question"
+                      disabled={busy || !onPracticeSaved}
+                      onClick={() => void onPracticeSaved?.(saved)}
+                    >
+                      {t("practiceSavedTopic")} <ArrowRight size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="context-empty" data-testid="saved-question-empty">
+                {t("savedQuestionsEmpty")}
+              </p>
+            )}
+          </section>
         </main>
 
         <aside className="session-context">
@@ -369,6 +528,12 @@ export function LearningSessionCanvas({
           <SessionCoach
             locale={locale}
             onAsk={onAskCoach}
+            modelConfigured={modelConfigured}
+            onModelUnavailable={onModelUnavailable}
+            onRecheck={onRecheckModel}
+            isAdmin={isAdmin}
+            onConfigure={onOpenAgentSettings}
+            onOpenFullCoach={agentToken ? openFullCoach : undefined}
             onApplyAction={onApplyCoachAction}
             onTurnHandled={onCoachTurnHandled}
           />
@@ -378,6 +543,23 @@ export function LearningSessionCanvas({
           </section>
         </aside>
       </div>
+      {agentToken && (
+        <details ref={agentRef} className="workspace-agent-disclosure" data-testid="workspace-agent" tabIndex={-1}>
+          <summary>{locale === "zh" ? "完整对话、历史与资料引用" : "Full conversation, history, and sources"}</summary>
+          <AgentPanel
+            token={agentToken}
+            workspaceId={workspace.id}
+            t={t}
+            locale={locale}
+            modelConfigured={modelConfigured}
+            onModelUnavailable={onModelUnavailable}
+            onRecheck={onRecheckModel}
+            isAdmin={isAdmin}
+            onOpenSettings={onOpenAgentSettings}
+            onApplyAction={onApplyCoachAction}
+          />
+        </details>
+      )}
       {selectedSources.length > 0 && (
         <SourceDrawer
           title={text.sourceLabel}

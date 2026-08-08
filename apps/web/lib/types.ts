@@ -15,6 +15,13 @@ export interface AuthResponse {
   user: User;
 }
 
+export interface AccountExport {
+  exported_at: string;
+  user: User;
+  records: Array<Record<string, unknown>>;
+  materials: Array<Record<string, unknown>>;
+}
+
 export interface LearningWorkspace {
   id: string;
   title: string;
@@ -63,10 +70,19 @@ export interface StudyPlan {
   sessions: StudySession[];
 }
 
+export interface PlanUpdateInput {
+  goal: string;
+  exam_at: string;
+  daily_minutes: number;
+  topic_order: string[];
+  regenerate: boolean;
+}
+
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
   topics: Record<string, string>;
+  topic_order: string[];
   diagnostic_count: number;
   attempt_count: number;
   plan_id: string | null;
@@ -76,9 +92,11 @@ export interface PracticeQuestion {
   id: string;
   topic_id: string;
   prompt: string;
+  explanation?: string | null;
   difficulty_level?: number;
   citations?: string[];
   sources?: SearchSource[];
+  grounding?: "material" | "general";
   learning_mode?: LearningMode;
   mode?: "ai" | "fallback";
   saved?: boolean;
@@ -95,6 +113,7 @@ export interface PracticeRequest {
   learningMode?: LearningMode;
   difficulty?: number;
   replace?: boolean;
+  reviewSessionId?: string;
 }
 
 export interface AnswerResult {
@@ -112,10 +131,84 @@ export interface AnswerResult {
   misconceptions: string[];
   citations: string[];
   sources?: SearchSource[];
+  grounding?: "material" | "general";
   grading_mode: "ai" | "fallback";
   mastery_updated: boolean;
   next_review_at?: string | null;
+  completed_review_session_id?: string | null;
+  answer?: string;
+  observed_at?: string | null;
+  learner_note?: string | null;
+  appealed?: boolean;
   replayed: boolean;
+}
+
+export interface MasteryHistoryPoint {
+  attempt_id: string;
+  topic_id: string;
+  mastery: number;
+  observed_at: string;
+}
+
+export interface TopicInsight {
+  topic_id: string;
+  topic_name: string;
+  mastery: number;
+  attempt_count: number;
+  error_count: number;
+  last_practiced_at: string | null;
+}
+
+export interface DueReviewInsight {
+  session_id: string;
+  topic_id: string;
+  topic_name: string;
+  due_at: string;
+  minutes: number;
+  overdue: boolean;
+}
+
+export interface AttemptInsight {
+  attempt_id: string;
+  question_id: string;
+  topic_id: string;
+  topic_name: string;
+  question_prompt: string;
+  answer: string;
+  is_correct: boolean;
+  mastery: number;
+  score: number;
+  feedback: string;
+  strengths: string[];
+  gaps: string[];
+  misconceptions: string[];
+  citations: string[];
+  sources: SearchSource[];
+  grounding: "material" | "general";
+  grading_mode: string;
+  mastery_updated: boolean;
+  observed_at: string;
+  learner_note: string | null;
+  appealed: boolean;
+}
+
+export interface LearningInsights {
+  workspace_id: string;
+  mastery_history: MasteryHistoryPoint[];
+  topics: TopicInsight[];
+  due_reviews: DueReviewInsight[];
+  attempts: AttemptInsight[];
+}
+
+export interface AttemptFeedbackInput {
+  learner_note?: string | null;
+  appealed?: boolean;
+}
+
+export interface AttemptFeedbackResponse {
+  attempt_id: string;
+  learner_note: string | null;
+  appealed: boolean;
 }
 
 export interface AgentSessionContext {
@@ -187,6 +280,8 @@ export interface MaterialRecord {
   id: string;
   project_id?: string;
   filename: string;
+  title?: string;
+  tags?: string[];
   content_type: string;
   size: number;
   status: string;
@@ -233,6 +328,11 @@ export interface TargetedPlanInput {
   routine_notes: string;
 }
 
+export interface MaterialUpdateInput {
+  title?: string;
+  tags?: string[];
+}
+
 export interface SearchSource {
   citation_id: string;
   material_id: string;
@@ -254,6 +354,7 @@ export interface AgentMessage {
   role: "user" | "assistant";
   content: string;
   citations: string[];
+  sources?: SearchSource[];
 }
 
 export interface AgentSessionSummary {
@@ -272,6 +373,10 @@ export interface AgentSessionDetail extends AgentSessionSummary {
 export interface PasswordResetAccepted {
   accepted: boolean;
   reset_token?: string | null;
+}
+
+export interface AuthCapabilities {
+  password_reset_available: boolean;
 }
 
 export interface PublicModelSettings {
@@ -312,4 +417,73 @@ export interface AdminOverview {
   pgvector: boolean;
   users: number;
   integrations_configured: number;
+}
+
+export interface AdminQuotaValues {
+  materials: number;
+  material_bytes: number;
+  workspaces: number;
+}
+
+export interface AdminUserSummary extends User {
+  usage: AdminQuotaValues;
+  quotas: AdminQuotaValues;
+}
+
+export interface AdminUsersPage {
+  items: AdminUserSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export interface AdminJobSummary {
+  id: "material_index" | "embedding_backfill";
+  status: "idle" | "pending";
+  pending: number;
+  completed: number;
+  failed: number;
+  total: number;
+  last_activity_at: string | null;
+}
+
+export interface AdminJobsResponse {
+  items: AdminJobSummary[];
+  observed_at: string;
+}
+
+export interface AdminAuditEntry {
+  id: number;
+  actor_id: string;
+  actor_email: string;
+  action: string;
+  target: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AdminAuditPage {
+  items: AdminAuditEntry[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export interface ManagedBackup {
+  id: string;
+  created_at: string;
+  size: number;
+  file_count: number;
+  total_bytes: number;
+}
+
+export interface ManagedBackupsResponse {
+  items: ManagedBackup[];
+  total: number;
+}
+
+export interface RestoreValidationResponse extends ManagedBackup {
+  status: "validated";
 }

@@ -15,18 +15,15 @@ export type CoachActionOutcome =
   | { status: "applied"; replayed: boolean }
   | { status: "confirmation_required" }
   | { status: "failed" }
-  | { status: "rejected" }
-  | { status: "synced" };
+  | { status: "rejected" };
 
 interface CoachActionHandlers {
   appliedActionIds: Set<string>;
   hasDraft: boolean;
   confirmed?: boolean;
-  historical?: boolean;
   applyAdjust: (proposal: AdjustPracticeProposal) => Promise<boolean>;
   applyPlanUpdate: (proposal: UpdatePlanSessionProposal) => Promise<boolean>;
   applySaveQuestion: (proposal: SaveQuestionProposal) => Promise<boolean>;
-  refreshSnapshot: () => Promise<void>;
 }
 
 export function pendingCoachTurn(
@@ -46,15 +43,6 @@ export async function executeCoachAction(
 
   if (handlers.appliedActionIds.has(proposal.action_id)) {
     return { status: "applied", replayed: true };
-  }
-
-  if (handlers.historical) {
-    try {
-      await handlers.refreshSnapshot();
-      return { status: "synced" };
-    } catch {
-      return { status: "failed" };
-    }
   }
 
   if (

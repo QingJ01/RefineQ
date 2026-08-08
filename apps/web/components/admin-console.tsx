@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Activity,
+  ArchiveRestore,
   ArrowLeft,
   ArrowRight,
   BrainCircuit,
@@ -11,23 +13,31 @@ import {
   HardDrive,
   Languages,
   LayoutDashboard,
+  ListChecks,
   LoaderCircle,
   LogOut,
   PlugZap,
   Save,
   ShieldCheck,
   TriangleAlert,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { localizeApiError } from "@/lib/error-messages";
 import type {
+  AdminAuditPage,
+  AdminJobsResponse,
   AdminOverview,
+  AdminUsersPage,
   IntegrationKind,
   Locale,
+  ManagedBackup,
+  ManagedBackupsResponse,
   PublicIntegrationSettings,
 } from "@/lib/types";
 import { projectIntegrationTestResult } from "@/lib/view-models";
@@ -107,6 +117,8 @@ const copy = {
     discard: "丢弃并离开",
     loadFailed: "配置读取失败，为避免覆盖已有设置，编辑已锁定。",
     reload: "重新读取",
+    connectionSucceeded: "连接测试通过",
+    connectionFailed: "连接测试失败，请检查地址、凭据与网络设置。",
   },
   en: {
     title: "System settings",
@@ -163,6 +175,8 @@ const copy = {
     discard: "Discard and leave",
     loadFailed: "Settings failed to load. Editing is locked to avoid overwriting saved configuration.",
     reload: "Reload settings",
+    connectionSucceeded: "Connection test passed",
+    connectionFailed: "Connection test failed. Check the endpoint, credentials, and network settings.",
   },
 } as const;
 
@@ -400,9 +414,294 @@ const defaults: PublicIntegrationSettings[] = [
   },
 ];
 
-function errorMessage(caught: unknown): string {
-  if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
-  return caught instanceof Error ? caught.message : "Request failed";
+function errorMessage(caught: unknown, locale: Locale): string {
+  return localizeApiError(caught, locale);
+}
+
+
+const operationsCopy = {
+  zh: {
+    title: "运维控制台",
+    subtitle: "查看用户配额、后台任务与审计记录，并管理经过完整性校验的系统备份。",
+    nav: "平台运维",
+    users: "用户与配额",
+    activity: "审计活动",
+    jobs: "素材任务",
+    backups: "备份与恢复校验",
+    loading: "正在读取运维数据…",
+    emptyUsers: "暂无用户。",
+    emptyAudit: "暂无审计记录。",
+    emptyBackups: "尚未创建托管备份。",
+    createBackup: "创建备份",
+    creating: "正在创建…",
+    validate: "校验恢复候选",
+    confirmTitle: "校验这个恢复候选？",
+    confirmDescription: "服务端会完整解压并校验备份，但不会覆盖当前运行数据。确认口令会精确绑定此备份 ID。",
+    confirm: "确认并校验",
+    cancel: "取消",
+    validated: "备份完整性校验通过；实际恢复仍需离线执行。",
+    created: "新备份已创建并写入审计记录。",
+    retry: "重试",
+    previous: "上一页",
+    next: "下一页",
+    materials: "资料",
+    workspaces: "空间",
+    storage: "存储",
+    pending: "待处理",
+    complete: "已完成",
+    failed: "失败",
+    idle: "空闲",
+    email: "账户",
+    adminRole: "管理员",
+    learnerRole: "学习者",
+    unknownRole: "成员",
+    materialIndex: "资料索引",
+    embeddingBackfill: "向量补录",
+    files: "个文件",
+    otherActivity: "平台操作",
+    auditActions: {
+      "backup.created": "已创建系统备份",
+      "backup.restore_validated": "已校验恢复候选",
+      "integration.updated": "已更新外部能力配置",
+      "integration.tested": "已测试外部能力连接",
+    },
+  },
+  en: {
+    title: "Operations control plane",
+    subtitle: "Inspect user quotas, background work, and audit events, then manage integrity-checked backups.",
+    nav: "Platform operations",
+    users: "Users and quotas",
+    activity: "Audit activity",
+    jobs: "Material jobs",
+    backups: "Backup and restore validation",
+    loading: "Loading operations data…",
+    emptyUsers: "No users yet.",
+    emptyAudit: "No audit events yet.",
+    emptyBackups: "No managed backups have been created.",
+    createBackup: "Create backup",
+    creating: "Creating…",
+    validate: "Validate restore candidate",
+    confirmTitle: "Validate this restore candidate?",
+    confirmDescription: "The server will fully extract and verify this backup without overwriting live data. The confirmation token is bound to this backup ID.",
+    confirm: "Confirm and validate",
+    cancel: "Cancel",
+    validated: "Backup integrity passed; an actual restore still requires an offline operation.",
+    created: "A new backup was created and recorded in the audit log.",
+    retry: "Retry",
+    previous: "Previous",
+    next: "Next",
+    materials: "Materials",
+    workspaces: "Workspaces",
+    storage: "Storage",
+    pending: "Pending",
+    complete: "Completed",
+    failed: "Failed",
+    idle: "Idle",
+    email: "Account",
+    adminRole: "Administrator",
+    learnerRole: "Learner",
+    unknownRole: "Member",
+    materialIndex: "Material index",
+    embeddingBackfill: "Embedding backfill",
+    files: "files",
+    otherActivity: "Platform operation",
+    auditActions: {
+      "backup.created": "System backup created",
+      "backup.restore_validated": "Restore candidate validated",
+      "integration.updated": "Integration settings updated",
+      "integration.tested": "Integration connection tested",
+    },
+  },
+};
+
+
+function roleLabel(role: string, locale: Locale): string {
+  const c = operationsCopy[locale];
+  if (role === "admin") return c.adminRole;
+  if (role === "learner") return c.learnerRole;
+  return c.unknownRole;
+}
+
+
+function auditActionLabel(action: string, locale: Locale): string {
+  const c = operationsCopy[locale];
+  const actions: Record<string, string> = c.auditActions;
+  return actions[action] ?? c.otherActivity;
+}
+
+
+export async function refreshAdminAudit<T>(
+  load: () => Promise<T>,
+  apply: (value: T) => void,
+): Promise<boolean> {
+  try {
+    apply(await load());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
+function formatBytes(value: number, locale: Locale): string {
+  if (value < 1024) return `${value} B`;
+  return new Intl.NumberFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    maximumFractionDigits: 1,
+  }).format(value / 1024) + " KB";
+}
+
+
+function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale }) {
+  const c = operationsCopy[locale];
+  const [users, setUsers] = useState<AdminUsersPage | null>(null);
+  const [jobs, setJobs] = useState<AdminJobsResponse | null>(null);
+  const [audit, setAudit] = useState<AdminAuditPage | null>(null);
+  const [backups, setBackups] = useState<ManagedBackupsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState<"create" | "validate" | null>(null);
+  const [selectedBackup, setSelectedBackup] = useState<ManagedBackup | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      api.listAdminUsers(token, 1, 20),
+      api.getAdminJobs(token),
+      api.listAdminAudit(token, 1, 20),
+      api.listAdminBackups(token),
+    ]).then(([nextUsers, nextJobs, nextAudit, nextBackups]) => {
+      if (!active) return;
+      setUsers(nextUsers);
+      setJobs(nextJobs);
+      setAudit(nextAudit);
+      setBackups(nextBackups);
+    }).catch((caught: unknown) => {
+      if (active) setError(errorMessage(caught, locale));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [locale, nonce, token]);
+
+  async function loadUsers(page: number) {
+    try {
+      setUsers(await api.listAdminUsers(token, page, 20));
+    } catch (caught) {
+      setError(errorMessage(caught, locale));
+    }
+  }
+
+  async function loadAudit(page: number) {
+    try {
+      setAudit(await api.listAdminAudit(token, page, 20));
+    } catch (caught) {
+      setError(errorMessage(caught, locale));
+    }
+  }
+
+  async function createBackup() {
+    setBusy("create");
+    setError("");
+    setNotice("");
+    try {
+      const created = await api.createAdminBackup(token);
+      setBackups((current) => ({
+        items: [created, ...(current?.items ?? [])],
+        total: (current?.total ?? 0) + 1,
+      }));
+      setNotice(c.created);
+      await refreshAdminAudit(
+        () => api.listAdminAudit(token, audit?.page ?? 1, 20),
+        setAudit,
+      );
+    } catch (caught) {
+      setError(errorMessage(caught, locale));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function validateRestore() {
+    if (!selectedBackup) return;
+    setBusy("validate");
+    setError("");
+    setNotice("");
+    try {
+      await api.validateAdminRestore(token, selectedBackup.id);
+      setSelectedBackup(null);
+      setNotice(c.validated);
+      await refreshAdminAudit(
+        () => api.listAdminAudit(token, audit?.page ?? 1, 20),
+        setAudit,
+      );
+    } catch (caught) {
+      setError(errorMessage(caught, locale));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const dateFormat = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  return (
+    <div className="admin-operations" data-testid="admin-operations" aria-busy={loading}>
+      {(error || notice) && (
+        <div className={error ? "admin-operations-notice error" : "admin-operations-notice"} role={error ? "alert" : "status"}>
+          <span>{error || notice}</span>
+          {error && <button type="button" onClick={() => {
+            setLoading(true);
+            setError("");
+            setNonce((value) => value + 1);
+          }}>{c.retry}</button>}
+        </div>
+      )}
+      {loading && <p className="admin-operations-loading"><LoaderCircle className="spin" size={18} /> {c.loading}</p>}
+
+      <section className="admin-operation-card admin-users-card" data-testid="admin-users">
+        <header><Users size={18} /><div><span>01</span><h2>{c.users}</h2></div></header>
+        {users?.items.length ? (
+          <div className="admin-operation-table-wrap"><table><thead><tr><th>{c.email}</th><th>{c.materials}</th><th>{c.storage}</th><th>{c.workspaces}</th></tr></thead><tbody>
+            {users.items.map((user) => <tr key={user.id}><td><strong>{user.display_name}</strong><small>{user.email} · {roleLabel(user.role, locale)}</small></td><td>{user.usage.materials}/{user.quotas.materials}</td><td>{formatBytes(user.usage.material_bytes, locale)} / {formatBytes(user.quotas.material_bytes, locale)}</td><td>{user.usage.workspaces}/{user.quotas.workspaces}</td></tr>)}
+          </tbody></table></div>
+        ) : !loading && <p className="admin-operation-empty">{c.emptyUsers}</p>}
+        {users && users.pages > 1 && <footer className="admin-operation-pagination"><span>{users.page}/{users.pages}</span><button disabled={users.page <= 1} onClick={() => void loadUsers(users.page - 1)}>{c.previous}</button><button disabled={users.page >= users.pages} onClick={() => void loadUsers(users.page + 1)}>{c.next}</button></footer>}
+      </section>
+
+      <section className="admin-operation-card" data-testid="admin-jobs">
+        <header><ListChecks size={18} /><div><span>02</span><h2>{c.jobs}</h2></div></header>
+        <div className="admin-job-grid">
+          {jobs?.items.map((job) => <article key={job.id}><span className={`admin-job-status ${job.status}`}>{job.status === "idle" ? c.idle : c.pending}</span><strong>{job.id === "material_index" ? c.materialIndex : c.embeddingBackfill}</strong><dl><div><dt>{c.pending}</dt><dd>{job.pending}</dd></div><div><dt>{c.complete}</dt><dd>{job.completed}</dd></div><div><dt>{c.failed}</dt><dd>{job.failed}</dd></div></dl></article>)}
+        </div>
+      </section>
+
+      <section className="admin-operation-card" data-testid="admin-activity">
+        <header><Activity size={18} /><div><span>03</span><h2>{c.activity}</h2></div></header>
+        {audit?.items.length ? <ol className="admin-audit-list">{audit.items.map((entry) => <li key={entry.id}><i /><div><strong>{auditActionLabel(entry.action, locale)}</strong><span>{entry.actor_email} · {entry.target}</span></div><time dateTime={entry.created_at}>{dateFormat.format(new Date(entry.created_at))}</time></li>)}</ol> : !loading && <p className="admin-operation-empty">{c.emptyAudit}</p>}
+        {audit && audit.pages > 1 && <footer className="admin-operation-pagination"><span>{audit.page}/{audit.pages}</span><button disabled={audit.page <= 1} onClick={() => void loadAudit(audit.page - 1)}>{c.previous}</button><button disabled={audit.page >= audit.pages} onClick={() => void loadAudit(audit.page + 1)}>{c.next}</button></footer>}
+      </section>
+
+      <section className="admin-operation-card admin-backup-card" data-testid="admin-backups">
+        <header><ArchiveRestore size={18} /><div><span>04</span><h2>{c.backups}</h2></div><button type="button" className="primary-action" data-testid="admin-create-backup" disabled={busy !== null} onClick={() => void createBackup()}>{busy === "create" ? c.creating : c.createBackup}</button></header>
+        {backups?.items.length ? <ul className="admin-backup-list">{backups.items.map((backup) => <li key={backup.id}><div><strong>{backup.id}</strong><span>{dateFormat.format(new Date(backup.created_at))} · {backup.file_count} {c.files} · {formatBytes(backup.total_bytes, locale)}</span></div><button type="button" className="secondary-action" onClick={() => setSelectedBackup(backup)}>{c.validate}</button></li>)}</ul> : !loading && <p className="admin-operation-empty">{c.emptyBackups}</p>}
+      </section>
+
+      <ConfirmDialog
+        open={selectedBackup !== null}
+        title={c.confirmTitle}
+        description={`${c.confirmDescription} RESTORE ${selectedBackup?.id ?? ""}`}
+        confirmLabel={c.confirm}
+        cancelLabel={c.cancel}
+        busy={busy === "validate"}
+        onConfirm={validateRestore}
+        onCancel={() => setSelectedBackup(null)}
+      />
+    </div>
+  );
 }
 
 function IntegrationCard({
@@ -469,7 +768,7 @@ function IntegrationCard({
       setNotice(c.saved);
       onChange(updated);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -482,10 +781,10 @@ function IntegrationCard({
     try {
       const result = await api.testIntegration(token, definition.kind);
       onChange(projectIntegrationTestResult(setting, result, new Date().toISOString()));
-      if (result.status === "failed") setError(result.message);
-      else setNotice(result.message);
+      if (result.status === "failed") setError(c.connectionFailed);
+      else setNotice(c.connectionSucceeded);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -505,10 +804,10 @@ function IntegrationCard({
       const result = await api.testIntegration(token, definition.kind);
       const projected = projectIntegrationTestResult(updated, result, new Date().toISOString());
       onChange(projected);
-      if (result.status === "failed") setError(result.message);
-      else setNotice(result.message);
+      if (result.status === "failed") setError(c.connectionFailed);
+      else setNotice(c.connectionSucceeded);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -587,7 +886,7 @@ function IntegrationCard({
             </span>
             {setting.last_test_status && (
               <span className={setting.last_test_status === "ok" ? "healthy" : "failed"}>
-                <PlugZap size={13} /> {setting.last_test_message}
+                <PlugZap size={13} /> {setting.last_test_status === "ok" ? c.connectionSucceeded : c.connectionFailed}
               </span>
             )}
           </div>
@@ -703,12 +1002,14 @@ export function AdminConsole({
   token,
   locale,
   activeKind,
+  activeSection,
   onLogout,
   onToggleLocale,
 }: {
   token: string;
   locale: Locale;
   activeKind?: IntegrationKind;
+  activeSection?: "overview" | "operations";
   onLogout: () => void;
   onToggleLocale: () => void;
 }) {
@@ -724,6 +1025,7 @@ export function AdminConsole({
   );
 
   useEffect(() => {
+    if (activeSection === "operations") return;
     let active = true;
     Promise.all([api.getAdminOverview(token), api.listIntegrations(token)])
       .then(([nextOverview, nextIntegrations]) => {
@@ -732,11 +1034,11 @@ export function AdminConsole({
         setIntegrations(nextIntegrations);
       })
       .catch((caught: unknown) => {
-        if (active) setLoadError(errorMessage(caught));
+        if (active) setLoadError(errorMessage(caught, locale));
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [token, loadNonce]);
+  }, [activeSection, locale, token, loadNonce]);
 
   function updateIntegration(updated: PublicIntegrationSettings) {
     setIntegrations((current) => current.map((item) => (
@@ -765,9 +1067,13 @@ export function AdminConsole({
             <BrandName />
           </Link>
           <nav className="admin-nav" aria-label={c.title}>
-            <Link className={!activeKind ? "active" : ""} href="/admin">
+            <Link className={!activeKind && activeSection !== "operations" ? "active" : ""} href="/admin">
               <LayoutDashboard size={18} />
               <span>{c.overview}</span>
+            </Link>
+            <Link className={activeSection === "operations" ? "active" : ""} href="/admin/operations">
+              <Activity size={18} />
+              <span>{operationsCopy[locale].nav}</span>
             </Link>
             <span className="admin-nav-label">{c.integrations}</span>
             {localizedDefinitions.map(({ kind, icon: Icon, title }) => {
@@ -802,10 +1108,12 @@ export function AdminConsole({
           <header className="admin-page-header">
             <div>
               <span className="kicker">
-                {activeDefinition ? activeDefinition.eyebrow : "REFINEQ / SETTINGS"}
+                {activeSection === "operations"
+                  ? "REFINEQ / OPERATIONS"
+                  : activeDefinition ? activeDefinition.eyebrow : "REFINEQ / SETTINGS"}
               </span>
-              <h1>{activeDefinition?.title ?? c.title}</h1>
-              <p>{activeDefinition?.description ?? c.subtitle}</p>
+              <h1>{activeSection === "operations" ? operationsCopy[locale].title : activeDefinition?.title ?? c.title}</h1>
+              <p>{activeSection === "operations" ? operationsCopy[locale].subtitle : activeDefinition?.description ?? c.subtitle}</p>
             </div>
           </header>
 
@@ -821,7 +1129,9 @@ export function AdminConsole({
             </div>
           )}
 
-          {loadError ? null : activeDefinition && activeKind ? (
+          {activeSection === "operations" ? (
+            <AdminOperationsPanel token={token} locale={locale} />
+          ) : loadError ? null : activeDefinition && activeKind ? (
             <div className="admin-integration-detail" data-testid="admin-integration-detail">
               <Link className="admin-detail-back" href="/admin">
                 <ArrowLeft size={15} /> {c.backOverview}
@@ -897,8 +1207,8 @@ export function AdminConsole({
                             : `${c.completeSetup}：${nextDefinition.title}`}
                         </h3>
                         <p>
-                          {nextSetting.last_test_status === "failed" && nextSetting.last_test_message
-                            ? nextSetting.last_test_message
+                          {nextSetting.last_test_status === "failed"
+                            ? c.connectionFailed
                             : nextDefinition.description}
                         </p>
                       </div>

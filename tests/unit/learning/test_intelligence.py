@@ -13,7 +13,7 @@ from refineq.learning.intelligence import (
     fallback_grade,
     fallback_question,
 )
-from refineq.learning.models import LearningMode
+from refineq.learning.models import Grounding, LearningMode
 
 
 class FakeStructuredTransport:
@@ -161,6 +161,56 @@ def test_question_generation_falls_back_when_model_is_not_configured(
     assert transport.calls == []
 
 
+def test_generates_ai_question_without_sources_when_model_configured(tmp_path: Path) -> None:
+    knowledge = KnowledgeIndex(tmp_path / "knowledge")
+    settings = ModelSettingsRepository(tmp_path / "settings")
+    settings.save(
+        "owner",
+        ModelSettings(
+            base_url="https://api.openai.com/v1",
+            model="study-model",
+            api_key="secret-key-1234",
+        ),
+    )
+    transport = FakeStructuredTransport()
+    service = LearningIntelligenceService(knowledge, settings, transport)
+
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="empty-workspace",
+        topic_id="cache",
+        topic_name="缓存一致性",
+        mastery=0.3,
+        difficulty_level=2,
+    )
+
+    assert question.mode == "ai"
+    assert question.citations == []
+    assert question.sources == []
+    assert question.grounding is Grounding.GENERAL
+    assert transport.calls == ["QuestionModelOutput"]
+
+
+def test_falls_back_without_sources_when_model_is_not_configured(tmp_path: Path) -> None:
+    knowledge = KnowledgeIndex(tmp_path / "knowledge")
+    settings = ModelSettingsRepository(tmp_path / "settings")
+    transport = FakeStructuredTransport()
+    service = LearningIntelligenceService(knowledge, settings, transport)
+
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="empty-workspace",
+        topic_id="cache",
+        topic_name="缓存一致性",
+        mastery=0.3,
+        difficulty_level=2,
+    )
+
+    assert question.mode == "fallback"
+    assert question.citations == []
+    assert transport.calls == []
+
+
 def test_ai_grading_returns_explainable_feedback_and_valid_citations(
     tmp_path: Path,
 ) -> None:
@@ -208,6 +258,25 @@ def test_fallback_grading_rejects_topic_echo_and_generic_filler() -> None:
     assert echo.mastery_evidence is False
     assert filler.passed is False
     assert filler.mastery_evidence is False
+
+
+def test_source_free_fallback_explains_why_mastery_is_not_updated() -> None:
+    question = fallback_question(
+        topic_id="cache",
+        topic_name="缓存一致性",
+        difficulty_level=2,
+        sources=[],
+    )
+
+    result = fallback_grade(
+        question,
+        "缓存一致性要求多个处理器中的数据副本保持一致，例如写入时需要让其他副本失效。",
+    )
+
+    assert result.passed is False
+    assert result.mastery_evidence is False
+    assert "资料" in result.feedback
+    assert "掌握度" in result.feedback
 
 
 def test_fallback_grading_rejects_repeated_keyword_spam() -> None:

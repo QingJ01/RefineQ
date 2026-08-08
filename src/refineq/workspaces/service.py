@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from refineq.integrations.object_storage import ConfiguredObjectStorage
+from refineq.knowledge.deletion import MaterialDeletionCoordinator
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.planning import build_study_plan
 from refineq.learning.service import (
     AnswerResponse,
     LearningService,
+    PlanUpdateRequest,
     ProgressResponse,
     QuestionResponse,
     SavedQuestionResponse,
@@ -108,7 +110,7 @@ class WorkspaceService:
         learning: LearningRepository,
         learning_service: LearningService,
         knowledge: KnowledgeIndex,
-        object_storage: ConfiguredObjectStorage,
+        material_deletions: MaterialDeletionCoordinator,
         sessions: SessionRepository,
         routing: WorkspaceRoutingIntelligence | None = None,
         max_workspaces: int = 100,
@@ -117,7 +119,7 @@ class WorkspaceService:
         self._learning = learning
         self._learning_service = learning_service
         self._knowledge = knowledge
-        self._object_storage = object_storage
+        self._material_deletions = material_deletions
         self._sessions = sessions
         self._routing = routing
         self._max_workspaces = max_workspaces
@@ -235,29 +237,86 @@ class WorkspaceService:
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
 
-    def delete(self, owner_id: str, workspace_id: str) -> None:
+    def update_plan(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        payload: PlanUpdateRequest,
+    ) -> StudyPlan:
+        plan_fields = ("goal", "exam_at", "daily_minutes", "topic_order", "plan")
         try:
-            self._workspaces.get(owner_id, workspace_id)
+            with self._learning.plan_transaction(owner_id, workspace_id):
+                self._workspaces.get(owner_id, workspace_id)
+                progress = self._learning.get(owner_id, workspace_id).data["progress"]
+                original_plan_fields = {
+                    field: deepcopy(progress[field]) for field in plan_fields if field in progress
+                }
+                plan = self._learning_service.update_plan(owner_id, workspace_id, payload)
+                try:
+                    self._workspaces.update(owner_id, workspace_id, goal=payload.goal)
+                except Exception:
+
+                    def restore(data: dict) -> dict:
+                        current_progress = data["progress"]
+                        for field in plan_fields:
+                            if field in original_plan_fields:
+                                current_progress[field] = deepcopy(original_plan_fields[field])
+                            else:
+                                current_progress.pop(field, None)
+                        return data
+
+                    self._learning.mutate(owner_id, workspace_id, restore)
+                    raise
+                return plan
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
-        for material in self._knowledge.list_materials(
-            owner_id=owner_id,
-            project_id=workspace_id,
-        ):
-            storage_key = self._knowledge.get_material_storage_key(
-                owner_id=owner_id,
-                project_id=workspace_id,
-                material_id=material.id,
-            )
-            self._object_storage.delete(storage_key)
-            self._knowledge.delete_material(
-                owner_id=owner_id,
-                project_id=workspace_id,
-                material_id=material.id,
-            )
-        self._learning.delete(owner_id, workspace_id)
-        self._sessions.delete_for_workspace(owner_id, workspace_id)
-        self._workspaces.delete(owner_id, workspace_id)
+
+    def delete(self, owner_id: str, workspace_id: str) -> None:
+        workspace_snapshot = None
+        learning_snapshot = None
+        session_snapshots = []
+        pending = None
+        try:
+            with self._learning.plan_transaction(owner_id, workspace_id):
+                try:
+                    self._workspaces.get(owner_id, workspace_id)
+                except RecordNotFoundError as error:
+                    raise WorkspaceNotFoundError("Learning workspace not found") from error
+                workspace_snapshot = self._workspaces.snapshot(owner_id, workspace_id)
+                learning_snapshot = self._learning.get(owner_id, workspace_id)
+                session_snapshots = self._sessions.snapshot_for_workspace(
+                    owner_id,
+                    workspace_id,
+                )
+                pending = self._material_deletions.prepare(
+                    owner_id=owner_id,
+                    project_id=workspace_id,
+                    material_ids=None,
+                )
+                self._learning.delete(owner_id, workspace_id)
+                self._sessions.delete_for_workspace(owner_id, workspace_id)
+                self._workspaces.delete(owner_id, workspace_id)
+
+            self._material_deletions.complete(pending)
+        except Exception:
+            try:
+                if pending is not None and pending.directory.exists():
+                    self._material_deletions.rollback(pending)
+            finally:
+                if workspace_snapshot is not None and learning_snapshot is not None:
+                    with self._learning.plan_transaction(owner_id, workspace_id):
+                        self._workspaces.restore(
+                            owner_id,
+                            workspace_id,
+                            workspace_snapshot,
+                        )
+                        self._learning.restore(
+                            owner_id,
+                            workspace_id,
+                            learning_snapshot,
+                        )
+                        self._sessions.restore_snapshots(owner_id, session_snapshots)
+            raise
 
     def snapshot(self, owner_id: str, workspace_id: str) -> WorkspaceSnapshot:
         try:
@@ -274,7 +333,9 @@ class WorkspaceService:
         raw_answer = next(reversed(attempts.values()), None) if attempts else None
         active_raw = pending
         if active_raw is None and raw_answer is not None:
-            active_raw = raw_progress.get("question_history", {}).get(raw_answer.get("question_id"))
+            active_raw = raw_progress.get("question_history", {}).get(
+                raw_answer.get("question_id")
+            ) or raw_answer.get("question_snapshot")
         active_question = (
             self._learning_service._public_question(
                 active_raw,

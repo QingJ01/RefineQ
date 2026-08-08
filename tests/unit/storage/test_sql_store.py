@@ -11,6 +11,7 @@ from refineq.storage.json_store import (
     RecordAlreadyExistsError,
     RecordNotFoundError,
     StaleVersionError,
+    StoredRecord,
 )
 from refineq.storage.sql_store import SqlRecordStore
 
@@ -84,6 +85,27 @@ def test_list_delete_and_missing_record_match_existing_contract(store: SqlRecord
 
     with pytest.raises(RecordNotFoundError):
         store.read("owner", "workspaces", "one")
+
+
+def test_restore_preserves_exact_record_without_overwriting_survivor(
+    store: SqlRecordStore,
+) -> None:
+    deleted = StoredRecord(schema_version=3, version=7, data={"name": "Deleted"})
+
+    restored = store.restore("owner", "workspaces", "one", deleted)
+
+    assert restored == deleted
+    assert store.read("owner", "workspaces", "one") == deleted
+
+    survivor = store.save(
+        "owner",
+        "workspaces",
+        "one",
+        {"name": "Survivor"},
+        expected_version=deleted.version,
+    )
+    assert store.restore("owner", "workspaces", "one", deleted) == survivor
+    assert store.read("owner", "workspaces", "one") == survivor
 
 
 def test_owner_transaction_is_reentrant_for_repository_quota_checks(

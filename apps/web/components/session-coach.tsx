@@ -1,9 +1,20 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowUp, Check, CircleAlert, LoaderCircle, Sparkles, X } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  CircleAlert,
+  LoaderCircle,
+  MessageCircleMore,
+  RotateCcw,
+  Settings2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { FormEvent, useState } from "react";
 
+import { ApiError } from "@/lib/api";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type {
   AgentReply,
@@ -21,13 +32,18 @@ const copy = {
     placeholder: "向教练提问…",
     send: "发送",
     error: "暂时无法连接教练，你仍可以继续当前学习任务。",
+    modelMissing: "学习 Agent 尚未配置模型。练习、资料和进度仍可继续使用。",
+    modelUnknown: "暂时无法确认学习 Agent 状态。本地练习、资料和进度仍可继续使用。",
+    configure: "前往配置",
+    recheck: "重新检测",
+    contactAdmin: "请联系管理员配置学习 Agent 模型。",
+    fullCoach: "完整对话与历史",
     applied: "已执行",
     confirm: "这个动作会清空当前题的未提交内容，是否继续？",
     confirmAction: "继续执行",
     cancel: "先不执行",
     failed: "动作执行失败，你可以用同一请求安全重试。",
     retry: "重试",
-    synced: "已同步当前学习状态，没有重复执行旧动作。",
   },
   en: {
     title: "RefineQ coach · Current step",
@@ -36,18 +52,23 @@ const copy = {
     placeholder: "Ask your coach…",
     send: "Send",
     error: "The coach is temporarily unavailable. You can continue the current task.",
+    modelMissing: "The learning Agent has not been configured. Practice, material, and progress remain available.",
+    modelUnknown: "The learning Agent status is unavailable. Local practice, material, and progress remain available.",
+    configure: "Open settings",
+    recheck: "Check again",
+    contactAdmin: "Please contact an administrator to configure the learning Agent model.",
+    fullCoach: "Full conversation and history",
     applied: "Applied",
     confirm: "This action will clear the unsubmitted draft for the current question. Continue?",
     confirmAction: "Continue",
     cancel: "Keep current question",
     failed: "The action failed. You can safely retry the same request.",
     retry: "Retry",
-    synced: "Current learning state was synced without repeating the old action.",
   },
 } as const;
 
 export type CoachActionCardState =
-  | { status: "applied" | "confirmation_required" | "failed" | "executing" | "synced"; proposal: ExecutableActionProposal }
+  | { status: "applied" | "confirmation_required" | "failed" | "executing"; proposal: ExecutableActionProposal }
   | { status: "rejected"; proposal: Extract<CoachActionProposal, { type: "rejected" }> };
 
 function proposalSummary(proposal: ExecutableActionProposal, locale: Locale) {
@@ -122,7 +143,7 @@ export function CoachActionCard({
       data-testid={`coach-action-${state.status}`}
       role="status"
     >
-      {state.status === "applied" || state.status === "synced"
+      {state.status === "applied"
         ? <Check size={15} />
         : state.status === "executing"
           ? <LoaderCircle className="spin" size={15} />
@@ -133,7 +154,6 @@ export function CoachActionCard({
         <strong>{state.status === "applied" ? `${text.applied} · ${summary}` : summary}</strong>
         {state.status === "confirmation_required" && <p>{text.confirm}</p>}
         {state.status === "failed" && <p>{text.failed}</p>}
-        {state.status === "synced" && <p>{text.synced}</p>}
         {state.status === "confirmation_required" && (
           <div className="coach-action-buttons">
             <button type="button" data-testid="coach-action-confirm" onClick={onConfirm}>{text.confirmAction}</button>
@@ -155,14 +175,26 @@ export function CoachActionCard({
 export function SessionCoach({
   locale,
   onAsk,
+  modelConfigured = true,
+  isAdmin = false,
+  onConfigure,
+  onRecheck,
+  onOpenFullCoach,
+  onModelUnavailable,
   onApplyAction,
   onTurnHandled,
 }: {
   locale: Locale;
   onAsk: (message: string) => Promise<AgentReply>;
+  modelConfigured?: boolean | null;
+  isAdmin?: boolean;
+  onConfigure?: () => void;
+  onRecheck?: () => void | Promise<boolean | null>;
+  onOpenFullCoach?: () => void;
+  onModelUnavailable?: () => void;
   onApplyAction?: (
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) => Promise<CoachActionOutcome>;
   onTurnHandled?: () => void;
 }) {
@@ -176,7 +208,7 @@ export function SessionCoach({
 
   async function applyAction(
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) {
     setActionState({ status: "executing", proposal });
     if (!onApplyAction) {
@@ -188,9 +220,7 @@ export function SessionCoach({
       setActionState({
         status: outcome.status === "confirmation_required"
           ? "confirmation_required"
-          : outcome.status === "synced"
-            ? "synced"
-            : outcome.status === "applied"
+          : outcome.status === "applied"
               ? "applied"
               : "failed",
         proposal,
@@ -219,8 +249,13 @@ export function SessionCoach({
       } else {
         await applyAction(proposal);
       }
-    } catch {
-      if (!chatSucceeded) setError(text.error);
+    } catch (caught) {
+      if (!chatSucceeded) {
+        if (caught instanceof ApiError && caught.code === "model_not_configured") {
+          onModelUnavailable?.();
+        }
+        setError(text.error);
+      }
     } finally {
       if (chatSucceeded) onTurnHandled?.();
       setBusy(false);
@@ -250,6 +285,40 @@ export function SessionCoach({
         </div>
       </div>
       <p className="coach-intro">{reply || text.intro}</p>
+      {onOpenFullCoach && (
+        <button
+          type="button"
+          className="coach-full-link"
+          data-testid="open-full-coach"
+          onClick={onOpenFullCoach}
+        >
+          <MessageCircleMore size={14} /> {text.fullCoach}
+        </button>
+      )}
+      {modelConfigured !== true && (
+        <div className="coach-capability-notice" role="status">
+          <p>{modelConfigured === false ? text.modelMissing : text.modelUnknown}</p>
+          {modelConfigured === false && !isAdmin && <p>{text.contactAdmin}</p>}
+          {isAdmin && onConfigure && (
+            <button
+              type="button"
+              data-testid="coach-configure-model"
+              onClick={onConfigure}
+            >
+              <Settings2 size={14} /> {text.configure}
+            </button>
+          )}
+          {modelConfigured === null && onRecheck && (
+            <button
+              type="button"
+              data-testid="coach-recheck"
+              onClick={() => void onRecheck()}
+            >
+              <RotateCcw size={14} /> {text.recheck}
+            </button>
+          )}
+        </div>
+      )}
       {actionState && (
         <CoachActionCard
           locale={locale}
@@ -273,7 +342,7 @@ export function SessionCoach({
             key={suggestion}
             type="button"
             data-testid="session-coach-suggestion"
-            disabled={busy || actionBusy}
+            disabled={busy || actionBusy || modelConfigured === false}
             onClick={() => void ask(suggestion)}
           >
             {suggestion}
@@ -289,9 +358,13 @@ export function SessionCoach({
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder={text.placeholder}
-          disabled={busy || actionBusy}
+          disabled={busy || actionBusy || modelConfigured === false}
         />
-        <button type="submit" aria-label={text.send} disabled={busy || actionBusy || !message.trim()}>
+        <button
+          type="submit"
+          aria-label={text.send}
+          disabled={busy || actionBusy || !message.trim() || modelConfigured === false}
+        >
           {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={17} />}
         </button>
       </form>

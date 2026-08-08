@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -15,12 +16,14 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any
+from uuid import uuid4
 
 BACKUP_FORMAT = "refineq-backup"
 BACKUP_VERSION = 1
 _MANIFEST_NAME = "manifest.json"
 _PAYLOAD_PREFIX = "data/"
 _MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+_MANAGED_BACKUP_ID = re.compile(r"\Abackup_[0-9]{8}T[0-9]{12}Z_[0-9a-f]{8}\Z")
 
 
 class BackupError(RuntimeError):
@@ -33,6 +36,10 @@ class BackupConflictError(BackupError):
 
 class BackupValidationError(BackupError):
     """Raised when source data or an archive fails integrity checks."""
+
+
+class ManagedBackupNotFoundError(BackupValidationError):
+    """Raised when a managed backup identifier is invalid or unavailable."""
 
 
 class RestoreConflictError(BackupError):
@@ -49,6 +56,15 @@ class BackupResult:
 @dataclass(frozen=True, slots=True)
 class RestoreResult:
     destination: Path
+    file_count: int
+    total_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedBackup:
+    id: str
+    created_at: datetime
+    size: int
     file_count: int
     total_bytes: int
 
@@ -135,11 +151,8 @@ def create_backup(data_root: Path, archive: Path) -> BackupResult:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_archive: Path | None = None
     try:
-        with tempfile.TemporaryDirectory(
-            prefix=".refineq-backup-stage-",
-            dir=destination.parent,
-        ) as stage_name:
-            stage_root = Path(stage_name) / "data"
+        with tempfile.TemporaryDirectory(prefix="rqb-") as stage_name:
+            stage_root = Path(stage_name) / "d"
             entries: list[dict[str, Any]] = []
             for source in sorted(source_root.rglob("*")):
                 if not source.is_file():
@@ -311,10 +324,10 @@ def restore_backup(archive: Path, destination_root: Path) -> RestoreResult:
                 raise BackupValidationError("Backup payload does not match its manifest")
 
             with tempfile.TemporaryDirectory(
-                prefix=".refineq-restore-stage-",
+                prefix="rqr-",
                 dir=destination.parent,
             ) as stage_name:
-                staged_data = Path(stage_name) / "data"
+                staged_data = Path(stage_name) / "d"
                 staged_data.mkdir()
                 for relative, entry in entries.items():
                     target = (staged_data / Path(*PurePosixPath(relative).parts)).resolve()
@@ -337,3 +350,95 @@ def restore_backup(archive: Path, destination_root: Path) -> RestoreResult:
         file_count=len(entries),
         total_bytes=sum(int(entry["size"]) for entry in entries.values()),
     )
+
+
+def _managed_archive(backup_root: Path, backup_id: str) -> Path:
+    root = backup_root.expanduser().resolve()
+    if not _MANAGED_BACKUP_ID.fullmatch(backup_id):
+        raise ManagedBackupNotFoundError("Invalid managed backup ID")
+    archive = (root / f"{backup_id}.zip").resolve()
+    if archive.parent != root or not archive.is_file():
+        raise ManagedBackupNotFoundError("Managed backup does not exist")
+    return archive
+
+
+def _managed_info(archive: Path) -> ManagedBackup:
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            infos = bundle.infolist()
+            names = [info.filename for info in infos]
+            if len(names) != len(set(names)):
+                raise BackupValidationError("Backup contains duplicate members")
+            for info in infos:
+                _validate_member(info)
+            manifest = _read_manifest(bundle)
+            entries = _manifest_entries(manifest)
+            payload_names = {
+                info.filename.removeprefix(_PAYLOAD_PREFIX)
+                for info in infos
+                if info.filename != _MANIFEST_NAME
+            }
+            if payload_names != set(entries):
+                raise BackupValidationError("Backup payload does not match its manifest")
+            created_at = datetime.fromisoformat(str(manifest["created_at"]))
+            if created_at.tzinfo is None or created_at.utcoffset() is None:
+                raise ValueError("created_at must be timezone-aware")
+    except (KeyError, TypeError, ValueError, zipfile.BadZipFile) as error:
+        raise BackupValidationError("Invalid managed backup") from error
+    return ManagedBackup(
+        id=archive.stem,
+        created_at=created_at.astimezone(UTC),
+        size=archive.stat().st_size,
+        file_count=len(entries),
+        total_bytes=sum(int(entry["size"]) for entry in entries.values()),
+    )
+
+
+def create_managed_backup(data_root: Path, backup_root: Path) -> ManagedBackup:
+    """Create a backup in the server-owned backup directory and return its opaque ID."""
+
+    root = backup_root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    backup_id = f"backup_{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}_{uuid4().hex[:8]}"
+    archive = root / f"{backup_id}.zip"
+    create_backup(data_root, archive)
+    return _managed_info(archive)
+
+
+def list_managed_backups(backup_root: Path) -> list[ManagedBackup]:
+    """List only archives issued by the managed backup service."""
+
+    root = backup_root.expanduser().resolve()
+    if not root.exists():
+        return []
+    backups = [
+        _managed_info(path)
+        for path in root.iterdir()
+        if path.is_file() and path.suffix == ".zip" and _MANAGED_BACKUP_ID.fullmatch(path.stem)
+    ]
+    return sorted(backups, key=lambda item: (item.created_at, item.id), reverse=True)
+
+
+def delete_managed_backup(backup_root: Path, backup_id: str) -> None:
+    """Delete one server-issued backup, primarily for failed-operation compensation."""
+
+    archive = _managed_archive(backup_root, backup_id)
+    try:
+        archive.unlink()
+    except OSError as error:
+        raise BackupError("Managed backup cleanup failed") from error
+
+
+def validate_managed_backup(backup_root: Path, backup_id: str) -> ManagedBackup:
+    """Fully extract and validate one server-issued backup without changing runtime data."""
+
+    archive = _managed_archive(backup_root, backup_id)
+    info = _managed_info(archive)
+    # The OS temporary root is intentionally used here. Nesting validation under
+    # a deployment path can exceed the legacy Windows path limit for otherwise
+    # valid owner/workspace/material keys.
+    with tempfile.TemporaryDirectory(prefix="rqv-") as root:
+        result = restore_backup(archive, Path(root) / "d")
+    if result.file_count != info.file_count or result.total_bytes != info.total_bytes:
+        raise BackupValidationError("Managed backup validation totals do not match")
+    return info

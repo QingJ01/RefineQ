@@ -6,7 +6,7 @@ import os
 import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from refineq.database.engine import Database
@@ -26,8 +26,6 @@ from refineq.storage.learning import LearningRepository
 from refineq.storage.sql_store import SqlRecordStore
 from refineq.storage.workspaces import WorkspaceRepository
 
-DEMO_EMAIL = "learner@refineq.local"
-DEMO_PASSWORD = "learn-with-refineq"
 DEMO_WORKSPACE_ID = "refineq-demo"
 DEMO_MATERIAL_ID = "demo-material"
 
@@ -37,7 +35,6 @@ class DemoResult:
     owner_id: str
     workspace_id: str
     email: str
-    password: str
 
 
 def _write_once(path: Path, payload: bytes) -> None:
@@ -61,22 +58,25 @@ def _write_once(path: Path, payload: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def seed_demo(data_root: Path) -> DemoResult:
+def seed_demo(
+    database: Database,
+    data_root: Path,
+    *,
+    email: str,
+    password: str,
+) -> DemoResult:
     """Create one presentation-ready learner without resetting an existing run."""
 
     root = data_root.expanduser().resolve()
-    database_path = root / "system" / "refineq.sqlite3"
-    database = Database(f"sqlite+pysqlite:///{database_path.as_posix()}")
-    database.initialize()
     identity = IdentityService(database)
     try:
         user = identity.register(
-            email=DEMO_EMAIL,
-            password=DEMO_PASSWORD,
+            email=email,
+            password=password,
             display_name="RefineQ Learner",
         )
     except AccountExistsError:
-        user = identity.authenticate(email=DEMO_EMAIL, password=DEMO_PASSWORD)
+        user = identity.authenticate(email=email, password=password)
 
     store = SqlRecordStore(database)
     workspaces = WorkspaceRepository(store)
@@ -86,12 +86,12 @@ def seed_demo(data_root: Path) -> DemoResult:
         workspaces.create(
             user.id,
             DEMO_WORKSPACE_ID,
-            title="Calculus Sprint",
-            subject="mathematics",
-            goal="Master the calculus foundations for the final exam",
-            topics=["Derivative", "Chain Rule", "Integral"],
-            keywords=["calculus", "derivative", "chain rule", "integral"],
-            routing_summary="Presentation-ready demo learning space.",
+            title="计算机组成原理冲刺",
+            subject="计算机组成原理",
+            goal="准备 10 月 25 日的计算机组成原理期中考试",
+            topics=["流水线", "缓存", "存储层次"],
+            keywords=["计算机组成原理", "流水线", "缓存", "存储层次"],
+            routing_summary="仅用于演示的预置学习空间，不代表真实用户或访谈证据。",
         )
 
     try:
@@ -101,27 +101,31 @@ def seed_demo(data_root: Path) -> DemoResult:
         seeded = False
 
     if not seeded:
+        now = datetime.now(UTC)
+        exam_at = datetime(now.year, 10, 25, 12, tzinfo=UTC)
+        if exam_at <= now:
+            exam_at = exam_at.replace(year=now.year + 1)
         service.seed(
             user.id,
             DEMO_WORKSPACE_ID,
             SeedRequest(
-                goal="Master the calculus foundations for the final exam",
-                exam_at=datetime.now(UTC) + timedelta(days=14),
-                daily_minutes=45,
+                goal="准备 10 月 25 日的计算机组成原理期中考试",
+                exam_at=exam_at,
+                daily_minutes=90,
                 topics=[
                     TopicSeed(
-                        id="derivatives",
-                        name="Derivative",
+                        id="pipeline",
+                        name="流水线",
                         knowledge_type=KnowledgeType.CONCEPT,
                     ),
                     TopicSeed(
-                        id="chain-rule",
-                        name="Chain Rule",
+                        id="cache",
+                        name="缓存",
                         knowledge_type=KnowledgeType.PROCEDURE,
                     ),
                     TopicSeed(
-                        id="integrals",
-                        name="Integral",
+                        id="memory-hierarchy",
+                        name="存储层次",
                         knowledge_type=KnowledgeType.CONCEPT,
                     ),
                 ],
@@ -133,9 +137,9 @@ def seed_demo(data_root: Path) -> DemoResult:
             DiagnosticRequest(
                 diagnostic_id="demo-diagnostic",
                 results=[
-                    DiagnosticResultInput(topic_id="derivatives", is_correct=True),
-                    DiagnosticResultInput(topic_id="chain-rule", is_correct=False),
-                    DiagnosticResultInput(topic_id="integrals", is_correct=False),
+                    DiagnosticResultInput(topic_id="pipeline", is_correct=True),
+                    DiagnosticResultInput(topic_id="cache", is_correct=False),
+                    DiagnosticResultInput(topic_id="memory-hierarchy", is_correct=False),
                 ],
             ),
         )
@@ -160,9 +164,9 @@ def seed_demo(data_root: Path) -> DemoResult:
         )
     except MaterialNotFoundError:
         material_text = (
-            "A derivative measures a local rate of change.\n"
-            "The chain rule differentiates a composition of functions.\n"
-            "A definite integral accumulates signed area over an interval."
+            "流水线通过重叠执行多条指令的不同阶段提高吞吐量，但数据、结构和控制相关会造成冒险。\n"
+            "缓存利用时间局部性与空间局部性缩短平均访存时间；命中率、命中时间和缺失代价共同决定性能。\n"
+            "存储层次按速度、容量和成本组织寄存器、缓存、主存与外存。"
         )
         material_path = (
             root
@@ -179,15 +183,13 @@ def seed_demo(data_root: Path) -> DemoResult:
             owner_id=user.id,
             project_id=DEMO_WORKSPACE_ID,
             material_id=DEMO_MATERIAL_ID,
-            filename="calculus-notes.txt",
+            filename="computer-architecture-notes.txt",
             text=material_text,
         )
 
     result = DemoResult(
         owner_id=user.id,
         workspace_id=DEMO_WORKSPACE_ID,
-        email=DEMO_EMAIL,
-        password=DEMO_PASSWORD,
+        email=email,
     )
-    database.close()
     return result

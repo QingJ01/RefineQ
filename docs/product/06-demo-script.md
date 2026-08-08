@@ -8,10 +8,15 @@
 
 ```powershell
 # 在部署环境执行，幂等可重复
-python scripts/seed_demo.py
+$env:REFINEQ_DEMO_EMAIL = "learner@refineq.local"
+$env:REFINEQ_DEMO_PASSWORD = "运行时临时强密码"
+refineq-demo
+Remove-Item Env:REFINEQ_DEMO_PASSWORD
 ```
 
-得到演示账号 `learner@refineq.local`（密码见 `operations/demo.py`，部署前建议改掉默认值），内含空间 `refineq-demo`：已有资料、诊断、计划与一次作答记录，保证评审打开就有内容可看。
+得到演示账号 `learner@refineq.local`（密码仅由运行时环境提供，源码和命令输出均不包含密码），内含空间
+`refineq-demo`：已有资料、诊断、计划与一次作答记录，保证评审打开就有内容可看。这些内容仅是演示夹具，
+不得作为真实用户、访谈或参赛证据。
 
 ### 1.2 手工演示空间（用于视频与路演）
 

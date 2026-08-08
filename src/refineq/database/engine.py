@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, insert, select, text
+from sqlalchemy import Engine, create_engine, insert, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -55,6 +55,45 @@ class Database:
             current = connection.scalar(select(schema_versions.c.version).limit(1))
             if current is None:
                 connection.execute(insert(schema_versions).values(version=SCHEMA_VERSION))
+            elif int(current) == 1 and SCHEMA_VERSION == 2:
+                user_columns = {
+                    column["name"] for column in inspect(connection).get_columns("users")
+                }
+                material_columns = {
+                    column["name"] for column in inspect(connection).get_columns("materials")
+                }
+                if "deletion_id" not in user_columns:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN deletion_id VARCHAR(64)"))
+                if self.is_postgresql:
+                    if "title" not in material_columns:
+                        connection.execute(
+                            text("ALTER TABLE materials ADD COLUMN title VARCHAR(500)")
+                        )
+                    if "tags" not in material_columns:
+                        connection.execute(
+                            text(
+                                "ALTER TABLE materials ADD COLUMN tags JSONB "
+                                "NOT NULL DEFAULT '[]'::jsonb"
+                            )
+                        )
+                    connection.execute(text("UPDATE materials SET title = filename"))
+                    connection.execute(
+                        text("ALTER TABLE materials ALTER COLUMN title SET NOT NULL")
+                    )
+                else:
+                    if "title" not in material_columns:
+                        connection.execute(
+                            text("ALTER TABLE materials ADD COLUMN title VARCHAR(500)")
+                        )
+                    if "tags" not in material_columns:
+                        connection.execute(
+                            text("ALTER TABLE materials ADD COLUMN tags JSON NOT NULL DEFAULT '[]'")
+                        )
+                    connection.execute(text("UPDATE materials SET title = filename"))
+                connection.execute(
+                    text("UPDATE schema_versions SET version = :version"),
+                    {"version": SCHEMA_VERSION},
+                )
             elif int(current) != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Unsupported database schema {current}; expected {SCHEMA_VERSION}"

@@ -21,6 +21,8 @@ class FakeKnowledge:
             id="material_demo",
             project_id="workspace_demo",
             filename="高等数学教材.pdf",
+            title="高等数学教材",
+            tags=[],
             content_type="application/pdf",
             size=100,
             status="indexed",

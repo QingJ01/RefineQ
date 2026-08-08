@@ -5,67 +5,91 @@ import {
   BookOpen,
   CalendarDays,
   ChartNoAxesColumnIncreasing,
-  ChevronsUpDown,
   House,
   Languages,
   LogOut,
   Route,
   Settings2,
   Sparkles,
+  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
+import { LearningReport } from "@/components/learning-report";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
+import { PlanSettings } from "@/components/plan-settings";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
+import { ProgressTopicDetail } from "@/components/progress-topic-detail";
+import { ReviewQueue } from "@/components/review-queue";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { useAgentState } from "@/hooks/use-agent-state";
+import { useLearningAuth } from "@/hooks/use-learning-auth";
+import { usePracticeState } from "@/hooks/use-practice-state";
+import { useWorkspaceState } from "@/hooks/use-workspace-state";
 import { api, ApiError } from "@/lib/api";
 import {
   executeCoachAction,
   pendingCoachTurn,
   type PendingCoachTurn,
 } from "@/lib/coach-actions";
-import { translator } from "@/lib/i18n";
+import { localizeApiError } from "@/lib/error-messages";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
-import { inferLearningMode } from "@/lib/learning-session";
+import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
+  guardPracticeNavigation,
+  hasUnsavedPracticeDraft,
+  type PracticeNavigationAction,
+} from "@/lib/practice-navigation";
+import { isAbortError } from "@/lib/upload-flow";
+import {
   clearLearningSession,
+  installSessionHandoff,
   loadLearningSession,
-  saveLearningLocale,
+  requestSessionHandoff,
   saveLearningSession,
 } from "@/lib/session";
 import type {
-  AnswerResult,
+  AttemptFeedbackInput,
+  AttemptInsight,
   ExecutableActionProposal,
   AuthResponse,
-  LearningEvidence,
+  DueReviewInsight,
   LearningMode,
   LearningWorkspace,
-  Locale,
   MaterialAnalysis,
   MaterialRecord,
+  MaterialUpdateInput,
+  PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
-  Progress,
-  SavedPracticeQuestion,
-  StudySession,
   StudyPlan,
   TargetedPlanInput,
   SearchSource,
+  StudySession,
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
+import {
+  clearWorkspaceSnapshots,
+  consumeWorkspaceSnapshot,
+  removeWorkspaceSnapshot,
+  saveWorkspaceSnapshot,
+} from "@/lib/workspace-snapshot-handoff";
 
 const ROUTE_NOTICE_KEY = "refineq.workspace-route-notice";
+const SECTION_FOCUS_KEY = "refineq.section-focus";
 
 
 export function StudyWorkspace({
@@ -76,90 +100,227 @@ export function StudyWorkspace({
   initialSection?: LearningSection;
 } = {}) {
   const router = useRouter();
-  const [locale, setLocale] = useState<Locale>("zh");
-  const t = useMemo(() => translator(locale), [locale]);
-  const [restoring, setRestoring] = useState(true);
-  const [auth, setAuth] = useState<AuthResponse | null>(null);
-  const [workspaces, setWorkspaces] = useState<LearningWorkspace[]>([]);
-  const [workspace, setWorkspace] = useState<LearningWorkspace | null>(null);
-  const [plan, setPlan] = useState<StudyPlan | null>(null);
-  const [progress, setProgress] = useState<Progress | null>(null);
-  const [evidence, setEvidence] = useState<LearningEvidence[]>([]);
-  const [materials, setMaterials] = useState<MaterialRecord[]>([]);
-  const [question, setQuestion] = useState<PracticeQuestion | null>(null);
-  const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
-  const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState<AnswerResult | null>(null);
-  const [learningMode, setLearningMode] = useState<LearningMode>("concept");
-  const [coachSessionId, setCoachSessionId] = useState<string | undefined>();
+  const {
+    auth,
+    error,
+    locale,
+    modelConfigured,
+    reportError,
+    resetAuthentication,
+    restoring,
+    setAuth,
+    setError,
+    setLocale,
+    setModelConfigured,
+    setRestoring,
+    t,
+    toggleLocale: toggleLearningLocale,
+  } = useLearningAuth();
+  const {
+    applySnapshot: applyWorkspaceSnapshot,
+    clearWorkspaceState,
+    evidence,
+    insights,
+    materials,
+    plan,
+    previousWorkspaceId,
+    progress,
+    route,
+    savedQuestions,
+    selectedTopicId,
+    setEvidence,
+    setInsights,
+    setMaterials,
+    setPlan,
+    setPreviousWorkspaceId,
+    setProgress,
+    setRoute,
+    setSavedQuestions,
+    setSelectedTopicId,
+    setShowArchived,
+    setWorkspace,
+    setWorkspaces,
+    showArchived,
+    workspace,
+    workspaces,
+  } = useWorkspaceState();
+  const {
+    answer,
+    attemptIdRef,
+    capturePracticeGeneration,
+    clearPracticeState,
+    hydratePractice,
+    isPracticeGenerationCurrent,
+    learningMode,
+    practiceBusy,
+    question,
+    questionRequestIdRef,
+    result,
+    setAnswer,
+    setLearningMode,
+    setPracticeBusy,
+    setQuestion,
+    setResult,
+  } = usePracticeState();
+  const { askCoach, resetAgent } = useAgentState();
   const section = initialSection;
   const [homeBusy, setHomeBusy] = useState(false);
-  const [practiceBusy, setPracticeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [route, setRoute] = useState<WorkspaceRoute | null>(null);
-  const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
-  const questionRequestIdRef = useRef<string | null>(null);
-  const attemptIdRef = useRef<string | null>(null);
+  const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [snapshotConflict, setSnapshotConflict] = useState(false);
+  const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
+  const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
   const appliedActionIdsRef = useRef(new Set<string>());
-  const activeWorkspaceIdRef = useRef<string | null>(null);
+  const activeCoachWorkspaceIdRef = useRef<string | null>(null);
+  const pendingPracticeActionRef = useRef<PracticeNavigationAction | null>(null);
+  const [draftConfirmOpen, setDraftConfirmOpen] = useState(false);
+  const authRef = useRef(auth);
+  const workspaceRef = useRef(workspace);
+  const localeRef = useRef(locale);
+  authRef.current = auth;
+  workspaceRef.current = workspace;
+  localeRef.current = locale;
 
-  function reportError(caught: unknown) {
-    setError(
-      caught instanceof ApiError
-        ? `${caught.code}: ${caught.message}`
-        : caught instanceof Error
-          ? caught.message
-          : t("error"),
-    );
-  }
-
-  function applySnapshot(snapshot: WorkspaceSnapshot) {
-    if (activeWorkspaceIdRef.current !== snapshot.workspace.id) {
+  const applySnapshot = useCallback((snapshot: WorkspaceSnapshot) => {
+    if (activeCoachWorkspaceIdRef.current !== snapshot.workspace.id) {
       pendingTurnIdRef.current = null;
       appliedActionIdsRef.current.clear();
+      resetAgent();
     }
-    activeWorkspaceIdRef.current = snapshot.workspace.id;
-    setWorkspace(snapshot.workspace);
-    setProgress(snapshot.progress);
-    setPlan(snapshot.plan);
-    setEvidence(snapshot.evidence);
-    setMaterials(snapshot.materials);
-    setSavedQuestions(snapshot.saved_questions ?? []);
-    const activeQuestion = snapshot.active_question ?? null;
-    setLearningMode(
-      activeQuestion?.learning_mode
-      ?? inferLearningMode(snapshot.workspace.subject, snapshot.workspace.goal),
+    activeCoachWorkspaceIdRef.current = snapshot.workspace.id;
+    applyWorkspaceSnapshot(snapshot);
+    hydratePractice(snapshot);
+  }, [applyWorkspaceSnapshot, hydratePractice, resetAgent]);
+
+  const recheckModelCapability = useCallback(async (): Promise<boolean | null> => {
+    const token = auth?.access_token;
+    if (!token) return null;
+    return refreshModelCapability(
+      () => api.getModelSettings(token),
+      setModelConfigured,
     );
-    setCoachSessionId(undefined);
-    setQuestion(activeQuestion);
-    setResult(snapshot.last_answer ?? null);
-    const draftKey = activeQuestion
-      ? `refineq.practice-draft:${snapshot.workspace.id}:${activeQuestion.id}`
-      : null;
-    setAnswer(
-      snapshot.last_answer || !draftKey
-        ? ""
-        : window.sessionStorage.getItem(draftKey) ?? "",
+  }, [auth?.access_token, setModelConfigured]);
+
+  useEffect(() => installSessionHandoff(window.sessionStorage), []);
+
+  function runGuardedPracticeAction(action: PracticeNavigationAction): boolean {
+    return guardPracticeNavigation(
+      hasUnsavedPracticeDraft(answer, Boolean(question), Boolean(result)),
+      action,
+      (pending) => {
+        pendingPracticeActionRef.current = pending;
+        setDraftConfirmOpen(true);
+      },
     );
-    questionRequestIdRef.current = null;
-    attemptIdRef.current = null;
   }
+
+  function confirmDraftReplacement() {
+    const pending = pendingPracticeActionRef.current;
+    pendingPracticeActionRef.current = null;
+    setDraftConfirmOpen(false);
+    if (pending) void pending();
+  }
+
+  function cancelDraftReplacement() {
+    pendingPracticeActionRef.current = null;
+    setDraftConfirmOpen(false);
+  }
+
+  useEffect(() => {
+    const token = auth?.access_token;
+    const workspaceId = workspace?.id;
+    if ((section !== "progress" && section !== "today") || !token || !workspaceId) return;
+    let active = true;
+    void Promise.resolve()
+      .then(() => {
+        if (active) setInsightsLoading(true);
+        return api.getWorkspaceInsights(token, workspaceId);
+      })
+      .then((loaded) => {
+        if (active) setInsights(loaded);
+      })
+      .catch((caught) => {
+        if (active) setError(localizeApiError(caught, locale));
+      })
+      .finally(() => {
+        if (active) setInsightsLoading(false);
+      });
+    return () => { active = false; };
+  }, [auth?.access_token, locale, section, setError, setInsights, workspace?.id]);
+
+  useEffect(() => {
+    if (window.sessionStorage.getItem(SECTION_FOCUS_KEY) !== "1") return;
+    if (restoring || !workspace || !sectionHeadingRef.current) return;
+    window.sessionStorage.removeItem(SECTION_FOCUS_KEY);
+    const timeout = window.setTimeout(() => {
+      sectionHeadingRef.current?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [restoring, section, workspace]);
 
   const redirectUnavailableWorkspace = useCallback(() => {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+    setHomeBusy(true);
     setWorkspace(null);
     setRoute(null);
     setPreviousWorkspaceId(null);
     router.replace("/");
-  }, [router]);
+  }, [router, setPreviousWorkspaceId, setRoute, setWorkspace]);
 
   useEffect(() => {
     let active = true;
     async function restore() {
-      const saved = loadLearningSession(window.sessionStorage);
+      const currentAuth = authRef.current;
+      if (currentAuth) {
+        if (!initialWorkspaceId) {
+          setWorkspace(null);
+          if (active) setRestoring(false);
+          return;
+        }
+        if (workspaceRef.current?.id === initialWorkspaceId) {
+          removeWorkspaceSnapshot(window.sessionStorage, initialWorkspaceId);
+          if (active) setRestoring(false);
+          return;
+        }
+        clearWorkspaceState();
+        clearPracticeState();
+        resetAgent();
+        setError("");
+        setRestoring(true);
+        try {
+          const snapshot = consumeWorkspaceSnapshot(window.sessionStorage, initialWorkspaceId)
+            ?? await api.getWorkspaceSnapshot(currentAuth.access_token, initialWorkspaceId);
+          if (!active) return;
+          applySnapshot(snapshot);
+          saveLearningSession(window.sessionStorage, {
+            token: currentAuth.access_token,
+            workspaceId: initialWorkspaceId,
+            locale: localeRef.current,
+          });
+        } catch (caught) {
+          if (!active) return;
+          if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+            clearWorkspaceSnapshots(window.sessionStorage);
+            resetAuthentication();
+            clearWorkspaceState();
+            clearPracticeState();
+            resetAgent();
+            setWorkspaces([]);
+            router.replace("/");
+          } else if (caught instanceof ApiError && caught.status === 404) {
+            redirectUnavailableWorkspace();
+          } else {
+            setError(localizeApiError(caught, localeRef.current));
+          }
+        } finally {
+          if (active) setRestoring(false);
+        }
+        return;
+      }
+      const saved = loadLearningSession(window.sessionStorage)
+        ?? await requestSessionHandoff(window.sessionStorage);
       if (!saved) {
         if (active) setRestoring(false);
         return;
@@ -169,7 +330,10 @@ export function StudyWorkspace({
           setLocale(saved.locale);
           document.documentElement.lang = saved.locale === "zh" ? "zh-CN" : "en";
         }
-        const user = await api.getProfile(saved.token);
+        const [user, configured] = await Promise.all([
+          api.getProfile(saved.token),
+          loadModelCapability(() => api.getModelSettings(saved.token)),
+        ]);
         const restoredAuth: AuthResponse = {
           access_token: saved.token,
           token_type: "bearer",
@@ -178,6 +342,7 @@ export function StudyWorkspace({
         const recent = await api.listWorkspaces(saved.token);
         if (!active) return;
         setAuth(restoredAuth);
+        setModelConfigured(configured);
         setWorkspaces(recent);
         const selectedId = initialWorkspaceId;
         const resolution = resolveRequestedWorkspace(selectedId, recent);
@@ -196,7 +361,8 @@ export function StudyWorkspace({
         }
         if (resolution.kind === "workspace") {
           const selected = resolution.workspace;
-          const snapshot = await api.getWorkspaceSnapshot(saved.token, selected.id);
+          const snapshot = consumeWorkspaceSnapshot(window.sessionStorage, selected.id)
+            ?? await api.getWorkspaceSnapshot(saved.token, selected.id);
           if (!active) return;
           applySnapshot(snapshot);
           saveLearningSession(window.sessionStorage, {
@@ -223,12 +389,17 @@ export function StudyWorkspace({
       } catch (caught) {
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+          clearWorkspaceSnapshots(window.sessionStorage);
           clearLearningSession(window.sessionStorage);
+          clearWorkspaceState();
+          clearPracticeState();
+          resetAgent();
+          setWorkspaces([]);
           router.replace("/");
         } else if (caught instanceof ApiError && caught.status === 404 && initialWorkspaceId) {
           redirectUnavailableWorkspace();
         } else {
-          setError(caught instanceof Error ? caught.message : "Unable to restore the learning session");
+          setError(localizeApiError(caught, saved.locale ?? "zh"));
         }
       } finally {
         if (active) setRestoring(false);
@@ -236,17 +407,25 @@ export function StudyWorkspace({
     }
     void restore();
     return () => { active = false; };
-  }, [initialWorkspaceId, redirectUnavailableWorkspace, router]);
-
-  useEffect(() => {
-    if (!route) return;
-    const timeout = window.setTimeout(() => {
-      window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
-      setRoute(null);
-      setPreviousWorkspaceId(null);
-    }, 7000);
-    return () => window.clearTimeout(timeout);
-  }, [route]);
+  }, [
+    applySnapshot,
+    clearPracticeState,
+    clearWorkspaceState,
+    initialWorkspaceId,
+    redirectUnavailableWorkspace,
+    resetAuthentication,
+    resetAgent,
+    router,
+    setAuth,
+    setError,
+    setLocale,
+    setModelConfigured,
+    setPreviousWorkspaceId,
+    setRestoring,
+    setRoute,
+    setWorkspace,
+    setWorkspaces,
+  ]);
 
   async function authenticated(response: AuthResponse) {
     if (initialWorkspaceId) setHomeBusy(true);
@@ -257,8 +436,12 @@ export function StudyWorkspace({
       locale,
     });
     try {
-      const recent = await api.listWorkspaces(response.access_token);
+      const [recent, configured] = await Promise.all([
+        api.listWorkspaces(response.access_token),
+        loadModelCapability(() => api.getModelSettings(response.access_token)),
+      ]);
       setWorkspaces(recent);
+      setModelConfigured(configured);
       const selected = recent.find((item) => item.id === initialWorkspaceId);
       if (initialWorkspaceId && !selected) {
         redirectUnavailableWorkspace();
@@ -279,6 +462,7 @@ export function StudyWorkspace({
     navigation: "push" | "replace" = "push",
   ) {
     if (!token) return;
+    removeWorkspaceSnapshot(window.sessionStorage, target.id);
     setHomeBusy(true);
     setError("");
     try {
@@ -309,6 +493,7 @@ export function StudyWorkspace({
       const route = await api.resolveWorkspace(auth.access_token, intent);
       const saved = loadLearningSession(window.sessionStorage);
       const previousId = workspace?.id ?? saved?.workspaceId ?? null;
+      removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id);
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
       applySnapshot(snapshot);
       setRoute(route);
@@ -333,6 +518,7 @@ export function StudyWorkspace({
 
   async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
     if (!auth || !workspace) return false;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
     const requestId = request.requestId
@@ -347,6 +533,7 @@ export function StudyWorkspace({
           requestId,
         }),
         (nextQuestion) => {
+          if (!isPracticeGenerationCurrent(generation)) return;
           if (question) {
             window.sessionStorage.removeItem(
               `refineq.practice-draft:${workspace.id}:${question.id}`,
@@ -354,50 +541,62 @@ export function StudyWorkspace({
           }
           setQuestion(nextQuestion);
           setResult(null);
+          setMasteryBefore(null);
           setAnswer("");
           questionRequestIdRef.current = null;
           attemptIdRef.current = null;
         },
       );
-      return true;
+      return isPracticeGenerationCurrent(generation);
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
       return false;
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
   async function submitAnswer() {
     if (!auth || !workspace || !question) return;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
+    setError("");
+    setSnapshotConflict(false);
+    setMasteryBefore(progress?.mastery?.[question.topic_id] ?? null);
     attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
+    const attemptId = attemptIdRef.current;
     try {
       const graded = await api.submitWorkspaceAnswer(
           auth.access_token,
           workspace.id,
           question.id,
           answer,
-          attemptIdRef.current,
+          attemptId,
         );
+      if (!isPracticeGenerationCurrent(generation)) return;
       setResult(graded);
       attemptIdRef.current = null;
       window.sessionStorage.removeItem(
         `refineq.practice-draft:${workspace.id}:${question.id}`,
       );
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      if (!isPracticeGenerationCurrent(generation)) return;
       setProgress(snapshot.progress);
       setEvidence(snapshot.evidence);
       setPlan(snapshot.plan);
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) {
+        if (caught instanceof ApiError && caught.status === 409) setSnapshotConflict(true);
+        reportError(caught);
+      }
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
   async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean): Promise<boolean> {
     if (!auth || !workspace) return false;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
     try {
@@ -407,6 +606,7 @@ export function StudyWorkspace({
         target.id,
         saved,
       );
+      if (!isPracticeGenerationCurrent(generation)) return false;
       setQuestion((current) => current?.id === updated.id
         ? { ...current, saved: updated.saved }
         : current);
@@ -415,28 +615,132 @@ export function StudyWorkspace({
         : current.filter((item) => item.id !== updated.id));
       return true;
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
       return false;
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
-  async function practiceTopic(topicId: string, difficulty?: number) {
-    if (!workspace) return;
-    router.push(learningPath(workspace.id, "today"));
-    await getQuestion({
-      topicId,
-      difficulty,
-      learningMode,
-      replace: question !== null,
-    });
-    window.requestAnimationFrame(() => {
-      document.getElementById("active-practice")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
+  function practiceTopic(topicId: string, difficulty?: number) {
+    runGuardedPracticeAction(async () => {
+      if (!workspace) return;
+      router.push(learningPath(workspace.id, "today"));
+      await getQuestion({
+        topicId,
+        difficulty,
+        learningMode,
+        replace: question !== null,
+      });
+      window.requestAnimationFrame(() => {
+        document.getElementById("active-practice")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
       });
     });
+  }
+
+  function startReviewSession(topicId: string, sessionId: string) {
+    runGuardedPracticeAction(async () => {
+      if (!workspace) return;
+      router.push(learningPath(workspace.id, "today"));
+      await getQuestion({
+        topicId,
+        reviewSessionId: sessionId,
+        learningMode,
+        replace: question !== null,
+      });
+      window.requestAnimationFrame(() => {
+        document.getElementById("active-practice")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+  }
+
+  function startReview(review: DueReviewInsight) {
+    startReviewSession(review.topic_id, review.session_id);
+  }
+
+  function retryAttempt(attempt: AttemptInsight) {
+    runGuardedPracticeAction(async () => {
+      if (!auth || !workspace) return;
+      const generation = capturePracticeGeneration();
+      setPracticeBusy(true);
+      setError("");
+      try {
+        const retried = await api.retryWorkspaceQuestion(auth.access_token, workspace.id, attempt.question_id);
+        if (!isPracticeGenerationCurrent(generation)) return;
+        setQuestion(retried);
+        setResult(null);
+        setMasteryBefore(null);
+        setAnswer("");
+        questionRequestIdRef.current = null;
+        attemptIdRef.current = null;
+        router.push(learningPath(workspace.id, "today"));
+      } catch (caught) {
+        if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      } finally {
+        if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+      }
+    });
+  }
+
+  function practiceSavedQuestion(saved: PracticeQuestion) {
+    runGuardedPracticeAction(async () => {
+      if (!auth || !workspace) return;
+      const generation = capturePracticeGeneration();
+      setPracticeBusy(true);
+      setError("");
+      try {
+        const retried = await api.retryWorkspaceQuestion(auth.access_token, workspace.id, saved.id);
+        if (!isPracticeGenerationCurrent(generation)) return;
+        if (question) window.sessionStorage.removeItem(`refineq.practice-draft:${workspace.id}:${question.id}`);
+        setQuestion(retried);
+        setResult(null);
+        setMasteryBefore(null);
+        setAnswer("");
+        questionRequestIdRef.current = null;
+        attemptIdRef.current = null;
+        router.push(learningPath(workspace.id, "today"));
+        window.requestAnimationFrame(() => {
+          document.getElementById("active-practice")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      } catch (caught) {
+        if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      } finally {
+        if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+      }
+    });
+  }
+
+  async function updateAttemptFeedback(
+    attempt: AttemptInsight,
+    input: AttemptFeedbackInput,
+  ) {
+    if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
+    setError("");
+    try {
+      const updated = await api.updateWorkspaceAttemptFeedback(
+        auth.access_token,
+        workspace.id,
+        attempt.attempt_id,
+        input,
+      );
+      if (!isPracticeGenerationCurrent(generation)) return;
+      setInsights((current) => current ? {
+        ...current,
+        attempts: current.attempts.map((item) => item.attempt_id === updated.attempt_id
+          ? { ...item, learner_note: updated.learner_note, appealed: updated.appealed }
+          : item),
+      } : current);
+    } catch (caught) {
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      throw caught;
+    }
   }
 
   async function uploadMaterials(files: File[], signal?: AbortSignal): Promise<MaterialRecord[]> {
@@ -456,6 +760,7 @@ export function StudyWorkspace({
       });
       return uploaded;
     } catch (caught) {
+      if (isAbortError(caught)) return [];
       reportError(caught);
       return [];
     }
@@ -581,32 +886,53 @@ export function StudyWorkspace({
     }
   }
 
+  async function updateMaterial(material: MaterialRecord, input: MaterialUpdateInput) {
+    if (!auth || !workspace) return;
+    try {
+      const updated = await api.updateWorkspaceMaterial(
+        auth.access_token,
+        workspace.id,
+        material.id,
+        input,
+      );
+      setMaterials((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
+  }
+
+  async function bulkDeleteMaterials(selected: MaterialRecord[]) {
+    if (!auth || !workspace || selected.length === 0) return;
+    try {
+      const ids = selected.map((material) => material.id);
+      await api.bulkDeleteWorkspaceMaterials(auth.access_token, workspace.id, ids);
+      const removed = new Set(ids);
+      setMaterials((current) => current.filter((item) => !removed.has(item.id)));
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
+  }
+
   async function askSessionCoach(message: string) {
-    if (!auth || !workspace) throw new Error(t("error"));
     const pendingTurn = pendingCoachTurn(
       pendingTurnIdRef.current,
       message,
       () => crypto.randomUUID(),
     );
     pendingTurnIdRef.current = pendingTurn;
-    const reply = await api.chatWorkspace(
-      auth.access_token,
-      workspace.id,
-      message,
-      coachSessionId,
-      pendingTurn.id,
-      undefined,
-      {
-        learning_mode: learningMode,
-        stage: result ? "reflect" : question ? "practice" : "learn",
-        question: question?.prompt,
-        draft: answer || undefined,
-        feedback: result?.feedback,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-      },
-    );
-    setCoachSessionId(reply.session_id);
-    return reply;
+    return askCoach(message, {
+      token: auth?.access_token,
+      workspaceId: workspace?.id,
+      learningMode,
+      question,
+      result,
+      answer,
+      errorMessage: t("error"),
+      turnId: pendingTurn.id,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    });
   }
 
   async function refreshWorkspaceSnapshot() {
@@ -620,9 +946,19 @@ export function StudyWorkspace({
     }
   }
 
+  async function resyncWorkspace() {
+    try {
+      await refreshWorkspaceSnapshot();
+      setSnapshotConflict(false);
+      setError("");
+    } catch {
+      // refreshWorkspaceSnapshot already reports the localized failure.
+    }
+  }
+
   async function applyCoachAction(
     proposal: ExecutableActionProposal,
-    options: { confirmed?: boolean; historical?: boolean } = {},
+    options: { confirmed?: boolean } = {},
   ) {
     const storedDraft = question
       ? window.sessionStorage.getItem(`refineq.practice-draft:${workspace?.id}:${question.id}`)
@@ -631,7 +967,6 @@ export function StudyWorkspace({
       appliedActionIds: appliedActionIdsRef.current,
       hasDraft: Boolean((storedDraft ?? answer).trim()),
       confirmed: options.confirmed,
-      historical: options.historical,
       applyAdjust: (action) => getQuestion({
         requestId: action.action_id,
         topicId: action.topic_id,
@@ -660,15 +995,14 @@ export function StudyWorkspace({
         }
         return toggleSavedQuestion(target, action.saved);
       },
-      refreshSnapshot: refreshWorkspaceSnapshot,
     });
   }
 
   function changeLearningMode(mode: LearningMode) {
-    setLearningMode(mode);
-    if (question) {
-      void getQuestion({ learningMode: mode, replace: true });
-    }
+    runGuardedPracticeAction(() => {
+      setLearningMode(mode);
+      if (question) return getQuestion({ learningMode: mode, replace: true }).then(() => undefined);
+    });
   }
 
   async function updateLearningWorkspace(
@@ -745,6 +1079,35 @@ export function StudyWorkspace({
     }
   }
 
+  async function updatePlanSettings(input: PlanUpdateInput) {
+    if (!auth || !workspace) return;
+    setPlanSettingsBusy(true);
+    setError("");
+    try {
+      const updated = await api.updateWorkspacePlan(
+        auth.access_token,
+        workspace.id,
+        input,
+      );
+      setPlan(updated);
+      setWorkspace((current) => current ? { ...current, goal: input.goal } : current);
+      setWorkspaces((current) => current.map((item) => (
+        item.id === workspace.id ? { ...item, goal: input.goal } : item
+      )));
+      setProgress((current) => current ? {
+        ...current,
+        goal: input.goal,
+        plan_id: updated.id,
+        topic_order: [...input.topic_order],
+      } : current);
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    } finally {
+      setPlanSettingsBusy(false);
+    }
+  }
+
   async function undoWorkspaceRoute() {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
     setRoute(null);
@@ -766,6 +1129,13 @@ export function StudyWorkspace({
     setPreviousWorkspaceId(null);
   }
 
+  function prepareSectionNavigation() {
+    prepareRouteNavigation();
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      window.sessionStorage.setItem(SECTION_FOCUS_KEY, "1");
+    }
+  }
+
   function prepareHomeNavigation() {
     prepareRouteNavigation();
     if (auth) {
@@ -775,13 +1145,27 @@ export function StudyWorkspace({
         locale,
       });
     }
+    if (workspace && progress) {
+      saveWorkspaceSnapshot(window.sessionStorage, {
+        workspace,
+        progress,
+        plan,
+        evidence,
+        materials,
+        saved_questions: savedQuestions,
+        active_question: question,
+        last_answer: result,
+      });
+    }
     setWorkspace(null);
   }
 
   function logout() {
-    clearLearningSession(window.sessionStorage);
-    setAuth(null);
-    setWorkspace(null);
+    clearWorkspaceSnapshots(window.sessionStorage);
+    resetAuthentication();
+    clearWorkspaceState();
+    clearPracticeState();
+    resetAgent();
     setWorkspaces([]);
     router.replace("/");
   }
@@ -792,16 +1176,23 @@ export function StudyWorkspace({
   }
 
   function toggleLocale() {
-    const next = locale === "zh" ? "en" : "zh";
-    setLocale(next);
-    if (auth) {
-      saveLearningLocale(window.sessionStorage, auth.access_token, next, workspace?.id);
-    }
-    document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
+    toggleLearningLocale(workspace?.id);
   }
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
-  if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
+  if (!auth) {
+    return (
+      <>
+        {error && (
+          <div className="error-banner auth-restore-error" data-testid="auth-restore-error" role="alert">
+            <strong>{t("error")}</strong>
+            <span>{error}</span>
+          </div>
+        )}
+        <AuthPanel t={t} locale={locale} onAuthenticated={authenticated} />
+      </>
+    );
+  }
   if (!workspace && initialWorkspaceId) {
     const retryTarget = workspaces.find((item) => item.id === initialWorkspaceId);
     return (
@@ -851,6 +1242,7 @@ export function StudyWorkspace({
   const masteryValues = progress ? Object.values(progress.mastery) : [];
   const averageMastery = masteryValues.reduce((sum, value) => sum + value, 0)
     / Math.max(1, masteryValues.length);
+  const selectedTopic = insights?.topics.find((item) => item.topic_id === selectedTopicId);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
     { id: "path", icon: Route },
@@ -870,32 +1262,19 @@ export function StudyWorkspace({
           data-testid="workspace-home-link"
           className="workspace-home-link"
           href="/"
-          onClick={prepareRouteNavigation}
+          onClick={prepareHomeNavigation}
         >
           <House size={18} />
           <span>{t("learningHome")}</span>
         </Link>
-        <Link
-          data-testid="workspace-switcher"
-          className="workspace-switcher"
-          href="/"
-          onClick={prepareRouteNavigation}
-          aria-label={`${t("switchSpace")}: ${workspace.title}`}
-        >
-          <span className="workspace-switcher-heading">
-            <span className="kicker">{t("currentSpace")}</span>
-            <ChevronsUpDown size={15} />
-          </span>
-          <strong>{workspace.title}</strong>
-          <span className="workspace-switcher-topic">
-            {progress?.topics ? Object.values(progress.topics)[0] : workspace.topics[0]}
-          </span>
-          <span className="workspace-switcher-progress">
-            <span>{t("learningProgress")}</span>
-            <strong>{Math.round(averageMastery * 100)}%</strong>
-          </span>
-          <i><b style={{ width: `${Math.round(averageMastery * 100)}%` }} /></i>
-        </Link>
+        <WorkspaceSwitcher
+          locale={locale}
+          current={workspace}
+          workspaces={workspaces}
+          currentProgress={Math.round(averageMastery * 100)}
+          onSelect={(target) => openWorkspace(target)}
+          onAllSpaces={returnHome}
+        />
         <span className="workspace-nav-label">{t("workspaceSections")}</span>
         <nav className="workspace-nav" aria-label={t("workspaceSections")}>
           {nav.map(({ id, icon: Icon }) => (
@@ -904,7 +1283,7 @@ export function StudyWorkspace({
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
               href={learningPath(workspace.id, id)}
-              onClick={prepareRouteNavigation}
+              onClick={prepareSectionNavigation}
               aria-label={t(id)}
               aria-current={section === id ? "page" : undefined}
             >
@@ -922,6 +1301,14 @@ export function StudyWorkspace({
               <span>{t("administration")}</span>
             </Link>
           )}
+          <Link
+            data-testid="nav-account"
+            href="/account"
+            aria-label={t("account")}
+          >
+            <UserRound size={19} />
+            <span>{t("account")}</span>
+          </Link>
         </nav>
         <div className="sidebar-actions">
           <button className="quiet-button" onClick={toggleLocale}><Languages size={16} /> {t("language")}</button>
@@ -929,6 +1316,27 @@ export function StudyWorkspace({
         </div>
       </aside>
       <section className="workspace-stage">
+        <header className="mobile-section-context" data-testid="mobile-section-context">
+          <div>
+            <span>{workspace.title}</span>
+            <h1 ref={sectionHeadingRef} tabIndex={-1} data-testid="mobile-section-title">{t(section)}</h1>
+          </div>
+          <nav className="mobile-context-shortcuts" aria-label={t("workspaceSections")}>
+            {nav.map(({ id, icon: Icon }) => (
+              <Link
+                key={id}
+                data-testid={`mobile-shortcut-${id}`}
+                className={section === id ? "active" : ""}
+                href={learningPath(workspace.id, id)}
+                onClick={prepareSectionNavigation}
+                aria-current={section === id ? "page" : undefined}
+              >
+                <Icon size={15} />
+                <span>{t(id)}</span>
+              </Link>
+            ))}
+          </nav>
+        </header>
         {section !== "today" && section !== "calendar" && (
           <header className="workspace-header">
             <div>
@@ -946,6 +1354,10 @@ export function StudyWorkspace({
           </header>
         )}
         <section className={`workspace-content workspace-content-${section}`}>
+          <div className="workspace-routing-summary" data-testid="workspace-routing-summary">
+            <Sparkles size={16} />
+            <span>{workspace.routing_summary}</span>
+          </div>
           {route && (
             <div className="workspace-route-notice" data-testid="workspace-route-notice" role="status">
               <Sparkles size={18} />
@@ -957,7 +1369,7 @@ export function StudyWorkspace({
               <button type="button" aria-label={t("routingDismiss")} onClick={dismissWorkspaceRoute}>×</button>
             </div>
           )}
-          {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span><button aria-label={t("routingDismiss")} onClick={() => setError("")}>×</button></div>}
+          {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
           {section === "today" && (
             <LearningSessionCanvas
               locale={locale}
@@ -969,9 +1381,16 @@ export function StudyWorkspace({
               question={question}
               answer={answer}
               result={result}
+              masteryBefore={masteryBefore}
               busy={practiceBusy}
               learningMode={learningMode}
               savedQuestions={savedQuestions}
+              agentToken={auth.access_token}
+              modelConfigured={modelConfigured}
+              onModelUnavailable={() => setModelConfigured(false)}
+              onRecheckModel={recheckModelCapability}
+              isAdmin={auth.user.role === "admin"}
+              onOpenAgentSettings={() => router.push("/admin/integrations/chat")}
               onLearningModeChange={changeLearningMode}
               onAnswerChange={(value) => {
                 setAnswer(value);
@@ -984,12 +1403,24 @@ export function StudyWorkspace({
               }}
               onStartTask={() => { void getQuestion({ learningMode }); }}
               onSubmit={submitAnswer}
-              onNextTask={() => { void getQuestion({ learningMode, replace: true }); }}
+              onNextTask={() => { runGuardedPracticeAction(() => getQuestion({ learningMode, replace: true }).then(() => undefined)); }}
+              onRetryTask={() => { if (question) void practiceSavedQuestion(question); }}
+              onViewProgress={() => router.push(learningPath(workspace.id, "progress"))}
               onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
+              onPracticeSaved={(saved) => { void practiceSavedQuestion(saved); }}
               onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
               onAskCoach={askSessionCoach}
               onApplyCoachAction={applyCoachAction}
               onCoachTurnHandled={() => { pendingTurnIdRef.current = null; }}
+            />
+          )}
+          {section === "today" && (insightsLoading || (insights?.due_reviews.length ?? 0) > 0) && (
+            <ReviewQueue
+              locale={locale}
+              reviews={insights?.due_reviews ?? []}
+              busy={practiceBusy}
+              loading={insightsLoading}
+              onStartReview={startReview}
             />
           )}
           {section === "path" && (
@@ -999,12 +1430,25 @@ export function StudyWorkspace({
                 <h2>{t("path")}</h2>
                 <p>{locale === "zh" ? "围绕能力目标组织每次学习，而不是堆积重复日程。" : "Each session advances the capability goal without a wall of repeated dates."}</p>
               </div>
+              {plan && progress && (
+                <PlanSettings
+                  locale={locale}
+                  plan={plan}
+                  topics={progress.topics}
+                  topicOrder={progress.topic_order}
+                  busy={planSettingsBusy}
+                  onSave={updatePlanSettings}
+                />
+              )}
               <PlanTimeline
                 plan={plan}
                 locale={locale}
                 t={t}
                 onUpdateSession={(session, input) => { void updatePlanSession(session, input); }}
-                onStartSession={(session) => practiceTopic(session.topic_id)}
+                onStartSession={(session) => session.activity === "review"
+                  ? startReviewSession(session.topic_id, session.id)
+                  : practiceTopic(session.topic_id)}
+                practiceBusy={practiceBusy}
                 busySessionId={busySessionId}
                 topicLabels={progress?.topics}
               />
@@ -1023,6 +1467,8 @@ export function StudyWorkspace({
               onOpenCalendar={() => router.push(`/learn/${workspace.id}/calendar`)}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
+              onUpdate={updateMaterial}
+              onBulkDelete={bulkDeleteMaterials}
             />
           )}
           {section === "calendar" && (
@@ -1043,17 +1489,57 @@ export function StudyWorkspace({
                 <h2>{t("progress")}</h2>
                 <p>{locale === "zh" ? "把能力变化、实践反馈和下一步安排放在一起。" : "Capability change, task feedback, and next actions in one place."}</p>
               </div>
+              {insights && progress && (
+                <LearningReport locale={locale} progress={progress} insights={insights} />
+              )}
+              <ReviewQueue
+                locale={locale}
+                reviews={insights?.due_reviews ?? []}
+                busy={practiceBusy}
+                loading={insightsLoading}
+                onStartReview={startReview}
+              />
               <ProgressInsights
                 progress={progress}
                 t={t}
+                locale={locale}
                 onPracticeTopic={practiceTopic}
                 topicLabels={progress?.topics}
+                insights={insights}
+                onSelectTopic={setSelectedTopicId}
+                busy={practiceBusy}
+                loading={insightsLoading}
               />
-              <EvidenceLedger evidence={evidence} locale={locale} t={t} />
+              {selectedTopic && (
+                <ProgressTopicDetail
+                  locale={locale}
+                  topic={selectedTopic}
+                  history={insights?.mastery_history ?? []}
+                  onClose={() => setSelectedTopicId(null)}
+                />
+              )}
+              <EvidenceLedger
+                evidence={evidence}
+                locale={locale}
+                t={t}
+                attempts={insights?.attempts}
+                onRetryAttempt={retryAttempt}
+                onUpdateFeedback={updateAttemptFeedback}
+              />
             </div>
           )}
         </section>
       </section>
+      <ConfirmDialog
+        open={draftConfirmOpen}
+        title={locale === "zh" ? "放弃未提交的作答？" : "Discard the unsaved answer?"}
+        description={locale === "zh" ? "继续会清空当前草稿并切换题目；取消会保留现有内容。" : "Continuing clears the current draft and changes the task. Cancel keeps your answer."}
+        confirmLabel={locale === "zh" ? "放弃并继续" : "Discard and continue"}
+        cancelLabel={locale === "zh" ? "保留草稿" : "Keep draft"}
+        tone="danger"
+        onConfirm={confirmDraftReplacement}
+        onCancel={cancelDraftReplacement}
+      />
     </main>
   );
 }
