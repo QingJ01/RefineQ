@@ -3,6 +3,19 @@
 Production state spans PostgreSQL and the object store selected in the administrator console. Stop
 writes before backup or restore so both snapshots represent the same point in time.
 
+## Health and model-call observability
+
+The public reverse proxy sends `/health` directly to the API. Container health checks use the same
+readiness semantics with short startup intervals; a successful response proves the process and its
+required local dependencies are ready, not that every optional AI provider is reachable. Do not put
+credentials, user data, or provider responses in this endpoint.
+
+Question generation, workspace routing, and Agent replies release their database transactions before
+waiting on model providers. A slow provider should therefore increase request latency without holding
+an idle database transaction. Safe fallback logs contain only an event name, reason category, elapsed
+time, and generation mode. Answers, material text, tokens, email addresses, owner identifiers, and
+provider endpoints must not be added to those events.
+
 ## Administrator account
 
 Local development:
