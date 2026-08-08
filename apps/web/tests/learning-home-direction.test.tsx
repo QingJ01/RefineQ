@@ -38,4 +38,38 @@ describe("dialog-first learning home", () => {
 
     expect(styles).toMatch(/\.home-shell\s*\{[^}]*grid-template-columns:\s*264px minmax\(0, 1fr\)/s);
   });
+
+  it("uses real workspace routes in the left navigation", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("zh")}
+        busy={false}
+        workspaces={[{
+          id: "calculus",
+          title: "Calculus Sprint",
+          subject: "mathematics",
+          goal: "Master calculus foundations",
+          topics: ["Derivative"],
+          keywords: ["calculus"],
+          routing_summary: "Calculus learning",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-08T00:00:00Z",
+        }]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="home-primary-navigation"');
+    expect(html).toContain('href="/"');
+    expect(html).toContain('href="/learn/calculus/today"');
+    expect(html).toContain('href="/learn/calculus/path"');
+    expect(html).toContain('href="/learn/calculus/materials"');
+    expect(html).toContain('href="/learn/calculus/progress"');
+    expect(html).not.toContain('href="#learning-composer"');
+    expect(html).not.toContain('href="#recent-learning"');
+  });
 });

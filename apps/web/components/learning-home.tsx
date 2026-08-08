@@ -4,8 +4,12 @@ import {
   ArrowRight,
   Archive,
   ArchiveRestore,
+  BookOpen,
+  CalendarDays,
+  ChartNoAxesColumnIncreasing,
   Check,
   Clock3,
+  House,
   Languages,
   LogOut,
   Pencil,
@@ -14,13 +18,24 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Translator } from "@/lib/i18n";
+import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import type { LearningWorkspace } from "@/lib/types";
 
+const primaryWorkspaceRoutes: Array<{
+  id: LearningSection;
+  icon: typeof BookOpen;
+}> = [
+  { id: "today", icon: BookOpen },
+  { id: "path", icon: CalendarDays },
+  { id: "materials", icon: Archive },
+  { id: "progress", icon: ChartNoAxesColumnIncreasing },
+];
 
 export function LearningHome({
   t,
@@ -60,6 +75,7 @@ export function LearningHome({
   const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<LearningWorkspace | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const currentWorkspace = workspaces.find((item) => !item.archived) ?? null;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -97,14 +113,35 @@ export function LearningHome({
   return (
     <main id="main-content" className="home-shell">
       <aside className="home-sidebar">
-        <div className="sidebar-brand">
+        <Link className="sidebar-brand wordmark-button" href="/" aria-label="RefineQ">
           <BrandMark className="brand-mark" size={36} />
           <BrandName />
-        </div>
-        <div className="home-sidebar-intro">
-          <span className="kicker">PERSONAL LEARNING AGENT</span>
-          <p>{t("brandTagline")}</p>
-        </div>
+        </Link>
+        <nav className="home-primary-navigation" aria-label={t("learningHome")}>
+          <Link className="home-nav-item active" href="/" aria-current="page">
+            <House size={19} />
+            <span>{t("learningHome")}</span>
+          </Link>
+          {currentWorkspace && (
+            <>
+              <div className="home-current-space-summary">
+                <span className="kicker">{t("currentSpace")}</span>
+                <strong>{currentWorkspace.title}</strong>
+              </div>
+              {primaryWorkspaceRoutes.map(({ id, icon: Icon }) => (
+                <Link
+                  key={id}
+                  data-testid={`home-nav-${id}`}
+                  className="home-nav-item"
+                  href={learningPath(currentWorkspace.id, id)}
+                >
+                  <Icon size={19} />
+                  <span>{t(id)}</span>
+                </Link>
+              ))}
+            </>
+          )}
+        </nav>
         {isAdmin && (
           <button
             data-testid="home-admin"
