@@ -429,10 +429,11 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         rescheduled = client.patch(
             f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
             headers=headers,
-            json={"status": "planned", "planned_at": tomorrow.isoformat()},
+            json={"status": "planned", "planned_at": tomorrow.isoformat(), "minutes": 30},
         )
         assert rescheduled.status_code == 200
         assert rescheduled.json()["status"] == "planned"
+        assert rescheduled.json()["minutes"] == 30
         assert datetime.fromisoformat(rescheduled.json()["planned_at"]) >= tomorrow - timedelta(
             seconds=1
         )

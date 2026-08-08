@@ -4,6 +4,7 @@ import {
   Archive,
   Bot,
   BookOpen,
+  CalendarDays,
   Languages,
   LogOut,
   NotebookTabs,
@@ -21,6 +22,7 @@ import { LearningHome } from "@/components/learning-home";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { PracticeCard } from "@/components/practice-card";
+import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
 import { translator } from "@/lib/i18n";
@@ -432,7 +434,7 @@ export function StudyWorkspace({
 
   async function updatePlanSession(
     session: StudySession,
-    input: { status?: "planned" | "completed"; planned_at?: string },
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
   ) {
     if (!auth || !workspace) return;
     setBusySessionId(session.id);
@@ -538,6 +540,7 @@ export function StudyWorkspace({
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
     { id: "materials", icon: Archive },
+    { id: "calendar", icon: CalendarDays },
     { id: "evidence", icon: NotebookTabs },
     { id: "coach", icon: Bot },
   ];
@@ -681,6 +684,15 @@ export function StudyWorkspace({
               onSearch={searchMaterials}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
+            />
+          )}
+          {section === "calendar" && (
+            <ScheduleCalendar
+              plan={plan}
+              locale={locale}
+              topicLabels={progress?.topics}
+              busySessionId={busySessionId}
+              onUpdateSession={updatePlanSession}
             />
           )}
           {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
