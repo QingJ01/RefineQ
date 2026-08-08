@@ -17,6 +17,16 @@ class CalendarRangeError(ValueError):
     code = "invalid_calendar_range"
 
 
+def _topic_label(topic_id: str, topic: object) -> str:
+    if isinstance(topic, dict):
+        name = topic.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    if isinstance(topic, str) and topic.strip():
+        return topic.strip()
+    return topic_id
+
+
 def _normalized_range(starts_at: datetime, ends_at: datetime) -> tuple[datetime, datetime]:
     if (
         starts_at.tzinfo is None
@@ -78,7 +88,10 @@ class CalendarService:
                         workspace_title=workspace.title,
                         workspace_archived=workspace.archived,
                         topic_id=session.topic_id,
-                        topic_label=str(topics.get(session.topic_id) or session.topic_id),
+                        topic_label=_topic_label(
+                            session.topic_id,
+                            topics.get(session.topic_id) if isinstance(topics, dict) else None,
+                        ),
                         planned_at=session.planned_at,
                         minutes=session.minutes,
                         activity=session.activity,
@@ -91,4 +104,3 @@ class CalendarService:
             ends_at=range_end,
             tasks=tasks,
         )
-

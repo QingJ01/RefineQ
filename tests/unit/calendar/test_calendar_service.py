@@ -168,6 +168,37 @@ def test_calendar_can_include_archived_spaces_and_sorts_stably(tmp_path: Path) -
     assert response.tasks[0].workspace_archived is True
 
 
+def test_calendar_projects_the_name_from_canonical_structured_topics(tmp_path: Path) -> None:
+    service, workspaces, learning = _service(tmp_path)
+    starts_at = datetime(2026, 8, 1, tzinfo=UTC)
+    _create_workspace(
+        workspaces,
+        learning,
+        owner_id="alice",
+        workspace_id="calculus",
+        title="Calculus",
+        planned_at=starts_at + timedelta(days=2),
+    )
+
+    def use_canonical_topic(data: dict) -> dict:
+        data["progress"]["topics"]["topic-core"] = {
+            "id": "topic-core",
+            "name": "Limits and continuity",
+            "knowledge_type": "concept",
+        }
+        return data
+
+    learning.mutate("alice", "calculus", use_canonical_topic)
+
+    response = service.list_tasks(
+        "alice",
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(days=31),
+    )
+
+    assert response.tasks[0].topic_label == "Limits and continuity"
+
+
 @pytest.mark.parametrize(
     ("starts_at", "ends_at"),
     [
@@ -185,4 +216,3 @@ def test_calendar_rejects_invalid_or_unbounded_ranges(
 
     with pytest.raises(CalendarRangeError):
         service.list_tasks("alice", starts_at=starts_at, ends_at=ends_at)
-
