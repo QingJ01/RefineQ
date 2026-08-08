@@ -38,6 +38,10 @@ from refineq.api.routers.workspaces import router as workspaces_router
 from refineq.config import Settings
 from refineq.database.engine import Database
 from refineq.identity.deletion import AccountDeletionCoordinator
+from refineq.identity.password_reset import (
+    PasswordResetDelivery,
+    build_password_reset_delivery,
+)
 from refineq.identity.service import IdentityService
 from refineq.integrations.model_settings import PlatformModelSettingsRepository
 from refineq.integrations.object_storage import ConfiguredObjectStorage
@@ -67,6 +71,7 @@ def create_app(
     learning_model_transport: StructuredModelTransport | None = None,
     agent_intent_transport: StructuredModelTransport | None = None,
     database: Database | None = None,
+    password_reset_delivery: PasswordResetDelivery | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
 
@@ -124,6 +129,11 @@ def create_app(
         data_root=app.state.settings.data_root,
     )
     app.state.identity = IdentityService(app.state.database)
+    app.state.password_reset_delivery = (
+        password_reset_delivery
+        if password_reset_delivery is not None
+        else build_password_reset_delivery(app.state.settings)
+    )
     app.state.account_deletions = AccountDeletionCoordinator(
         data_root=app.state.settings.data_root,
         identity=app.state.identity,

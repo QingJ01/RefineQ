@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     max_agent_sessions_per_user: int = Field(default=200, ge=1, le=100_000)
     password_reset_expose_token: bool = False
     password_reset_ttl_minutes: int = Field(default=20, ge=5, le=120)
+    public_site_url: str = "http://localhost"
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_from_email: str | None = None
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_starttls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: float = Field(default=10.0, gt=0.0, le=120.0)
     demo_email: str = "learner@refineq.local"
     demo_password: SecretStr | None = None
     auth_rate_limit_requests: int = Field(default=30, ge=1, le=100_000)
@@ -95,6 +104,31 @@ class Settings(BaseSettings):
             raise ValueError("database URL must use PostgreSQL or SQLite")
         return value
 
+    @model_validator(mode="after")
+    def validate_password_reset_delivery(self) -> Settings:
+        """Reject partial SMTP configuration before the API starts."""
+
+        scheme = urlsplit(self.public_site_url).scheme.lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError("public site URL must use HTTP or HTTPS")
+
+        host = (self.smtp_host or "").strip()
+        sender = (self.smtp_from_email or "").strip()
+        username = (self.smtp_username or "").strip()
+        has_password = bool(
+            self.smtp_password is not None
+            and self.smtp_password.get_secret_value().strip()
+        )
+        if bool(host) != bool(sender):
+            raise ValueError("SMTP host and sender must be configured together")
+        if not host and (username or has_password):
+            raise ValueError("SMTP credentials require an SMTP host and sender")
+        if bool(username) != has_password:
+            raise ValueError("SMTP username and password must be configured together")
+        if self.smtp_starttls and self.smtp_use_ssl:
+            raise ValueError("SMTP STARTTLS and implicit TLS cannot both be enabled")
+        return self
+
     @property
     def resolved_database_url(self) -> str:
         """Return the configured production URL or an isolated development database."""
@@ -103,6 +137,10 @@ class Settings(BaseSettings):
             return self.database_url.get_secret_value().strip()
         database_path = self.data_root / "system" / "refineq.sqlite3"
         return f"sqlite+pysqlite:///{database_path.as_posix()}"
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return bool((self.smtp_host or "").strip() and (self.smtp_from_email or "").strip())
 
     @property
     def allowed_model_hosts(self) -> set[str]:
