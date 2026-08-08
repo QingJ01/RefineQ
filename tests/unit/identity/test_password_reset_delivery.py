@@ -73,6 +73,37 @@ def test_settings_reject_partial_or_conflicting_smtp_configuration(
         Settings(data_root=tmp_path / "data", _env_file=None, **overrides)
 
 
+def test_settings_reject_public_site_url_without_a_host(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="public site URL"):
+        Settings(
+            data_root=tmp_path / "data",
+            public_site_url="https:///reset",
+            _env_file=None,
+        )
+
+
+def test_smtp_delivery_treats_empty_runtime_credentials_as_unauthenticated(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        data_root=tmp_path / "data",
+        smtp_host="smtp.example.com",
+        smtp_from_email="no-reply@example.com",
+        smtp_username="",
+        smtp_password="",
+        _env_file=None,
+    )
+    connection = RecordingSmtp()
+    delivery = SmtpPasswordResetDelivery.from_settings(
+        settings,
+        connection_factory=lambda *_: connection,
+    )
+
+    delivery.send("learner@example.com", "a-valid-reset-token-12345")
+
+    assert connection.login_credentials is None
+
+
 def test_smtp_delivery_sends_fragment_link_without_exposing_credentials(
     tmp_path: Path,
 ) -> None:

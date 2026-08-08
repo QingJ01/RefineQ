@@ -64,7 +64,7 @@ export function AuthPanel({
         // Ignore malformed external input and leave the login form usable.
       } finally {
         window.history.replaceState(
-          null,
+          window.history.state,
           "",
           `${window.location.pathname}${window.location.search}`,
         );

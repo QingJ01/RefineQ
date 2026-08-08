@@ -75,15 +75,16 @@ class SmtpPasswordResetDelivery:
     ) -> SmtpPasswordResetDelivery:
         if not settings.smtp_enabled:
             raise ValueError("SMTP password reset delivery is not configured")
+        username = (settings.smtp_username or "").strip() or None
         return cls(
-            host=settings.smtp_host or "",
+            host=(settings.smtp_host or "").strip(),
             port=settings.smtp_port,
-            from_email=settings.smtp_from_email or "",
-            public_site_url=settings.public_site_url,
-            username=settings.smtp_username,
+            from_email=(settings.smtp_from_email or "").strip(),
+            public_site_url=settings.public_site_url.strip(),
+            username=username,
             password=(
                 settings.smtp_password.get_secret_value()
-                if settings.smtp_password is not None
+                if username is not None and settings.smtp_password is not None
                 else None
             ),
             starttls=settings.smtp_starttls,

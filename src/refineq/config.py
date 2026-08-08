@@ -108,9 +108,17 @@ class Settings(BaseSettings):
     def validate_password_reset_delivery(self) -> Settings:
         """Reject partial SMTP configuration before the API starts."""
 
-        scheme = urlsplit(self.public_site_url).scheme.lower()
-        if scheme not in {"http", "https"}:
-            raise ValueError("public site URL must use HTTP or HTTPS")
+        public_site_url = self.public_site_url.strip()
+        parsed_site_url = urlsplit(public_site_url)
+        if (
+            parsed_site_url.scheme.lower() not in {"http", "https"}
+            or parsed_site_url.hostname is None
+            or parsed_site_url.query
+            or parsed_site_url.fragment
+        ):
+            raise ValueError(
+                "public site URL must be an HTTP(S) URL with a host and no query or fragment"
+            )
 
         host = (self.smtp_host or "").strip()
         sender = (self.smtp_from_email or "").strip()
@@ -126,6 +134,7 @@ class Settings(BaseSettings):
             raise ValueError("SMTP username and password must be configured together")
         if self.smtp_starttls and self.smtp_use_ssl:
             raise ValueError("SMTP STARTTLS and implicit TLS cannot both be enabled")
+        self.public_site_url = public_site_url
         return self
 
     @property
