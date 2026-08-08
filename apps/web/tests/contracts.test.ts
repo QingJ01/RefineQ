@@ -1078,6 +1078,8 @@ describe("plan setting validation", () => {
 describe("recoverable material and Agent interactions", () => {
   it("validates supported learning files before upload", () => {
     expect(validateUploadFile({ name: "notes.md", size: 100 })).toBeNull();
+    expect(validateUploadFile({ name: "notes.markdown", size: 100 })).toBe("unsupported_type");
+    expect(validateUploadFile({ name: "large.pdf", size: 21 * 1024 * 1024 })).toBe("file_too_large");
     expect(validateUploadFile({ name: "image.exe", size: 100 })).toBe("unsupported_type");
     expect(validateUploadFile({ name: "large.pdf", size: 30 * 1024 * 1024 })).toBe("file_too_large");
   });

@@ -42,7 +42,7 @@ import {
 } from "@/lib/coach-actions";
 import { localizeApiError } from "@/lib/error-messages";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
-import { loadModelCapability } from "@/lib/model-capability";
+import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
@@ -165,6 +165,15 @@ export function StudyWorkspace({
     applyWorkspaceSnapshot(snapshot);
     hydratePractice(snapshot);
   }, [applyWorkspaceSnapshot, hydratePractice, resetAgent]);
+
+  const recheckModelCapability = useCallback(async (): Promise<boolean | null> => {
+    const token = auth?.access_token;
+    if (!token) return null;
+    return refreshModelCapability(
+      () => api.getModelSettings(token),
+      setModelConfigured,
+    );
+  }, [auth?.access_token, setModelConfigured]);
 
   useEffect(() => {
     const token = auth?.access_token;
@@ -1144,6 +1153,7 @@ export function StudyWorkspace({
               agentToken={auth.access_token}
               modelConfigured={modelConfigured}
               onModelUnavailable={() => setModelConfigured(false)}
+              onRecheckModel={recheckModelCapability}
               isAdmin={auth.user.role === "admin"}
               onOpenAgentSettings={() => router.push("/admin/integrations/chat")}
               onLearningModeChange={changeLearningMode}

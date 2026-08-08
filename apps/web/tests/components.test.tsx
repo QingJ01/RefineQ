@@ -1122,6 +1122,7 @@ describe("focused learning components", () => {
       <SessionCoach
         locale="zh"
         modelConfigured={null}
+        onRecheck={async () => true}
         onAsk={async () => ({
           session_id: "session-1",
           message: "reply",
@@ -1134,7 +1135,9 @@ describe("focused learning components", () => {
     expect(html).toContain("暂时无法确认学习 Agent 状态");
     expect(html).toContain("本地练习、资料和进度仍可继续使用");
     expect(html).toContain('data-testid="session-coach-input"');
-    expect(html).toContain("disabled");
+    expect(html).toContain('data-testid="coach-recheck"');
+    const input = html.match(/<input[^>]*data-testid="session-coach-input"[^>]*>/)?.[0];
+    expect(input).not.toContain("disabled");
   });
 
   it("makes the complete conversation workspace reachable from today's session", () => {

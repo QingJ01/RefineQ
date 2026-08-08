@@ -30,6 +30,18 @@ describe("localized API errors", () => {
       new ApiError(503, "backup_creation_failed", "Backup could not be created safely"),
       "zh",
     )).toBe("系统备份未能安全创建，请稍后重试。");
+    expect(localizeApiError(
+      new ApiError(415, "unsupported_material", "Unsupported material"),
+      "zh",
+    )).toBe("不支持这种资料格式，请选择 PDF、DOCX、TXT 或 MD 文件。");
+    expect(localizeApiError(
+      new ApiError(413, "material_limit", "Material too large"),
+      "en",
+    )).toBe("The file exceeds the 20 MB upload limit.");
+    expect(localizeApiError(
+      new ApiError(422, "material_extraction_failed", "Could not extract"),
+      "zh",
+    )).toBe("无法读取这份资料的内容，请检查文件后重试。");
   });
 
   it("uses a safe localized fallback for unknown failures", () => {

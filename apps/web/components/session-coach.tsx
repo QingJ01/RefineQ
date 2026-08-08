@@ -7,6 +7,7 @@ import {
   CircleAlert,
   LoaderCircle,
   MessageCircleMore,
+  RotateCcw,
   Settings2,
   Sparkles,
   X,
@@ -34,6 +35,7 @@ const copy = {
     modelMissing: "学习 Agent 尚未配置模型。练习、资料和进度仍可继续使用。",
     modelUnknown: "暂时无法确认学习 Agent 状态。本地练习、资料和进度仍可继续使用。",
     configure: "前往配置",
+    recheck: "重新检测",
     fullCoach: "完整对话与历史",
     applied: "已执行",
     confirm: "这个动作会清空当前题的未提交内容，是否继续？",
@@ -53,6 +55,7 @@ const copy = {
     modelMissing: "The learning Agent has not been configured. Practice, material, and progress remain available.",
     modelUnknown: "The learning Agent status is unavailable. Local practice, material, and progress remain available.",
     configure: "Open settings",
+    recheck: "Check again",
     fullCoach: "Full conversation and history",
     applied: "Applied",
     confirm: "This action will clear the unsubmitted draft for the current question. Continue?",
@@ -176,6 +179,7 @@ export function SessionCoach({
   modelConfigured = true,
   isAdmin = false,
   onConfigure,
+  onRecheck,
   onOpenFullCoach,
   onModelUnavailable,
   onApplyAction,
@@ -186,6 +190,7 @@ export function SessionCoach({
   modelConfigured?: boolean | null;
   isAdmin?: boolean;
   onConfigure?: () => void;
+  onRecheck?: () => void | Promise<boolean | null>;
   onOpenFullCoach?: () => void;
   onModelUnavailable?: () => void;
   onApplyAction?: (
@@ -305,6 +310,15 @@ export function SessionCoach({
               <Settings2 size={14} /> {text.configure}
             </button>
           )}
+          {modelConfigured === null && onRecheck && (
+            <button
+              type="button"
+              data-testid="coach-recheck"
+              onClick={() => void onRecheck()}
+            >
+              <RotateCcw size={14} /> {text.recheck}
+            </button>
+          )}
         </div>
       )}
       {actionState && (
@@ -330,7 +344,7 @@ export function SessionCoach({
             key={suggestion}
             type="button"
             data-testid="session-coach-suggestion"
-            disabled={busy || actionBusy || modelConfigured !== true}
+            disabled={busy || actionBusy || modelConfigured === false}
             onClick={() => void ask(suggestion)}
           >
             {suggestion}
@@ -346,12 +360,12 @@ export function SessionCoach({
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder={text.placeholder}
-          disabled={busy || actionBusy || modelConfigured !== true}
+          disabled={busy || actionBusy || modelConfigured === false}
         />
         <button
           type="submit"
           aria-label={text.send}
-          disabled={busy || actionBusy || !message.trim() || modelConfigured !== true}
+          disabled={busy || actionBusy || !message.trim() || modelConfigured === false}
         >
           {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={17} />}
         </button>

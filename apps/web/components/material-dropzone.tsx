@@ -338,7 +338,7 @@ export function MaterialDropzone({
       >
         <Upload size={28} strokeWidth={1.3} /><strong>{t("chooseFiles")}</strong><span>{t("uploadHint")}</span>
       </button>
-      <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md,.markdown" onChange={(event) => selected(Array.from(event.target.files ?? []))} />
+      <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => selected(Array.from(event.target.files ?? []))} />
 
       {queue.length > 0 && (
         <div className="upload-queue-block">
