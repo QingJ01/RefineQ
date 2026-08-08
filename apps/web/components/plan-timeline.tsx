@@ -13,6 +13,7 @@ export function PlanTimeline({
   onUpdateSession,
   onStartSession,
   busySessionId,
+  practiceBusy = false,
   topicLabels = {},
 }: {
   plan: StudyPlan | null;
@@ -24,6 +25,7 @@ export function PlanTimeline({
   ) => void | Promise<void>;
   onStartSession?: (session: StudySession) => void | Promise<void>;
   busySessionId?: string | null;
+  practiceBusy?: boolean;
   topicLabels?: Record<string, string>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -69,7 +71,7 @@ export function PlanTimeline({
                 type="button"
                 className="plan-start-action"
                 data-testid={`start-session-${session.id}`}
-                disabled={busySessionId === session.id}
+                disabled={practiceBusy || busySessionId === session.id}
                 onClick={() => void onStartSession?.(session)}
               >{t("startSession")}</button>
               <button

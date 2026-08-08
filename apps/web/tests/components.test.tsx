@@ -868,6 +868,66 @@ describe("focused learning components", () => {
     expect(emptyHtml).toContain('data-testid="review-queue-empty"');
   });
 
+  it("keeps insight placeholders honest and disables every practice entry while generating", () => {
+    const reviewHtml = renderToStaticMarkup(
+      <ReviewQueue
+        locale="en"
+        loading
+        busy
+        reviews={[{
+          session_id: "review-1",
+          topic_id: "limits",
+          topic_name: "Limits",
+          due_at: "2026-08-08T08:00:00Z",
+          minutes: 20,
+          overdue: true,
+        }]}
+        onStartReview={() => undefined}
+      />,
+    );
+    const progressHtml = renderToStaticMarkup(
+      <ProgressInsights
+        t={t}
+        loading
+        busy
+        progress={{
+          goal: "Pass calculus",
+          mastery: { limits: 0.3 },
+          topics: { limits: "Limits" },
+          topic_order: ["limits"],
+          diagnostic_count: 0,
+          attempt_count: 0,
+          plan_id: "plan-1",
+        }}
+        onPracticeTopic={() => undefined}
+      />,
+    );
+    const planHtml = renderToStaticMarkup(
+      <PlanTimeline
+        locale="en"
+        t={t}
+        practiceBusy
+        plan={{
+          id: "plan-1",
+          goal: "Pass calculus",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-1",
+            topic_id: "limits",
+            planned_at: "2026-08-09T08:00:00Z",
+            minutes: 45,
+          }],
+        }}
+        onStartSession={() => undefined}
+      />,
+    );
+
+    expect(reviewHtml).toContain('data-testid="review-queue-loading"');
+    expect(progressHtml).toContain('data-testid="progress-insights-loading"');
+    expect(planHtml.match(/data-testid="start-session-session-1"[^>]*disabled/)?.[0]).toBeTruthy();
+  });
+
   it("adds rubric, source, retry, note, and appeal actions to attempt evidence", () => {
     const html = renderToStaticMarkup(
       <EvidenceLedger

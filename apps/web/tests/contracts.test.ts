@@ -14,7 +14,12 @@ import {
   saveLearningLocale,
   saveLearningSession,
 } from "../lib/session";
-import { clearSelectedFiles, validateUploadFile } from "../lib/upload-flow";
+import {
+  clearSelectedFiles,
+  isAbortError,
+  runSerially,
+  validateUploadFile,
+} from "../lib/upload-flow";
 import { resolveRequestedWorkspace } from "../lib/workspace-route-state";
 import {
     buildPlanRows,
@@ -551,6 +556,55 @@ describe("authentication and API errors", () => {
 
     await rejection;
     vi.useRealTimers();
+  });
+
+  it("does not turn a caller cancellation into a timeout or product error", async () => {
+    const controller = new AbortController();
+    const client = new ApiClient("/api", async (_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")));
+    }));
+
+    const pending = client.uploadWorkspaceMaterials(
+      "token-1",
+      "workspace-1",
+      [new File(["notes"], "notes.md")],
+      controller.signal,
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(pending.catch((error) => isAbortError(error))).resolves.toBe(true);
+  });
+
+  it("runs a multi-file upload queue serially", async () => {
+    const events: string[] = [];
+    await runSerially(["one", "two", "three"], async (item) => {
+      events.push(`start:${item}`);
+      await Promise.resolve();
+      events.push(`finish:${item}`);
+    });
+
+    expect(events).toEqual([
+      "start:one", "finish:one",
+      "start:two", "finish:two",
+      "start:three", "finish:three",
+    ]);
+  });
+
+  it("keeps upload cleanup and route redirects explicit in the workspace UI", () => {
+    const materialSource = readFileSync(
+      fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(materialSource).toContain('addEventListener("beforeunload"');
+    expect(materialSource).toContain("controller.abort()");
+    expect(workspaceSource).toContain("setHomeBusy(true)");
+    expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
   });
 
   it("uses the model timeout and stable turn identifiers for Agent chat", async () => {

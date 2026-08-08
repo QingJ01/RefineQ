@@ -11,6 +11,8 @@ export function ProgressInsights({
   insights,
   onSelectTopic,
   topicLabels = {},
+  busy = false,
+  loading = false,
 }: {
   progress: Progress | null;
   t: Translator;
@@ -18,11 +20,17 @@ export function ProgressInsights({
   insights?: LearningInsights | null;
   onSelectTopic?: (topicId: string) => void;
   topicLabels?: Record<string, string>;
+  busy?: boolean;
+  loading?: boolean;
 }) {
   const labels = { ...(progress?.topics ?? {}), ...topicLabels };
   const topics = Object.entries(progress?.mastery ?? {})
     .sort((left, right) => left[1] - right[1]);
   const recommended = topics[0];
+
+  if (loading) {
+    return <section className="content-card progress-insights" data-testid="progress-insights-loading"><div className="empty-note">{t("loading")}</div></section>;
+  }
 
   if (!progress || topics.length === 0) {
     return <div className="empty-note">{t("noProgress")}</div>;
@@ -65,6 +73,7 @@ export function ProgressInsights({
           <button
             type="button"
             data-testid="practice-recommended-topic"
+            disabled={busy}
             onClick={() => void onPracticeTopic?.(recommended[0])}
           >{t("practiceRecommended")}</button>
         </div>

@@ -25,10 +25,14 @@ const copy = {
 export function ReviewQueue({
   locale,
   reviews,
+  busy = false,
+  loading = false,
   onStartReview,
 }: {
   locale: Locale;
   reviews: DueReviewInsight[];
+  busy?: boolean;
+  loading?: boolean;
   onStartReview: (review: DueReviewInsight) => void | Promise<void>;
 }) {
   const text = copy[locale];
@@ -38,7 +42,9 @@ export function ReviewQueue({
         <div><span className="kicker">REVIEW / {String(reviews.length).padStart(2, "0")}</span><h2 id="review-queue-heading">{text.title}</h2></div>
         <RotateCcw size={21} strokeWidth={1.5} />
       </div>
-      {reviews.length === 0 ? (
+      {loading ? (
+        <div className="empty-note" data-testid="review-queue-loading">{locale === "zh" ? "正在同步复习安排…" : "Loading review schedule…"}</div>
+      ) : reviews.length === 0 ? (
         <div className="empty-note" data-testid="review-queue-empty">{text.empty}</div>
       ) : (
         <ol>
@@ -46,7 +52,7 @@ export function ReviewQueue({
             <li key={review.session_id}>
               <div><strong>{review.topic_name}</strong><span><Clock3 size={13} /> {review.minutes} {text.minutes}</span></div>
               <small>{review.overdue ? text.overdue : text.due} · {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(review.due_at))}</small>
-              <button type="button" data-testid={`start-review-${review.session_id}`} onClick={() => void onStartReview(review)}>{text.start} <ArrowRight size={15} /></button>
+              <button type="button" data-testid={`start-review-${review.session_id}`} disabled={busy} onClick={() => void onStartReview(review)}>{text.start} <ArrowRight size={15} /></button>
             </li>
           ))}
         </ol>

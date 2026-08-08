@@ -45,6 +45,7 @@ import { localizeApiError } from "@/lib/error-messages";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
+import { isAbortError } from "@/lib/upload-flow";
 import {
   clearLearningSession,
   loadLearningSession,
@@ -149,6 +150,7 @@ export function StudyWorkspace({
   const [homeBusy, setHomeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
+  const [insightsLoading, setInsightsLoading] = useState(false);
   const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
@@ -180,12 +182,19 @@ export function StudyWorkspace({
     const workspaceId = workspace?.id;
     if ((section !== "progress" && section !== "today") || !token || !workspaceId) return;
     let active = true;
-    void api.getWorkspaceInsights(token, workspaceId)
+    void Promise.resolve()
+      .then(() => {
+        if (active) setInsightsLoading(true);
+        return api.getWorkspaceInsights(token, workspaceId);
+      })
       .then((loaded) => {
         if (active) setInsights(loaded);
       })
       .catch((caught) => {
         if (active) setError(localizeApiError(caught, locale));
+      })
+      .finally(() => {
+        if (active) setInsightsLoading(false);
       });
     return () => { active = false; };
   }, [auth?.access_token, locale, section, setError, setInsights, workspace?.id]);
@@ -202,6 +211,7 @@ export function StudyWorkspace({
 
   const redirectUnavailableWorkspace = useCallback(() => {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+    setHomeBusy(true);
     setWorkspace(null);
     setRoute(null);
     setPreviousWorkspaceId(null);
@@ -647,6 +657,7 @@ export function StudyWorkspace({
       });
       return uploaded;
     } catch (caught) {
+      if (isAbortError(caught)) return [];
       reportError(caught);
       return [];
     }
@@ -1183,6 +1194,8 @@ export function StudyWorkspace({
             <ReviewQueue
               locale={locale}
               reviews={insights?.due_reviews ?? []}
+              busy={practiceBusy}
+              loading={insightsLoading}
               onStartReview={startReview}
             />
           )}
@@ -1209,6 +1222,7 @@ export function StudyWorkspace({
                 t={t}
                 onUpdateSession={(session, input) => { void updatePlanSession(session, input); }}
                 onStartSession={(session) => practiceTopic(session.topic_id)}
+                practiceBusy={practiceBusy}
                 busySessionId={busySessionId}
                 topicLabels={progress?.topics}
               />
@@ -1250,6 +1264,8 @@ export function StudyWorkspace({
               <ReviewQueue
                 locale={locale}
                 reviews={insights?.due_reviews ?? []}
+                busy={practiceBusy}
+                loading={insightsLoading}
                 onStartReview={startReview}
               />
               <ProgressInsights
@@ -1259,6 +1275,8 @@ export function StudyWorkspace({
                 topicLabels={progress?.topics}
                 insights={insights}
                 onSelectTopic={setSelectedTopicId}
+                busy={practiceBusy}
+                loading={insightsLoading}
               />
               {selectedTopic && (
                 <ProgressTopicDetail
