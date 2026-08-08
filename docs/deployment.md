@@ -143,6 +143,7 @@ ports 8000, 3000, or 5432.
 ```powershell
 docker compose --env-file .env -f infra/compose.yml ps
 Invoke-RestMethod http://localhost/api/health/ready
+Invoke-RestMethod http://localhost/health/ready
 ```
 
 Expected checks are `storage: ok` and `database: ok`. Then smoke-test registration, admin login,

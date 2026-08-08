@@ -28,6 +28,7 @@ services:
       dockerfile: infra/Dockerfile.api
     environment:
       REFINEQ_DATA_ROOT: /data
+      REFINEQ_BACKUP_ROOT: "${REFINEQ_BACKUP_ROOT:-/backups}"
       REFINEQ_DATABASE_URL: "${REFINEQ_DATABASE_URL:-postgresql+psycopg://refineq:refineq-local-change-me@database:5432/refineq}"
       REFINEQ_HOST: 0.0.0.0
       REFINEQ_PORT: 8000
@@ -73,6 +74,7 @@ services:
       REFINEQ_RATE_LIMIT_WINDOW_SECONDS: "${REFINEQ_RATE_LIMIT_WINDOW_SECONDS:-60}"
     volumes:
       - refineq-data:/data
+      - refineq-backups:/backups
     depends_on:
       database:
         condition: service_healthy
@@ -146,6 +148,7 @@ networks:
 
 volumes:
   refineq-data:
+  refineq-backups:
   refineq-postgres:
   caddy-data:
   caddy-config:

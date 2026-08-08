@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     )
 
     data_root: Path = Field(default_factory=lambda: Path("data").resolve())
+    backup_root: Path | None = None
     database_url: SecretStr | None = None
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
@@ -79,6 +80,13 @@ class Settings(BaseSettings):
 
         return value.expanduser().resolve()
 
+    @field_validator("backup_root", mode="after")
+    @classmethod
+    def resolve_backup_root(cls, value: Path | None) -> Path | None:
+        """Normalize an explicit durable-backup location."""
+
+        return None if value is None else value.expanduser().resolve()
+
     @field_validator("model_encryption_key", mode="after")
     @classmethod
     def validate_model_encryption_key(cls, value: SecretStr | None) -> SecretStr | None:
@@ -134,6 +142,8 @@ class Settings(BaseSettings):
             raise ValueError("SMTP username and password must be configured together")
         if self.smtp_starttls and self.smtp_use_ssl:
             raise ValueError("SMTP STARTTLS and implicit TLS cannot both be enabled")
+        if self.resolved_backup_root.is_relative_to(self.data_root):
+            raise ValueError("backup root must be outside the data root")
         self.public_site_url = public_site_url
         return self
 
@@ -145,6 +155,14 @@ class Settings(BaseSettings):
             return self.database_url.get_secret_value().strip()
         database_path = self.data_root / "system" / "refineq.sqlite3"
         return f"sqlite+pysqlite:///{database_path.as_posix()}"
+
+    @property
+    def resolved_backup_root(self) -> Path:
+        """Return a backup location that cannot be captured inside its own archive."""
+
+        if self.backup_root is not None:
+            return self.backup_root
+        return (self.data_root.parent / f"{self.data_root.name}-backups").resolve()
 
     @property
     def smtp_enabled(self) -> bool:

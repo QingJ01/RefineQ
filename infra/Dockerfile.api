@@ -9,8 +9,8 @@ WORKDIR /app
 
 RUN addgroup --system refineq \
     && adduser --system --ingroup refineq --home /home/refineq refineq \
-    && mkdir -p /data \
-    && chown refineq:refineq /data
+    && mkdir -p /data /backups \
+    && chown refineq:refineq /data /backups
 
 COPY pyproject.toml requirements-build.lock requirements.lock README.md LICENSE ./
 COPY src ./src
@@ -23,7 +23,7 @@ USER refineq
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=5s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"
 
 CMD ["python", "-m", "refineq"]
