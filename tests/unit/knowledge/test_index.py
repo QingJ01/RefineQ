@@ -63,6 +63,25 @@ def test_search_is_isolated_by_owner_and_project(tmp_path: Path) -> None:
     assert "local rate" in results[0].text
 
 
+def test_search_matches_chinese_topic_terms_without_whitespace(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="learner",
+        project_id="computer-architecture",
+        material_id="pipeline-notes",
+        filename="pipeline.txt",
+        text="流水线重叠执行多条指令的不同阶段，数据冒险可用转发或停顿处理。",
+    )
+
+    results = index.search(
+        owner_id="learner",
+        project_id="computer-architecture",
+        query="流水线与冒险",
+    )
+
+    assert [result.material_id for result in results] == ["pipeline-notes"]
+
+
 def test_reindexing_one_material_replaces_its_old_chunks(tmp_path: Path) -> None:
     index = KnowledgeIndex(tmp_path)
     inputs = {

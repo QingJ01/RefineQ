@@ -37,6 +37,23 @@ from refineq.storage.json_store import validate_identifier
 logger = logging.getLogger(__name__)
 
 
+def _lexical_terms(query: str) -> list[str]:
+    """Return bounded search terms, including bigrams for unsegmented CJK text."""
+
+    segments = re.findall(
+        r"[\u3400-\u4dbf\u4e00-\u9fff]+|[^\W_]+",
+        query.casefold(),
+        flags=re.UNICODE,
+    )
+    terms: list[str] = []
+    for segment in segments:
+        if re.fullmatch(r"[\u3400-\u4dbf\u4e00-\u9fff]+", segment):
+            terms.extend(segment[index : index + 2] for index in range(max(1, len(segment) - 1)))
+        else:
+            terms.append(segment)
+    return list(dict.fromkeys(term for term in terms if term))[:20]
+
+
 def _postgres_cosine_distance(column: object, query_embedding: list[float]):
     """Apply pgvector operators when shared metadata uses a SQLite JSON fallback."""
 
@@ -405,10 +422,10 @@ class KnowledgeIndex:
         query_lower = query.strip().casefold()
         if not query_lower:
             raise ValueError("Search query must contain a word")
-        tokens = re.findall(r"\w+", query_lower, flags=re.UNICODE)
-        if not tokens:
+        terms = _lexical_terms(query_lower)
+        if not terms:
             raise ValueError("Search query must contain a word")
-        score = sum(content_lower.count(token) for token in tokens[:20])
+        score = sum(content_lower.count(term) for term in terms)
         if query_lower in content_lower:
             score += 2
         return float(score)
@@ -502,6 +519,9 @@ class KnowledgeIndex:
         query = query.strip()
         if not query:
             raise ValueError("Search query must contain a word")
+        lexical_terms = _lexical_terms(query)
+        if not lexical_terms:
+            raise ValueError("Search query must contain a word")
         bounded_limit = max(1, min(limit, 50))
         candidate_limit = max(50, bounded_limit * 8)
         query_embedding = self._query_embedding(query)
@@ -516,10 +536,18 @@ class KnowledgeIndex:
                 search_config = literal_column("'simple'::regconfig")
                 search_query = func.websearch_to_tsquery(search_config, query)
                 search_document = func.to_tsvector(search_config, material_chunks.c.content)
-                escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                substring_match = material_chunks.c.content.ilike(
-                    f"%{escaped_query}%",
-                    escape="\\",
+                escaped_terms = (
+                    term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    for term in lexical_terms
+                )
+                substring_match = or_(
+                    *(
+                        material_chunks.c.content.ilike(
+                            f"%{term}%",
+                            escape="\\",
+                        )
+                        for term in escaped_terms
+                    )
                 )
                 lexical_rank = func.greatest(
                     func.ts_rank_cd(search_document, search_query),

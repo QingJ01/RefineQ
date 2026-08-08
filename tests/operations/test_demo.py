@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from refineq.database.engine import Database
+from refineq.knowledge.index import KnowledgeIndex
 from refineq.operations.demo import seed_demo
 from refineq.storage.learning import LearningRepository
 from refineq.storage.sql_store import SqlRecordStore
@@ -45,15 +46,20 @@ def test_seed_demo_uses_supplied_database_and_is_idempotent(tmp_path: Path) -> N
     assert second_record.data["progress"]["diagnostic_runs"] == ["demo-diagnostic"]
     assert len(second_record.data["attempts"]) == 1
     assert second_record.data["progress"]["plan"] is not None
-    assert (
-        WorkspaceRepository(store)
-        .get(
-            first.owner_id,
-            first.workspace_id,
-        )
-        .title
-        == "Calculus Sprint"
+    workspace = WorkspaceRepository(store).get(
+        first.owner_id,
+        first.workspace_id,
     )
+    assert workspace.title == "计算机组成原理冲刺"
+    assert workspace.subject == "计算机组成原理"
+    assert workspace.topics == ["流水线", "缓存", "存储层次"]
+    assert "仅用于演示" in workspace.routing_summary
+    material = KnowledgeIndex(database).get_material(
+        owner_id=first.owner_id,
+        project_id=first.workspace_id,
+        material_id="demo-material",
+    )
+    assert material.filename == "computer-architecture-notes.txt"
     assert not (data_root / "users" / first.owner_id / "projects").exists()
     assert not (data_root / "system" / "refineq.sqlite3").exists()
     database.close()
