@@ -273,28 +273,29 @@ class WorkspaceService:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
 
     def delete(self, owner_id: str, workspace_id: str) -> None:
-        try:
-            self._workspaces.get(owner_id, workspace_id)
-        except RecordNotFoundError as error:
-            raise WorkspaceNotFoundError("Learning workspace not found") from error
-        for material in self._knowledge.list_materials(
-            owner_id=owner_id,
-            project_id=workspace_id,
-        ):
-            storage_key = self._knowledge.get_material_storage_key(
+        with self._learning.plan_transaction(owner_id, workspace_id):
+            try:
+                self._workspaces.get(owner_id, workspace_id)
+            except RecordNotFoundError as error:
+                raise WorkspaceNotFoundError("Learning workspace not found") from error
+            for material in self._knowledge.list_materials(
                 owner_id=owner_id,
                 project_id=workspace_id,
-                material_id=material.id,
-            )
-            self._object_storage.delete(storage_key)
-            self._knowledge.delete_material(
-                owner_id=owner_id,
-                project_id=workspace_id,
-                material_id=material.id,
-            )
-        self._learning.delete(owner_id, workspace_id)
-        self._sessions.delete_for_workspace(owner_id, workspace_id)
-        self._workspaces.delete(owner_id, workspace_id)
+            ):
+                storage_key = self._knowledge.get_material_storage_key(
+                    owner_id=owner_id,
+                    project_id=workspace_id,
+                    material_id=material.id,
+                )
+                self._object_storage.delete(storage_key)
+                self._knowledge.delete_material(
+                    owner_id=owner_id,
+                    project_id=workspace_id,
+                    material_id=material.id,
+                )
+            self._learning.delete(owner_id, workspace_id)
+            self._sessions.delete_for_workspace(owner_id, workspace_id)
+            self._workspaces.delete(owner_id, workspace_id)
 
     def snapshot(self, owner_id: str, workspace_id: str) -> WorkspaceSnapshot:
         try:

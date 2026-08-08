@@ -322,6 +322,33 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             },
         )
         assert completed_review.status_code == 200
+        regenerated = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=alice_headers,
+            json={
+                "goal": snapshot["workspace"]["goal"],
+                "exam_at": (datetime.now(UTC) + timedelta(days=5)).isoformat(),
+                "daily_minutes": 30,
+                "topic_order": list(snapshot["progress"]["topics"]),
+                "regenerate": True,
+            },
+        )
+        assert regenerated.status_code == 200
+        retried_review = client.post(
+            f"/workspaces/{workspace_id}/learning/questions/{review_question.json()['id']}/retry",
+            headers=alice_headers,
+        )
+        assert retried_review.status_code == 200
+        resubmitted_review = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=alice_headers,
+            json={
+                "attempt_id": "retried-review-attempt",
+                "question_id": retried_review.json()["id"],
+                "answer": "A fresh answer should not depend on the old review schedule entry.",
+            },
+        )
+        assert resubmitted_review.status_code == 200
         after_review = client.get(
             f"/workspaces/{workspace_id}/learning/insights",
             headers=alice_headers,
@@ -388,6 +415,7 @@ def test_attempt_question_snapshot_survives_history_pruning(
         assert first_question is not None
         stored = app.state.learning.get(learner["user_id"], workspace_id).data
         assert first_question["id"] not in stored["progress"]["question_history"]
+        history_size = len(stored["progress"]["question_history"])
         insights = client.get(
             f"/workspaces/{workspace_id}/learning/insights",
             headers=headers,
@@ -404,3 +432,5 @@ def test_attempt_question_snapshot_survives_history_pruning(
     assert restored_attempt["question_prompt"] == first_question["prompt"]
     assert retried.status_code == 200
     assert retried.json()["prompt"] == first_question["prompt"]
+    stored_after_retry = app.state.learning.get(learner["user_id"], workspace_id).data
+    assert len(stored_after_retry["progress"]["question_history"]) == history_size

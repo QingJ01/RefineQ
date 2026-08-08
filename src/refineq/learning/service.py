@@ -776,20 +776,21 @@ class LearningService:
             nonlocal saved_at, selected
             progress = self._progress(data)
             history = progress.setdefault("question_history", {})
-            selected = history.get(question_id)
-            if selected is None:
-                selected = next(
+            stored_question = history.get(question_id)
+            if stored_question is None:
+                stored_question = next(
                     (
-                        deepcopy(attempt["question_snapshot"])
+                        attempt["question_snapshot"]
                         for attempt in data.get("attempts", {}).values()
                         if attempt.get("question_id") == question_id
                         and attempt.get("question_snapshot") is not None
                     ),
                     None,
                 )
-            if selected is None:
+            if stored_question is None:
                 raise QuestionNotFoundError("Practice question not found")
-            history[question_id] = deepcopy(selected)
+            selected = deepcopy(stored_question)
+            selected.pop("review_session_id", None)
             progress["pending_question"] = deepcopy(selected)
             saved_at = progress.get("saved_questions", {}).get(question_id)
             return data

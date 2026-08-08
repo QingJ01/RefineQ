@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from refineq.api.app import create_app
 from refineq.config import Settings
 from refineq.learning.service import AnswerRequest, PlanUpdateRequest
+from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
 
 
@@ -684,6 +685,65 @@ def test_workspace_plan_update_rolls_back_when_goal_sync_fails(
         {session.id for session in after.plan.sessions}
     )
     assert after.workspace == before.workspace
+
+
+def test_workspace_delete_waits_for_plan_update_and_leaves_no_orphan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app):
+        user = app.state.identity.register(
+            email="delete-plan-race@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Learner",
+        )
+        workspace = app.state.workspace_service.resolve(
+            user.id,
+            WorkspaceResolveRequest(intent="Prepare calculus"),
+        ).workspace
+        before = app.state.workspace_service.snapshot(user.id, workspace.id)
+        entered = Event()
+        release = Event()
+
+        def fail_update(*args, **kwargs):
+            del args, kwargs
+            entered.set()
+            assert release.wait(timeout=5)
+            raise RuntimeError("simulated workspace write failure")
+
+        monkeypatch.setattr(app.state.workspaces, "update", fail_update)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            plan_future = executor.submit(
+                app.state.workspace_service.update_plan,
+                user.id,
+                workspace.id,
+                PlanUpdateRequest(
+                    goal="A concurrent plan update",
+                    exam_at=datetime.now(UTC) + timedelta(days=5),
+                    daily_minutes=30,
+                    topic_order=list(before.progress.topics),
+                    regenerate=True,
+                ),
+            )
+            assert entered.wait(timeout=5)
+            delete_future = executor.submit(
+                app.state.workspace_service.delete,
+                user.id,
+                workspace.id,
+            )
+            time.sleep(0.05)
+            assert not delete_future.done()
+            release.set()
+            with pytest.raises(RuntimeError, match="simulated workspace write failure"):
+                plan_future.result(timeout=5)
+            delete_future.result(timeout=5)
+
+        with pytest.raises(RecordNotFoundError):
+            app.state.learning.get(user.id, workspace.id)
+        with pytest.raises(RecordNotFoundError):
+            app.state.workspaces.get(user.id, workspace.id)
 
 
 def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:
