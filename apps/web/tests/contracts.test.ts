@@ -210,6 +210,29 @@ describe("responsive learning workspace layout", () => {
       /\.learning-progress-view\s*\{[^}]*grid-template-columns: minmax\(0, 1\.35fr\) minmax\(320px, 0\.65fr\)/s,
     );
   });
+
+  it("keeps mobile section context, shortcuts, focus, and task actions explicit", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const canvasSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-session-canvas.tsx", import.meta.url)),
+      "utf8",
+    );
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource).toContain('data-testid="mobile-section-context"');
+    expect(workspaceSource).toContain('data-testid={`mobile-shortcut-${id}`}');
+    expect(workspaceSource).toContain("sectionHeadingRef.current?.focus");
+    expect(canvasSource).toContain('data-testid="mobile-sticky-task-action"');
+    expect(styles).toMatch(/\.mobile-context-shortcuts a\s*\{[^}]*min-height: 44px/s);
+    expect(styles).toMatch(/\.mobile-sticky-task-action[^}]*position: sticky/s);
+    expect(styles).toMatch(/\.session-task > label[^}]*font-size: 12px/s);
+  });
 });
 
 

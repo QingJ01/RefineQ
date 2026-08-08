@@ -108,6 +108,7 @@ describe("focused learning components", () => {
     );
 
     expect(html).toContain('data-testid="learning-session-canvas"');
+    expect(html).toContain('data-testid="mobile-sticky-task-action"');
     expect(html).toContain('data-testid="learning-mode-case"');
     expect(html).toContain("目标校准");
     expect(html).toContain("案例拆解");

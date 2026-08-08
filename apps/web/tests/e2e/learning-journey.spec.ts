@@ -150,6 +150,20 @@ test("learner completes and restores a capability learning journey", async ({ pa
     for (const testId of ["nav-today", "nav-path", "nav-materials", "nav-progress"]) {
       await expect(page.getByTestId(testId)).toHaveAccessibleName(/.+/);
     }
+    await expect(page.getByTestId("mobile-section-context")).toBeVisible();
+    await expect(page.getByTestId("mobile-section-title")).toContainText(/Path|路径/);
+    const materialsShortcut = page.getByTestId("mobile-shortcut-materials");
+    expect((await materialsShortcut.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await materialsShortcut.click();
+    await expect(page).toHaveURL(/\/materials$/);
+    await expect(page.getByTestId("mobile-section-title")).toBeFocused();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.getByTestId("mobile-shortcut-today").click();
+    await expect(page.getByTestId("mobile-sticky-task-action")).toBeVisible();
+    await expect(page.getByTestId("mobile-sticky-task-action")).toHaveCSS("position", "sticky");
+    await page.getByTestId("mobile-shortcut-path").click();
     await page.screenshot({ path: testInfo.outputPath("capability-learning-mobile.png") });
     await page.setViewportSize({ width: 1440, height: 1024 });
   });

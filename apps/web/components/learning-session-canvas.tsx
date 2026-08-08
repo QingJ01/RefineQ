@@ -267,15 +267,17 @@ export function LearningSessionCanvas({
                 <div><Target size={17} /><span>{text.capability}</span><strong>{workspace.goal}</strong></div>
                 <div><Layers3 size={17} /><span>{text.currentOutput}</span><strong>{text.outputHint}</strong></div>
               </section>
-              <button
-                type="button"
-                className="primary-action session-primary"
-                data-testid="session-start-task"
-                disabled={busy}
-                onClick={() => void onStartTask()}
-              >
-                {text.startTask} <ArrowRight size={18} />
-              </button>
+              <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
+                <button
+                  type="button"
+                  className="primary-action session-primary"
+                  data-testid="session-start-task"
+                  disabled={busy}
+                  onClick={() => void onStartTask()}
+                >
+                  {text.startTask} <ArrowRight size={18} />
+                </button>
+              </div>
             </article>
           )}
 
@@ -326,15 +328,17 @@ export function LearningSessionCanvas({
                 <button type="button" className="secondary-action" data-testid="skip-question" disabled={busy} onClick={() => void onNextTask()}>
                   <RotateCcw size={16} /> {text.replace}
                 </button>
-                <button
-                  type="button"
-                  className="primary-action"
-                  data-testid="submit-answer"
-                  disabled={busy || !answer.trim()}
-                  onClick={() => void onSubmit()}
-                >
-                  {text.submit} <ArrowRight size={18} />
-                </button>
+                <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
+                  <button
+                    type="button"
+                    className="primary-action"
+                    data-testid="submit-answer"
+                    disabled={busy || !answer.trim()}
+                    onClick={() => void onSubmit()}
+                  >
+                    {text.submit} <ArrowRight size={18} />
+                  </button>
+                </div>
               </div>
             </article>
           )}
@@ -382,9 +386,11 @@ export function LearningSessionCanvas({
                     : text.reviewHint}</span>
                 </div>
               </div>
-              <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
-                {text.next} <ArrowRight size={18} />
-              </button>
+              <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
+                <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
+                  {text.next} <ArrowRight size={18} />
+                </button>
+              </div>
             </article>
           )}
         </main>

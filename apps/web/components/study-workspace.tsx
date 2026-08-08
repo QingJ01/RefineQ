@@ -68,6 +68,7 @@ import type {
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
 
 const ROUTE_NOTICE_KEY = "refineq.workspace-route-notice";
+const SECTION_FOCUS_KEY = "refineq.section-focus";
 
 
 export function StudyWorkspace({
@@ -108,6 +109,7 @@ export function StudyWorkspace({
   const [showArchived, setShowArchived] = useState(false);
   const questionRequestIdRef = useRef<string | null>(null);
   const attemptIdRef = useRef<string | null>(null);
+  const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
 
   function reportError(caught: unknown) {
     setError(localizeApiError(caught, locale));
@@ -156,6 +158,14 @@ export function StudyWorkspace({
       });
     return () => { active = false; };
   }, [auth?.access_token, locale, section, workspace?.id]);
+
+  useEffect(() => {
+    if (window.sessionStorage.getItem(SECTION_FOCUS_KEY) !== "1") return;
+    window.sessionStorage.removeItem(SECTION_FOCUS_KEY);
+    window.requestAnimationFrame(() => {
+      sectionHeadingRef.current?.focus({ preventScroll: true });
+    });
+  }, [section]);
 
   const redirectUnavailableWorkspace = useCallback(() => {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
@@ -750,6 +760,13 @@ export function StudyWorkspace({
     setPreviousWorkspaceId(null);
   }
 
+  function prepareSectionNavigation() {
+    prepareRouteNavigation();
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      window.sessionStorage.setItem(SECTION_FOCUS_KEY, "1");
+    }
+  }
+
   function prepareHomeNavigation() {
     prepareRouteNavigation();
     if (auth) {
@@ -876,7 +893,7 @@ export function StudyWorkspace({
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
               href={learningPath(workspace.id, id)}
-              onClick={prepareRouteNavigation}
+              onClick={prepareSectionNavigation}
               aria-label={t(id)}
               aria-current={section === id ? "page" : undefined}
             >
@@ -909,6 +926,27 @@ export function StudyWorkspace({
         </div>
       </aside>
       <section className="workspace-stage">
+        <header className="mobile-section-context" data-testid="mobile-section-context">
+          <div>
+            <span>{workspace.title}</span>
+            <h1 ref={sectionHeadingRef} tabIndex={-1} data-testid="mobile-section-title">{t(section)}</h1>
+          </div>
+          <nav className="mobile-context-shortcuts" aria-label={t("workspaceSections")}>
+            {nav.map(({ id, icon: Icon }) => (
+              <Link
+                key={id}
+                data-testid={`mobile-shortcut-${id}`}
+                className={section === id ? "active" : ""}
+                href={learningPath(workspace.id, id)}
+                onClick={prepareSectionNavigation}
+                aria-current={section === id ? "page" : undefined}
+              >
+                <Icon size={15} />
+                <span>{t(id)}</span>
+              </Link>
+            ))}
+          </nav>
+        </header>
         {section !== "today" && (
           <header className="workspace-header">
             <div>

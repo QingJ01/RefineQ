@@ -724,6 +724,10 @@
   margin-left: auto;
 }
 
+.mobile-sticky-task-action {
+  display: contents;
+}
+
 .feedback-score {
   display: flex;
   align-items: center;
@@ -2675,6 +2679,10 @@ textarea:focus {
 
 .workspace-stage {
   min-width: 0;
+}
+
+.mobile-section-context {
+  display: none;
 }
 
 .workspace-header {
@@ -5876,12 +5884,88 @@ textarea:focus {
     padding: 8px 10px;
   }
 
+  .workspace-shell,
+  .workspace-stage,
+  .workspace-content,
+  .learning-session-canvas,
+  .session-layout,
+  .session-main {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .workspace-stage {
+    overflow-x: clip;
+  }
+
+  .mobile-section-context {
+    display: grid;
+    gap: 12px;
+    padding: 16px 16px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .mobile-section-context > div > span {
+    display: block;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-section-context h1 {
+    margin: 3px 0 0;
+    outline: 0;
+    font-size: 24px;
+    line-height: 1.15;
+  }
+
+  .mobile-section-context h1:focus-visible {
+    border-radius: 4px;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  .mobile-context-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .mobile-context-shortcuts a {
+    min-width: 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border-radius: 9px;
+    color: var(--muted-strong);
+    font-size: 12px;
+    text-decoration: none;
+  }
+
+  .mobile-context-shortcuts a.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 680;
+  }
+
+  .mobile-context-shortcuts a span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .workspace-sidebar > .sidebar-brand {
     display: none;
   }
 
   .workspace-nav a {
     min-width: 40px;
+    min-height: 44px;
     justify-content: center;
     padding: 0 9px;
   }
@@ -5891,7 +5975,8 @@ textarea:focus {
   }
 
   .sidebar-actions .quiet-button {
-    width: 36px;
+    width: 44px;
+    min-height: 44px;
     overflow: hidden;
     gap: 0;
     padding: 0;
@@ -6226,6 +6311,41 @@ textarea:focus {
 @media (max-width: 640px) {
   .workspace-content.workspace-content-today {
     padding: 0;
+  }
+
+  .session-time,
+  .session-steps small,
+  .session-context p,
+  .session-context span,
+  .session-task-framework span,
+  .session-task > label,
+  .context-empty,
+  .session-method-summary p {
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .session-mode-bar button,
+  .session-task-actions button,
+  .context-link {
+    min-height: 44px;
+  }
+
+  .mobile-sticky-task-action {
+    position: sticky;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 12;
+    display: block;
+    flex: 1 0 100%;
+    grid-column: 1 / -1;
+    margin-top: 14px;
+  }
+
+  .mobile-sticky-task-action .primary-action {
+    width: 100%;
+    min-height: 48px;
+    margin-left: 0;
+    box-shadow: 0 8px 24px rgba(26, 32, 44, 0.16);
   }
 
   .material-filter-grid,
