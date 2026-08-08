@@ -9,11 +9,16 @@ from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
 from refineq.learning.service import (
     AnswerRequest,
     AnswerResponse,
+    AttemptFeedbackRequest,
+    AttemptFeedbackResponse,
+    AttemptNotFoundError,
     DiagnosticRequest,
     LearningConflictError,
+    LearningInsightsResponse,
     LearningNotSeededError,
     LearningServiceError,
     PlanSessionUpdate,
+    PlanUpdateRequest,
     ProgressResponse,
     ProjectNotFoundError,
     QuestionNotFoundError,
@@ -23,6 +28,7 @@ from refineq.learning.service import (
     SavedQuestionResponse,
     SeedRequest,
 )
+from refineq.workspaces.service import WorkspaceNotFoundError
 
 router = APIRouter(prefix="/projects/{project_id}/learning", tags=["learning"])
 workspace_router = APIRouter(
@@ -32,7 +38,7 @@ workspace_router = APIRouter(
 
 
 def _raise_api_error(error: LearningServiceError) -> None:
-    if isinstance(error, (ProjectNotFoundError, QuestionNotFoundError)):
+    if isinstance(error, (ProjectNotFoundError, QuestionNotFoundError, AttemptNotFoundError)):
         status_code = status.HTTP_404_NOT_FOUND
     elif isinstance(error, (LearningNotSeededError, LearningConflictError)):
         status_code = status.HTTP_409_CONFLICT
@@ -94,6 +100,7 @@ def create_question(
             learning_mode=payload.mode,
             replace_pending=payload.replace,
             request_id=payload.request_id,
+            review_session_id=payload.review_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -115,6 +122,7 @@ def create_workspace_question(
             learning_mode=payload.mode,
             replace_pending=payload.replace,
             request_id=payload.request_id,
+            review_session_id=payload.review_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -196,6 +204,63 @@ def saved_workspace_questions(
         _raise_api_error(error)
 
 
+@workspace_router.post(
+    "/questions/{question_id}/retry",
+    response_model=QuestionResponse,
+)
+def retry_workspace_question(
+    workspace_id: str,
+    question_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> QuestionResponse:
+    try:
+        return request.app.state.workspace_learning_service.retry_question(
+            user.id,
+            workspace_id,
+            question_id,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.patch(
+    "/attempts/{attempt_id}/feedback",
+    response_model=AttemptFeedbackResponse,
+)
+def update_workspace_attempt_feedback(
+    workspace_id: str,
+    attempt_id: str,
+    payload: AttemptFeedbackRequest,
+    request: Request,
+    user: CurrentUser,
+) -> AttemptFeedbackResponse:
+    try:
+        return request.app.state.workspace_learning_service.update_attempt_feedback(
+            user.id,
+            workspace_id,
+            attempt_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.get("/insights", response_model=LearningInsightsResponse)
+def workspace_insights(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> LearningInsightsResponse:
+    try:
+        return request.app.state.workspace_learning_service.insights(
+            user.id,
+            workspace_id,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
 @workspace_router.put(
     "/questions/{question_id}/saved",
     response_model=SavedQuestionResponse,
@@ -236,6 +301,28 @@ def update_workspace_plan_session(
             session_id,
             payload,
         )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.put("/plan", response_model=StudyPlan)
+def update_workspace_plan(
+    workspace_id: str,
+    payload: PlanUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> StudyPlan:
+    try:
+        return request.app.state.workspace_service.update_plan(
+            user.id,
+            workspace_id,
+            payload,
+        )
+    except WorkspaceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
     except LearningServiceError as error:
         _raise_api_error(error)
 

@@ -6,11 +6,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
+import pytest
 from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.learning.service import AnswerRequest, PlanUpdateRequest
+from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
 
 
@@ -477,6 +481,268 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
             headers=headers,
         ).json()["plan"]["sessions"][0]
         assert restored == rescheduled.json()
+
+
+def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_request(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    exam_at = datetime.now(UTC) + timedelta(days=8)
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": "Prepare for a calculus exam covering limits and derivatives",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 25,
+            },
+        ).json()["workspace"]
+        workspace_id = created["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        original_plan = snapshot["plan"]
+        original_sessions = original_plan["sessions"]
+        topic_order = list(reversed(list(snapshot["progress"]["topics"])))
+
+        completed = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{original_sessions[0]['id']}",
+            headers=headers,
+            json={"status": "completed"},
+        )
+        assert completed.status_code == 200
+
+        saved = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": "Pass the calculus final with confident problem solving",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 35,
+                "topic_order": topic_order,
+                "regenerate": False,
+            },
+        )
+        assert saved.status_code == 200
+        assert saved.json()["id"] == original_plan["id"]
+        assert [item["id"] for item in saved.json()["sessions"]] == [
+            item["id"] for item in original_sessions
+        ]
+        assert saved.json()["sessions"][0]["status"] == "completed"
+        assert saved.json()["goal"] == "Pass the calculus final with confident problem solving"
+        assert saved.json()["daily_minutes"] == 35
+
+        regenerated = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": "Pass the calculus final with confident problem solving",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 35,
+                "topic_order": topic_order,
+                "regenerate": True,
+            },
+        )
+        assert regenerated.status_code == 200
+        assert regenerated.json()["id"] != original_plan["id"]
+        assert [item["id"] for item in regenerated.json()["sessions"]] != [
+            item["id"] for item in original_sessions
+        ]
+        assert sum(item["status"] == "completed" for item in regenerated.json()["sessions"]) == 1
+
+        restored = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert restored["workspace"]["goal"] == saved.json()["goal"]
+        assert restored["progress"]["goal"] == saved.json()["goal"]
+        assert restored["progress"]["topic_order"] == topic_order
+        assert restored["plan"] == regenerated.json()
+
+        bob = client.post(
+            "/auth/register",
+            json={
+                "email": "plan-settings-bob@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Bob",
+            },
+        ).json()
+        forbidden = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers={"Authorization": f"Bearer {bob['access_token']}"},
+            json={
+                "goal": "Stolen plan",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 20,
+                "topic_order": topic_order,
+                "regenerate": True,
+            },
+        )
+
+    assert forbidden.status_code == 404
+
+
+def test_workspace_plan_update_rejects_invalid_topic_membership(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Prepare calculus"},
+        ).json()["workspace"]["id"]
+        response = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": "Prepare calculus",
+                "exam_at": (datetime.now(UTC) + timedelta(days=5)).isoformat(),
+                "daily_minutes": 30,
+                "topic_order": ["not-a-workspace-topic"],
+                "regenerate": True,
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "learning_conflict"
+
+
+def test_workspace_plan_update_rolls_back_when_goal_sync_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Prepare calculus"},
+        ).json()["workspace"]["id"]
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "rollback-question"},
+        ).json()
+        before = app.state.workspace_service.snapshot(owner_id, workspace_id)
+        entered = Event()
+        release = Event()
+
+        def fail_update(*args, **kwargs):
+            del args, kwargs
+            entered.set()
+            assert release.wait(timeout=5)
+            raise RuntimeError("simulated workspace write failure")
+
+        monkeypatch.setattr(app.state.workspaces, "update", fail_update)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            plan_future = executor.submit(
+                app.state.workspace_service.update_plan,
+                owner_id,
+                workspace_id,
+                PlanUpdateRequest(
+                    goal="A goal that must roll back",
+                    exam_at=datetime.now(UTC) + timedelta(days=5),
+                    daily_minutes=30,
+                    topic_order=list(before.progress.topics),
+                    regenerate=True,
+                ),
+            )
+            assert entered.wait(timeout=5)
+            answer_future = executor.submit(
+                app.state.workspace_learning_service.submit_answer,
+                owner_id,
+                workspace_id,
+                AnswerRequest(
+                    attempt_id="rollback-attempt",
+                    question_id=question["id"],
+                    answer="A complete explanation with a concrete example and reasoning.",
+                ),
+            )
+            time.sleep(0.05)
+            assert not answer_future.done()
+            release.set()
+            with pytest.raises(RuntimeError, match="simulated workspace write failure"):
+                plan_future.result(timeout=5)
+            answer_future.result(timeout=5)
+        after = app.state.workspace_service.snapshot(owner_id, workspace_id)
+
+    assert after.progress.attempt_count == before.progress.attempt_count + 1
+    assert len(after.evidence) == len(before.evidence) + 1
+    assert after.plan is not None and before.plan is not None
+    assert after.plan.id == before.plan.id
+    assert {session.id for session in before.plan.sessions}.issubset(
+        {session.id for session in after.plan.sessions}
+    )
+    assert after.workspace == before.workspace
+
+
+def test_workspace_delete_waits_for_plan_update_and_leaves_no_orphan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app):
+        user = app.state.identity.register(
+            email="delete-plan-race@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Learner",
+        )
+        workspace = app.state.workspace_service.resolve(
+            user.id,
+            WorkspaceResolveRequest(intent="Prepare calculus"),
+        ).workspace
+        before = app.state.workspace_service.snapshot(user.id, workspace.id)
+        entered = Event()
+        release = Event()
+
+        def fail_update(*args, **kwargs):
+            del args, kwargs
+            entered.set()
+            assert release.wait(timeout=5)
+            raise RuntimeError("simulated workspace write failure")
+
+        monkeypatch.setattr(app.state.workspaces, "update", fail_update)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            plan_future = executor.submit(
+                app.state.workspace_service.update_plan,
+                user.id,
+                workspace.id,
+                PlanUpdateRequest(
+                    goal="A concurrent plan update",
+                    exam_at=datetime.now(UTC) + timedelta(days=5),
+                    daily_minutes=30,
+                    topic_order=list(before.progress.topics),
+                    regenerate=True,
+                ),
+            )
+            assert entered.wait(timeout=5)
+            delete_future = executor.submit(
+                app.state.workspace_service.delete,
+                user.id,
+                workspace.id,
+            )
+            time.sleep(0.05)
+            assert not delete_future.done()
+            release.set()
+            with pytest.raises(RuntimeError, match="simulated workspace write failure"):
+                plan_future.result(timeout=5)
+            delete_future.result(timeout=5)
+
+        with pytest.raises(RecordNotFoundError):
+            app.state.learning.get(user.id, workspace.id)
+        with pytest.raises(RecordNotFoundError):
+            app.state.workspaces.get(user.id, workspace.id)
 
 
 def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:

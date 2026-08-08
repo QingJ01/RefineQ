@@ -14,15 +14,28 @@ from threading import RLock
 import bcrypt
 import jwt
 from jwt import InvalidTokenError as JWTInvalidTokenError
-from sqlalchemy import insert, select, update
+from sqlalchemy import Integer, String, cast, delete, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
 from refineq.database.engine import Database
-from refineq.database.schema import password_reset_tokens, system_settings, users, utc_now
-from refineq.identity.models import User
+from refineq.database.schema import (
+    audit_logs,
+    integration_settings,
+    material_chunks,
+    materials,
+    password_reset_tokens,
+    records,
+    system_settings,
+    users,
+    utc_now,
+)
+from refineq.identity.models import AccountExportResponse, User
 
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _SIGNING_SECRET_KEY = "jwt_signing_secret"
+_SESSION_VERSION_PREFIX = "user_session_version:"
 
 
 class IdentityError(RuntimeError):
@@ -47,6 +60,10 @@ class TokenExpiredError(InvalidTokenError):
 
 class InvalidResetTokenError(IdentityError, ValueError):
     """Raised for expired, used, or unknown password reset tokens."""
+
+
+class AccountDeletionError(IdentityError):
+    """Raised when an account cannot be safely removed."""
 
 
 class IdentityService:
@@ -109,6 +126,49 @@ class IdentityService:
             return value
 
     @staticmethod
+    def _session_version_key(user_id: str) -> str:
+        return f"{_SESSION_VERSION_PREFIX}{user_id}"
+
+    def _session_version(self, session, user_id: str) -> int:
+        value = session.scalar(
+            select(system_settings.c.value).where(
+                system_settings.c.key == self._session_version_key(user_id)
+            )
+        )
+        return int(value or 0)
+
+    def _increment_session_version(self, session, user_id: str) -> None:
+        key = self._session_version_key(user_id)
+        dialect_insert = postgresql_insert if self.database.is_postgresql else sqlite_insert
+        statement = dialect_insert(system_settings).values(
+            key=key,
+            value="1",
+            updated_at=utc_now(),
+        )
+        session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[system_settings.c.key],
+                set_={
+                    "value": cast(
+                        cast(system_settings.c.value, Integer) + 1,
+                        String,
+                    ),
+                    "updated_at": utc_now(),
+                },
+            )
+        )
+
+    def _locked_user(self, session, user_id: str):
+        if self.database.is_postgresql:
+            return session.execute(
+                select(users).where(users.c.id == user_id).with_for_update()
+            ).one_or_none()
+        session.execute(
+            update(users).where(users.c.id == user_id).values(updated_at=users.c.updated_at)
+        )
+        return session.execute(select(users).where(users.c.id == user_id)).one_or_none()
+
+    @staticmethod
     def _validate_password(password: str, *, minimum: int) -> bytes:
         password_bytes = password.encode("utf-8")
         if not minimum <= len(password_bytes) <= 72:
@@ -159,13 +219,328 @@ class IdentityService:
 
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
-        valid = row is not None and bcrypt.checkpw(
-            password_bytes,
-            row.password_hash.encode("ascii"),
+        valid = (
+            row is not None
+            and row.deletion_id is None
+            and bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            )
         )
         if not valid:
             raise InvalidCredentialsError("Invalid email or password")
         return self._public_user(row)
+
+    def authenticate_with_token(
+        self,
+        *,
+        email: str,
+        password: str,
+        now: datetime | None = None,
+    ) -> tuple[User, str]:
+        """Authenticate and bind the token to the exact credential snapshot checked."""
+
+        try:
+            email = self._canonical_email(email)
+            password_bytes = self._validate_password(password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid email or password") from error
+
+        with self.database.session() as session:
+            row = session.execute(select(users).where(users.c.email == email)).one_or_none()
+            session_version = self._session_version(session, row.id) if row is not None else 0
+        if (
+            row is None
+            or row.deletion_id is not None
+            or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            )
+        ):
+            raise InvalidCredentialsError("Invalid email or password")
+        user = self._public_user(row)
+        credential = sha256(row.password_hash.encode("utf-8")).hexdigest()
+        return user, self._encode_token(
+            user,
+            credential=credential,
+            session_version=session_version,
+            now=now,
+        )
+
+    def verify_current_password(self, user_id: str, password: str) -> User:
+        try:
+            password_bytes = self._validate_password(password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid current password") from error
+        with self.database.session() as session:
+            row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
+        if (
+            row is None
+            or row.deletion_id is not None
+            or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            )
+        ):
+            raise InvalidCredentialsError("Invalid current password")
+        return self._public_user(row)
+
+    def update_profile(self, user_id: str, *, display_name: str) -> User:
+        normalized = display_name.strip()
+        if not normalized:
+            raise ValueError("display_name must not be blank")
+        with self._lock, self.database.session() as session:
+            updated = session.execute(
+                update(users)
+                .where(users.c.id == user_id)
+                .values(display_name=normalized, updated_at=utc_now())
+            )
+            if updated.rowcount != 1:
+                raise InvalidTokenError("Invalid access token")
+            row = session.execute(select(users).where(users.c.id == user_id)).one()
+        return self._public_user(row)
+
+    def change_password(
+        self,
+        user_id: str,
+        *,
+        current_password: str,
+        new_password: str,
+    ) -> None:
+        current_bytes = self._validate_password(current_password, minimum=1)
+        new_bytes = self._validate_password(new_password, minimum=12)
+        with self._lock, self.database.session() as session:
+            statement = select(users).where(users.c.id == user_id)
+            if self.database.is_postgresql:
+                statement = statement.with_for_update()
+            row = session.execute(statement).one_or_none()
+            if row is None or not bcrypt.checkpw(
+                current_bytes,
+                row.password_hash.encode("ascii"),
+            ):
+                raise InvalidCredentialsError("Invalid current password")
+            session.execute(
+                update(users)
+                .where(users.c.id == user_id)
+                .values(
+                    password_hash=bcrypt.hashpw(
+                        new_bytes,
+                        bcrypt.gensalt(rounds=12),
+                    ).decode("ascii"),
+                    updated_at=utc_now(),
+                )
+            )
+
+    def revoke_sessions(self, user_id: str) -> None:
+        with self._lock, self.database.session() as session:
+            if session.scalar(select(users.c.id).where(users.c.id == user_id)) is None:
+                raise InvalidTokenError("Invalid access token")
+            self._increment_session_version(session, user_id)
+
+    def export_account(self, user: User) -> AccountExportResponse:
+        with self.database.session() as session:
+            owner_records = session.execute(
+                select(records)
+                .where(records.c.owner_id == user.id)
+                .order_by(records.c.collection, records.c.record_id)
+            ).all()
+            owner_materials = session.execute(
+                select(materials)
+                .where(materials.c.owner_id == user.id)
+                .order_by(materials.c.project_id, materials.c.material_id)
+            ).all()
+        return AccountExportResponse(
+            exported_at=datetime.now(UTC),
+            user=user,
+            records=[
+                {
+                    "owner_id": row.owner_id,
+                    "collection": row.collection,
+                    "record_id": row.record_id,
+                    "schema_version": row.schema_version,
+                    "version": row.version,
+                    "data": row.data,
+                    "updated_at": self._aware(row.updated_at),
+                }
+                for row in owner_records
+            ],
+            materials=[
+                {
+                    "owner_id": row.owner_id,
+                    "project_id": row.project_id,
+                    "material_id": row.material_id,
+                    "filename": row.filename,
+                    "title": row.title or row.filename,
+                    "tags": list(row.tags or []),
+                    "content_type": row.content_type,
+                    "size": row.size,
+                    "status": row.status,
+                    "chunk_count": row.chunk_count,
+                    "content_sha256": row.content_sha256,
+                    "indexed_at": self._aware(row.indexed_at),
+                }
+                for row in owner_materials
+            ],
+        )
+
+    def account_storage_objects(self, user_id: str) -> list[dict[str, str]]:
+        with self.database.session() as session:
+            return [
+                {
+                    "key": str(row.storage_key),
+                    "workspace_id": str(row.project_id),
+                    "material_id": str(row.material_id),
+                    "filename": str(row.filename),
+                }
+                for row in session.execute(
+                    select(
+                        materials.c.storage_key,
+                        materials.c.project_id,
+                        materials.c.material_id,
+                        materials.c.filename,
+                    ).where(
+                        materials.c.owner_id == user_id,
+                        materials.c.storage_key.is_not(None),
+                    )
+                )
+                if row.storage_key
+            ]
+
+    def account_storage_keys(self, user_id: str) -> list[str]:
+        return [entry["key"] for entry in self.account_storage_objects(user_id)]
+
+    def preflight_account_deletion(self, user_id: str, *, current_password: str) -> None:
+        """Validate every database-side deletion blocker before touching object data."""
+
+        try:
+            password_bytes = self._validate_password(current_password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid current password") from error
+        with self._lock, self.database.session() as session:
+            row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
+            if (
+                row is None
+                or row.deletion_id is not None
+                or not bcrypt.checkpw(
+                    password_bytes,
+                    row.password_hash.encode("ascii"),
+                )
+            ):
+                raise InvalidCredentialsError("Invalid current password")
+            if (
+                session.scalar(
+                    select(integration_settings.c.kind)
+                    .where(integration_settings.c.updated_by == user_id)
+                    .limit(1)
+                )
+                is not None
+            ):
+                raise AccountDeletionError(
+                    "Transfer platform integration ownership before deleting this account"
+                )
+
+    def begin_account_deletion(
+        self,
+        user_id: str,
+        *,
+        current_password: str,
+        deletion_id: str,
+    ) -> None:
+        """Fence new writes and revoke tokens before object cleanup begins."""
+
+        try:
+            password_bytes = self._validate_password(current_password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid current password") from error
+        with self._lock, self.database.session() as session:
+            row = self._locked_user(session, user_id)
+            if row is None or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            ):
+                raise InvalidCredentialsError("Invalid current password")
+            if row.deletion_id is not None:
+                raise AccountDeletionError("Account deletion is already in progress")
+            if (
+                session.scalar(
+                    select(integration_settings.c.kind)
+                    .where(integration_settings.c.updated_by == user_id)
+                    .limit(1)
+                )
+                is not None
+            ):
+                raise AccountDeletionError(
+                    "Transfer platform integration ownership before deleting this account"
+                )
+            session.execute(
+                update(users)
+                .where(users.c.id == user_id, users.c.deletion_id.is_(None))
+                .values(deletion_id=deletion_id, updated_at=utc_now())
+            )
+
+    def cancel_account_deletion(self, user_id: str, *, deletion_id: str) -> None:
+        with self._lock, self.database.session() as session:
+            session.execute(
+                update(users)
+                .where(users.c.id == user_id, users.c.deletion_id == deletion_id)
+                .values(deletion_id=None, updated_at=utc_now())
+            )
+
+    def account_deletion_state(self, user_id: str) -> tuple[bool, str | None]:
+        with self.database.session() as session:
+            row = session.execute(
+                select(users.c.deletion_id).where(users.c.id == user_id)
+            ).one_or_none()
+        return (False, None) if row is None else (True, row.deletion_id)
+
+    def delete_account(
+        self,
+        user_id: str,
+        *,
+        current_password: str,
+        deletion_id: str | None = None,
+    ) -> None:
+        try:
+            password_bytes = self._validate_password(current_password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid current password") from error
+        with self._lock, self.database.session() as session:
+            row = self._locked_user(session, user_id)
+            if row is None or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            ):
+                raise InvalidCredentialsError("Invalid current password")
+            if row.deletion_id != deletion_id:
+                raise AccountDeletionError("Account deletion transaction is no longer current")
+            # Repeat the ownership check inside the deletion transaction to close
+            # the gap between preflight and the final database mutation.
+            if (
+                session.scalar(
+                    select(integration_settings.c.kind)
+                    .where(integration_settings.c.updated_by == user_id)
+                    .limit(1)
+                )
+                is not None
+            ):
+                raise AccountDeletionError(
+                    "Transfer platform integration ownership before deleting this account"
+                )
+            session.execute(delete(material_chunks).where(material_chunks.c.owner_id == user_id))
+            session.execute(delete(materials).where(materials.c.owner_id == user_id))
+            session.execute(delete(records).where(records.c.owner_id == user_id))
+            session.execute(
+                delete(password_reset_tokens).where(password_reset_tokens.c.user_id == user_id)
+            )
+            session.execute(delete(audit_logs).where(audit_logs.c.actor_id == user_id))
+            session.execute(
+                delete(system_settings).where(
+                    system_settings.c.key == self._session_version_key(user_id)
+                )
+            )
+            deleted = session.execute(delete(users).where(users.c.id == user_id))
+            if deleted.rowcount != 1:
+                raise InvalidTokenError("Invalid access token")
 
     def request_password_reset(
         self,
@@ -300,28 +675,45 @@ class IdentityService:
                 False,
             )
 
-    def issue_token(self, user: User, *, now: datetime | None = None) -> str:
+    def _encode_token(
+        self,
+        user: User,
+        *,
+        credential: str,
+        session_version: int,
+        now: datetime | None = None,
+    ) -> str:
         now = (now or datetime.now(UTC)).astimezone(UTC)
         expires_at = now + self._token_ttl
-        with self.database.session() as session:
-            password_hash = session.scalar(
-                select(users.c.password_hash).where(
-                    users.c.id == user.id,
-                    users.c.email == user.email,
-                )
-            )
-        if not password_hash:
-            raise InvalidTokenError("Invalid access token")
         return jwt.encode(
             {
                 "sub": user.id,
                 "email": user.email,
-                "credential": sha256(str(password_hash).encode("utf-8")).hexdigest(),
+                "credential": credential,
+                "session_version": session_version,
                 "iat": int(now.timestamp()),
                 "exp": int(expires_at.timestamp()),
             },
             self._signing_secret(),
             algorithm="HS256",
+        )
+
+    def issue_token(self, user: User, *, now: datetime | None = None) -> str:
+        with self.database.session() as session:
+            row = session.execute(
+                select(users.c.password_hash, users.c.deletion_id).where(
+                    users.c.id == user.id,
+                    users.c.email == user.email,
+                )
+            ).one_or_none()
+            session_version = self._session_version(session, user.id)
+        if row is None or row.deletion_id is not None:
+            raise InvalidTokenError("Invalid access token")
+        return self._encode_token(
+            user,
+            credential=sha256(row.password_hash.encode("utf-8")).hexdigest(),
+            session_version=session_version,
+            now=now,
         )
 
     @staticmethod
@@ -370,15 +762,28 @@ class IdentityService:
         email = payload.get("email")
         subject = payload.get("sub")
         credential = payload.get("credential")
-        if not isinstance(credential, str):
+        session_version = payload.get("session_version", 0)
+        if (
+            not isinstance(credential, str)
+            or not isinstance(session_version, int)
+            or isinstance(session_version, bool)
+        ):
             raise InvalidTokenError("Invalid access token")
         with self.database.session() as session:
             row = session.execute(
                 select(users).where(users.c.id == subject, users.c.email == email)
             ).one_or_none()
-        if row is None or not secrets.compare_digest(
-            credential,
-            sha256(row.password_hash.encode("utf-8")).hexdigest(),
+            current_session_version = (
+                self._session_version(session, str(subject)) if row is not None else 0
+            )
+        if (
+            row is None
+            or row.deletion_id is not None
+            or not secrets.compare_digest(
+                credential,
+                sha256(row.password_hash.encode("utf-8")).hexdigest(),
+            )
+            or session_version != current_session_version
         ):
             raise InvalidTokenError("Invalid access token")
         return self._public_user(row)

@@ -110,6 +110,34 @@ def test_delete_removes_only_the_exact_owner_scoped_record(tmp_path: Path) -> No
     assert store.read("bob", "workspaces", "target").data["name"] == "Bob"
 
 
+def test_restore_recreates_the_exact_deleted_record_without_overwriting_a_survivor(
+    tmp_path: Path,
+) -> None:
+    store = AtomicJsonStore(tmp_path)
+    created = store.create(
+        "owner",
+        "learning",
+        "workspace-1",
+        {"count": 1},
+        schema_version=3,
+    )
+    snapshot = store.save(
+        "owner",
+        "learning",
+        "workspace-1",
+        {"count": 2},
+        expected_version=created.version,
+    )
+    store.delete("owner", "learning", "workspace-1")
+
+    restored = store.restore("owner", "learning", "workspace-1", snapshot)
+    survivor = store.restore("owner", "learning", "workspace-1", created)
+
+    assert restored == snapshot
+    assert survivor == snapshot
+    assert store.read("owner", "learning", "workspace-1") == snapshot
+
+
 def test_transient_windows_replace_denial_is_retried(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

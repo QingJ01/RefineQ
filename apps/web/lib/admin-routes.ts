@@ -1,5 +1,11 @@
 import type { IntegrationKind } from "./types";
 
+export type AdminSection = "overview" | "operations";
+
+
+export function parseAdminSection(value: string): AdminSection | null {
+  return value === "overview" || value === "operations" ? value : null;
+}
 
 const integrationKinds = new Set<IntegrationKind>([
   "chat",

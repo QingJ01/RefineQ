@@ -1,9 +1,19 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowUp, Check, CircleAlert, LoaderCircle, Sparkles, X } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  CircleAlert,
+  LoaderCircle,
+  MessageCircleMore,
+  Settings2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { FormEvent, useState } from "react";
 
+import { ApiError } from "@/lib/api";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type {
   AgentReply,
@@ -21,6 +31,10 @@ const copy = {
     placeholder: "向教练提问…",
     send: "发送",
     error: "暂时无法连接教练，你仍可以继续当前学习任务。",
+    modelMissing: "学习 Agent 尚未配置模型。练习、资料和进度仍可继续使用。",
+    modelUnknown: "暂时无法确认学习 Agent 状态。本地练习、资料和进度仍可继续使用。",
+    configure: "前往配置",
+    fullCoach: "完整对话与历史",
     applied: "已执行",
     confirm: "这个动作会清空当前题的未提交内容，是否继续？",
     confirmAction: "继续执行",
@@ -36,6 +50,10 @@ const copy = {
     placeholder: "Ask your coach…",
     send: "Send",
     error: "The coach is temporarily unavailable. You can continue the current task.",
+    modelMissing: "The learning Agent has not been configured. Practice, material, and progress remain available.",
+    modelUnknown: "The learning Agent status is unavailable. Local practice, material, and progress remain available.",
+    configure: "Open settings",
+    fullCoach: "Full conversation and history",
     applied: "Applied",
     confirm: "This action will clear the unsubmitted draft for the current question. Continue?",
     confirmAction: "Continue",
@@ -155,11 +173,21 @@ export function CoachActionCard({
 export function SessionCoach({
   locale,
   onAsk,
+  modelConfigured = true,
+  isAdmin = false,
+  onConfigure,
+  onOpenFullCoach,
+  onModelUnavailable,
   onApplyAction,
   onTurnHandled,
 }: {
   locale: Locale;
   onAsk: (message: string) => Promise<AgentReply>;
+  modelConfigured?: boolean | null;
+  isAdmin?: boolean;
+  onConfigure?: () => void;
+  onOpenFullCoach?: () => void;
+  onModelUnavailable?: () => void;
   onApplyAction?: (
     proposal: ExecutableActionProposal,
     options?: { confirmed?: boolean; historical?: boolean },
@@ -219,8 +247,13 @@ export function SessionCoach({
       } else {
         await applyAction(proposal);
       }
-    } catch {
-      if (!chatSucceeded) setError(text.error);
+    } catch (caught) {
+      if (!chatSucceeded) {
+        if (caught instanceof ApiError && caught.code === "model_not_configured") {
+          onModelUnavailable?.();
+        }
+        setError(text.error);
+      }
     } finally {
       if (chatSucceeded) onTurnHandled?.();
       setBusy(false);
@@ -250,6 +283,30 @@ export function SessionCoach({
         </div>
       </div>
       <p className="coach-intro">{reply || text.intro}</p>
+      {onOpenFullCoach && (
+        <button
+          type="button"
+          className="coach-full-link"
+          data-testid="open-full-coach"
+          onClick={onOpenFullCoach}
+        >
+          <MessageCircleMore size={14} /> {text.fullCoach}
+        </button>
+      )}
+      {modelConfigured !== true && (
+        <div className="coach-capability-notice" role="status">
+          <p>{modelConfigured === false ? text.modelMissing : text.modelUnknown}</p>
+          {isAdmin && onConfigure && (
+            <button
+              type="button"
+              data-testid="coach-configure-model"
+              onClick={onConfigure}
+            >
+              <Settings2 size={14} /> {text.configure}
+            </button>
+          )}
+        </div>
+      )}
       {actionState && (
         <CoachActionCard
           locale={locale}
@@ -273,7 +330,7 @@ export function SessionCoach({
             key={suggestion}
             type="button"
             data-testid="session-coach-suggestion"
-            disabled={busy || actionBusy}
+            disabled={busy || actionBusy || modelConfigured !== true}
             onClick={() => void ask(suggestion)}
           >
             {suggestion}
@@ -289,9 +346,13 @@ export function SessionCoach({
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder={text.placeholder}
-          disabled={busy || actionBusy}
+          disabled={busy || actionBusy || modelConfigured !== true}
         />
-        <button type="submit" aria-label={text.send} disabled={busy || actionBusy || !message.trim()}>
+        <button
+          type="submit"
+          aria-label={text.send}
+          disabled={busy || actionBusy || !message.trim() || modelConfigured !== true}
+        >
           {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={17} />}
         </button>
       </form>

@@ -6,17 +6,20 @@ import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { api } from "@/lib/api";
+import { localizeApiError } from "@/lib/error-messages";
 import type { Translator } from "@/lib/i18n";
-import type { AuthResponse } from "@/lib/types";
+import type { AuthResponse, Locale } from "@/lib/types";
 
 
 type AuthMode = "login" | "register" | "forgot" | "reset";
 
 export function AuthPanel({
   t,
+  locale = "zh",
   onAuthenticated,
 }: {
   t: Translator;
+  locale?: Locale;
   onAuthenticated: (response: AuthResponse) => void;
 }) {
   const [mode, setMode] = useState<AuthMode>("login");
@@ -75,7 +78,7 @@ export function AuthPanel({
         : await api.login(email, password);
       onAuthenticated(response);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("error"));
+      setError(localizeApiError(caught, locale));
     } finally {
       setBusy(false);
     }

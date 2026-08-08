@@ -39,6 +39,22 @@ workspace IDs and citations are accepted only when they occur in the server-supp
 It calls the backend through the same-origin `/api` rewrite, so browser code never needs direct
 access to backend credentials or storage paths.
 
+The learning workspace keeps authentication, workspace navigation, practice, and Agent conversation
+state in separate hooks. Each asynchronous practice or Agent request carries the generation of the
+workspace that created it; switching workspaces invalidates that generation and remounts the session
+canvas, so late responses cannot leak questions, answers, progress, or conversations across spaces.
+
+Learner routes cover today, path, materials, progress, and account settings. The workspace switcher
+preserves keyboard focus and browser history, while every practice question exposes its source
+provenance. Plans are editable, attempts retain notes and appeal state, and retries reopen the exact
+prompt. Material metadata, tags, filters, sorting, selection, and bulk deletion all remain scoped to
+the authenticated owner and active workspace.
+
+Administrator routes are a separate role-gated control plane. Integration settings and operations
+share the same shell, while user quotas, background-job status, audit activity, and managed backups
+come from dedicated administrator APIs. User-facing errors are localized from stable server error
+codes; backend exception text and filesystem paths are not rendered in the browser.
+
 ## Runtime state and fallback
 
 Production uses PostgreSQL with the pgvector extension. SQLite remains an explicit local-development
@@ -49,3 +65,9 @@ S3-compatible service in the administrator console.
 Local text extraction for PDF, DOCX, TXT, and Markdown does not need a third-party API. OCR is only
 invoked when a PDF has no usable text and the administrator enabled the OCR integration. Embedding
 failures degrade to lexical retrieval, and model failures retain deterministic learning flows.
+
+Workspace deletion uses a recoverable two-phase material journal. Learning, session, and workspace
+records are snapshotted and deleted in one owner transaction; material index/object deletion runs
+only after that transaction commits. Any failure restores missing records at their original schema
+and data versions without overwriting a concurrent survivor. Uploads revalidate the workspace after
+parsing and while holding the shared project lease, preventing orphaned material writes.

@@ -1,23 +1,36 @@
 import type {
+  AccountExport,
   AgentReply,
   AgentSessionContext,
   AgentSessionDetail,
   AgentSessionSummary,
   AdminOverview,
+  AdminAuditPage,
+  AdminJobsResponse,
+  AdminUsersPage,
   AnswerResult,
+  AttemptFeedbackInput,
+  AttemptFeedbackResponse,
   AuthResponse,
   LearningWorkspace,
+  LearningInsights,
   IntegrationKind,
   IntegrationTestResult,
   IntegrationUpdateInput,
   MaterialRecord,
+  MaterialUpdateInput,
+  ManagedBackup,
+  ManagedBackupsResponse,
   PasswordResetAccepted,
+  PlanUpdateInput,
   PracticeRequest,
   PracticeQuestion,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
   SavedPracticeQuestion,
+  RestoreValidationResponse,
+  StudyPlan,
   StudySession,
   User,
   WorkspaceRoute,
@@ -149,6 +162,54 @@ export class ApiClient {
     return this.request("/auth/me", {}, token);
   }
 
+  updateProfile(token: string, displayName: string): Promise<User> {
+    return this.request(
+      "/auth/profile",
+      { method: "PATCH", body: JSON.stringify({ display_name: displayName }) },
+      token,
+    );
+  }
+
+  changePassword(token: string, currentPassword: string, newPassword: string): Promise<void> {
+    return this.request(
+      "/auth/password",
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      },
+      token,
+    );
+  }
+
+  exportAccount(token: string): Promise<AccountExport> {
+    return this.request("/auth/export", {}, token);
+  }
+
+  revokeSessions(token: string): Promise<void> {
+    return this.request("/auth/sessions", { method: "DELETE" }, token);
+  }
+
+  deleteAccount(
+    token: string,
+    currentPassword: string,
+    confirmation: string,
+  ): Promise<void> {
+    return this.request(
+      "/auth/account",
+      {
+        method: "DELETE",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          confirmation,
+        }),
+      },
+      token,
+    );
+  }
+
   listWorkspaces(token: string, includeArchived = false): Promise<LearningWorkspace[]> {
     const query = includeArchived ? "?include_archived=true" : "";
     return this.request(`/workspaces${query}`, {}, token);
@@ -212,6 +273,7 @@ export class ApiClient {
           difficulty: options.difficulty,
           mode: options.learningMode ?? "concept",
           replace: options.replace ?? false,
+          review_session_id: options.reviewSessionId,
         }),
       },
       token,
@@ -280,6 +342,47 @@ export class ApiClient {
     );
   }
 
+  updateWorkspacePlan(
+    token: string,
+    workspaceId: string,
+    input: PlanUpdateInput,
+  ): Promise<StudyPlan> {
+    return this.request<StudyPlan>(
+      `/workspaces/${workspaceId}/learning/plan`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
+  getWorkspaceInsights(token: string, workspaceId: string): Promise<LearningInsights> {
+    return this.request(`/workspaces/${workspaceId}/learning/insights`, {}, token);
+  }
+
+  retryWorkspaceQuestion(
+    token: string,
+    workspaceId: string,
+    questionId: string,
+  ): Promise<PracticeQuestion> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/questions/${questionId}/retry`,
+      { method: "POST" },
+      token,
+    );
+  }
+
+  updateWorkspaceAttemptFeedback(
+    token: string,
+    workspaceId: string,
+    attemptId: string,
+    input: AttemptFeedbackInput,
+  ): Promise<AttemptFeedbackResponse> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/attempts/${attemptId}/feedback`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
   uploadWorkspaceMaterials(
     token: string,
     workspaceId: string,
@@ -316,6 +419,39 @@ export class ApiClient {
     return this.request(
       `/workspaces/${workspaceId}/materials/${materialId}`,
       { method: "DELETE" },
+      token,
+    );
+  }
+
+  updateWorkspaceMaterial(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+    input: MaterialUpdateInput,
+  ): Promise<MaterialRecord> {
+    return this.request(
+      `/workspaces/${workspaceId}/materials/${materialId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  }
+
+  bulkDeleteWorkspaceMaterials(
+    token: string,
+    workspaceId: string,
+    materialIds: string[],
+  ): Promise<void> {
+    return this.request(
+      `/workspaces/${workspaceId}/materials`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ material_ids: materialIds }),
+      },
       token,
     );
   }
@@ -414,6 +550,40 @@ export class ApiClient {
 
   getAdminOverview(token: string): Promise<AdminOverview> {
     return this.request("/admin/overview", {}, token);
+  }
+
+  listAdminUsers(token: string, page = 1, pageSize = 20): Promise<AdminUsersPage> {
+    return this.request(`/admin/users?page=${page}&page_size=${pageSize}`, {}, token);
+  }
+
+  getAdminJobs(token: string): Promise<AdminJobsResponse> {
+    return this.request("/admin/jobs", {}, token);
+  }
+
+  listAdminAudit(token: string, page = 1, pageSize = 20): Promise<AdminAuditPage> {
+    return this.request(`/admin/audit?page=${page}&page_size=${pageSize}`, {}, token);
+  }
+
+  listAdminBackups(token: string): Promise<ManagedBackupsResponse> {
+    return this.request("/admin/backups", {}, token);
+  }
+
+  createAdminBackup(token: string): Promise<ManagedBackup> {
+    return this.request("/admin/backups", { method: "POST" }, token);
+  }
+
+  validateAdminRestore(
+    token: string,
+    backupId: string,
+  ): Promise<RestoreValidationResponse> {
+    return this.request(
+      `/admin/backups/${backupId}/restore-validation`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmation: `RESTORE ${backupId}` }),
+      },
+      token,
+    );
   }
 
   listIntegrations(token: string): Promise<PublicIntegrationSettings[]> {

@@ -319,6 +319,8 @@ class LegacyDataMigrator:
                                     project_id=project_id,
                                     material_id=material_id,
                                     filename=material["filename"],
+                                    title=material["filename"],
+                                    tags=[],
                                     content_type=material["content_type"],
                                     size=int(material["size"]),
                                     status=material["status"],

@@ -8,15 +8,20 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.identity.models import (
+    AccountDeleteRequest,
+    AccountExportResponse,
     AuthResponse,
     LoginRequest,
+    PasswordChangeRequest,
     PasswordResetAccepted,
     PasswordResetComplete,
     PasswordResetRequest,
+    ProfileUpdateRequest,
     RegisterRequest,
     User,
 )
 from refineq.identity.service import (
+    AccountDeletionError,
     AccountExistsError,
     InvalidCredentialsError,
     InvalidResetTokenError,
@@ -53,18 +58,134 @@ def register(payload: RegisterRequest, request: Request) -> AuthResponse:
 @router.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, request: Request) -> AuthResponse:
     try:
-        user = request.app.state.identity.authenticate(
+        user, access_token = request.app.state.identity.authenticate_with_token(
             email=payload.email,
             password=payload.password.get_secret_value(),
         )
     except InvalidCredentialsError as error:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
-    return _auth_response(request, user)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": str(error)},
+        ) from error
+    return AuthResponse(access_token=access_token, user=user)
 
 
 @router.get("/me", response_model=User)
 def me(user: CurrentUser) -> User:
     return user
+
+
+@router.patch("/profile", response_model=User)
+def update_profile(
+    payload: ProfileUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> User:
+    return request.app.state.identity.update_profile(
+        user.id,
+        display_name=payload.display_name,
+    )
+
+
+@router.put("/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    try:
+        request.app.state.identity.change_password(
+            user.id,
+            current_password=payload.current_password.get_secret_value(),
+            new_password=payload.new_password.get_secret_value(),
+        )
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": str(error)},
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/export", response_model=AccountExportResponse)
+def export_account(
+    response: Response,
+    request: Request,
+    user: CurrentUser,
+) -> AccountExportResponse:
+    response.headers["Content-Disposition"] = 'attachment; filename="refineq-account-export.json"'
+    return request.app.state.identity.export_account(user)
+
+
+@router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_sessions(request: Request, user: CurrentUser) -> Response:
+    request.app.state.identity.revoke_sessions(user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    payload: AccountDeleteRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    current_password = payload.current_password.get_secret_value()
+    if payload.confirmation.strip().lower() != user.email:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "account_confirmation_mismatch",
+                "message": "Type the account email to confirm deletion",
+            },
+        )
+
+    try:
+        pending = request.app.state.account_deletions.prepare(
+            user.id,
+            current_password=current_password,
+        )
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": str(error)},
+        ) from error
+    except AccountDeletionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "account_deletion_blocked", "message": str(error)},
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "account_deletion_failed",
+                "message": "Account deletion could not be completed safely",
+            },
+        ) from error
+    try:
+        request.app.state.account_deletions.complete(
+            pending,
+            current_password=current_password,
+        )
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": str(error)},
+        ) from error
+    except AccountDeletionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "account_deletion_blocked", "message": str(error)},
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "account_deletion_failed",
+                "message": "Account deletion could not be completed safely",
+            },
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

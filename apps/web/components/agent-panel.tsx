@@ -17,8 +17,9 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } fr
 import { SourceDrawer } from "@/components/source-drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api, ApiError } from "@/lib/api";
+import { localizeApiError } from "@/lib/error-messages";
 import type { Translator } from "@/lib/i18n";
-import type { AgentMessage, AgentSessionSummary, SearchSource } from "@/lib/types";
+import type { AgentMessage, AgentSessionSummary, Locale, SearchSource } from "@/lib/types";
 
 
 interface ChatMessage extends AgentMessage {
@@ -32,24 +33,30 @@ interface AgentTurn {
   turnId: string;
 }
 
-function errorMessage(caught: unknown, t: Translator): string {
+function errorMessage(caught: unknown, t: Translator, locale: Locale): string {
   if (caught instanceof ApiError && caught.code === "model_not_configured") {
     return t("modelRequired");
   }
-  if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
-  return caught instanceof Error ? caught.message : t("error");
+  if (caught instanceof ApiError) return localizeApiError(caught, locale);
+  return t("error");
 }
 
 export function AgentPanel({
   token,
   workspaceId,
   t,
+  locale = "en",
+  modelConfigured: configuredFromWorkspace,
+  onModelUnavailable,
   isAdmin = false,
   onOpenSettings,
 }: {
   token: string;
   workspaceId: string;
   t: Translator;
+  locale?: Locale;
+  modelConfigured?: boolean | null;
+  onModelUnavailable?: () => void;
   isAdmin?: boolean;
   onOpenSettings?: () => void;
 }) {
@@ -59,7 +66,14 @@ export function AgentPanel({
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
+  const [detectedModelConfigured, setDetectedModelConfigured] = useState<boolean | null>(null);
+  const modelConfigured = detectedModelConfigured === false
+    ? false
+    : configuredFromWorkspace !== undefined
+      ? configuredFromWorkspace
+      : detectedModelConfigured;
+  const checkingModel = configuredFromWorkspace === undefined
+    && detectedModelConfigured === null;
   const [error, setError] = useState("");
   const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
@@ -81,19 +95,22 @@ export function AgentPanel({
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.getModelSettings(token), api.listWorkspaceAgentSessions(token, workspaceId)])
+    const settingsRequest = configuredFromWorkspace === undefined
+      ? api.getModelSettings(token)
+      : Promise.resolve(null);
+    Promise.all([settingsRequest, api.listWorkspaceAgentSessions(token, workspaceId)])
       .then(([settings, history]) => {
         if (!active) return;
-        setModelConfigured(settings.configured);
+        if (settings) setDetectedModelConfigured(settings.configured);
         setSessions(history);
       }).catch((caught: unknown) => {
-        if (active) setError(errorMessage(caught, t));
+        if (active) setError(errorMessage(caught, t, locale));
       });
     return () => {
       active = false;
       requestController.current?.abort();
     };
-  }, [token, workspaceId, t]);
+  }, [token, workspaceId, t, locale, configuredFromWorkspace]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -150,9 +167,10 @@ export function AgentPanel({
         setMessage(turn.message);
       } else {
         setFailedTurn(turn);
-        setError(errorMessage(caught, t));
+        setError(errorMessage(caught, t, locale));
         if (caught instanceof ApiError && caught.code === "model_not_configured") {
-          setModelConfigured(false);
+          setDetectedModelConfigured(false);
+          onModelUnavailable?.();
         }
       }
     } finally {
@@ -188,7 +206,7 @@ export function AgentPanel({
       setMessages(detail.messages);
       setHistoryOpen(false);
     } catch (caught) {
-      setError(errorMessage(caught, t));
+      setError(errorMessage(caught, t, locale));
     }
   }
 
@@ -198,7 +216,7 @@ export function AgentPanel({
       setSessions((current) => current.filter((item) => item.id !== id));
       if (id === sessionId) newConversation();
     } catch (caught) {
-      setError(errorMessage(caught, t));
+      setError(errorMessage(caught, t, locale));
     }
   }
 
@@ -242,7 +260,11 @@ export function AgentPanel({
           <button type="button" data-testid="agent-history" className="quiet-button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((current) => !current)}><History size={15} /> {t("conversationHistory")}</button>
           <button type="button" data-testid="agent-new-conversation" className="quiet-button" onClick={newConversation}><Plus size={15} /> {t("newConversation")}</button>
           <span data-testid="model-status" className={modelConfigured ? "agent-model-status ready" : modelConfigured === null ? "agent-model-status checking" : "agent-model-status"}>
-            {t(modelConfigured ? "aiReady" : modelConfigured === null ? "checkingModel" : "adminSetupRequired")}
+            {t(modelConfigured
+              ? "aiReady"
+              : modelConfigured === null
+                ? checkingModel ? "checkingModel" : "modelStatusUnavailable"
+                : "adminSetupRequired")}
           </span>
           {modelConfigured === false && isAdmin && (
             <button type="button" className="quiet-button agent-settings-link" onClick={onOpenSettings}>
@@ -278,7 +300,7 @@ export function AgentPanel({
             <p>{t("messagePlaceholder")}</p>
             <div className="agent-suggestions">
               {suggestionKeys.map((key) => (
-                <button key={key} type="button" data-testid="agent-suggestion" onClick={() => setMessage(t(key))}>
+                <button key={key} type="button" data-testid="agent-suggestion" disabled={modelConfigured !== true} onClick={() => setMessage(t(key))}>
                   {t(key)}
                 </button>
               ))}
@@ -301,11 +323,11 @@ export function AgentPanel({
         <div ref={logEndRef} aria-hidden="true" />
       </div>
       <form className="chat-composer" onSubmit={send}>
-        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} />
+        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} disabled={modelConfigured !== true} />
         {busy ? (
           <button type="button" data-testid="agent-stop" className="secondary-action" onClick={stopResponse}><Square size={15} /> {t("stop")}</button>
         ) : (
-          <button className="primary-action" disabled={!message.trim()}>{t("send")} <Send size={17} /></button>
+          <button className="primary-action" disabled={!message.trim() || modelConfigured !== true}>{t("send")} <Send size={17} /></button>
         )}
       </form>
       {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} t={t} onClose={() => setSelectedSources([])} />}
