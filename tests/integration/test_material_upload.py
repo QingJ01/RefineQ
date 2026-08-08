@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
+from importlib import import_module
 from pathlib import Path
-from threading import get_ident
+from threading import Event, get_ident
 
 import httpx
 import pytest
@@ -286,17 +287,23 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
             headers=headers,
             json={"intent": "Study calculus"},
         ).json()["workspace"]["id"]
-        material = client.post(
+        uploaded = client.post(
             f"/workspaces/{workspace_id}/materials",
             headers=headers,
-            files={"files": ("notes.txt", b"Durable notes", "text/plain")},
-        ).json()[0]
+            files=[
+                ("files", ("notes-a.txt", b"Durable notes A", "text/plain")),
+                ("files", ("notes-b.txt", b"Durable notes B", "text/plain")),
+            ],
+        ).json()
         owner_id = client.get("/auth/me", headers=headers).json()["id"]
-        storage_key = app.state.knowledge.get_material_storage_key(
-            owner_id=owner_id,
-            project_id=workspace_id,
-            material_id=material["id"],
-        )
+        storage_keys = {
+            material["id"]: app.state.knowledge.get_material_storage_key(
+                owner_id=owner_id,
+                project_id=workspace_id,
+                material_id=material["id"],
+            )
+            for material in uploaded
+        }
 
         def fail_delete(**kwargs):
             del kwargs
@@ -307,16 +314,21 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
             "DELETE",
             f"/workspaces/{workspace_id}/materials",
             headers=headers,
-            json={"material_ids": [material["id"]]},
+            json={"material_ids": [material["id"] for material in uploaded]},
         )
 
     assert failed.status_code == 503
-    assert app.state.object_storage.get(storage_key) == b"Durable notes"
-    assert app.state.knowledge.get_material(
-        owner_id=owner_id,
-        project_id=workspace_id,
-        material_id=material["id"],
-    ).id == material["id"]
+    for material, expected in zip(
+        uploaded,
+        (b"Durable notes A", b"Durable notes B"),
+        strict=True,
+    ):
+        assert app.state.object_storage.get(storage_keys[material["id"]]) == expected
+        assert app.state.knowledge.get_material(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id=material["id"],
+        ).id == material["id"]
 
 
 def test_upload_refuses_to_race_an_active_material_object_deletion(tmp_path: Path) -> None:
@@ -344,6 +356,57 @@ def test_upload_refuses_to_race_an_active_material_object_deletion(tmp_path: Pat
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "material_mutation_busy"
     assert listed.json() == []
+
+
+def test_upload_revalidates_workspace_after_parsing_before_writing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    materials_router = import_module("refineq.api.routers.materials")
+    original_store = materials_router._store_and_index
+    store_ready = Event()
+    continue_store = Event()
+
+    def delayed_store(*args, **kwargs):
+        store_ready.set()
+        assert continue_store.wait(timeout=5)
+        return original_store(*args, **kwargs)
+
+    monkeypatch.setattr(materials_router, "_store_and_index", delayed_store)
+
+    with TestClient(app) as client:
+        token = _register(client, "upload-deleted-workspace-race@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study upload deletion races"},
+        ).json()["workspace"]["id"]
+
+        def upload():
+            return client.post(
+                f"/workspaces/{workspace_id}/materials",
+                headers=headers,
+                files={"files": ("orphan.txt", b"must not be orphaned", "text/plain")},
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(upload)
+            assert store_ready.wait(timeout=5)
+            deleted = client.delete(f"/workspaces/{workspace_id}", headers=headers)
+            continue_store.set()
+            uploaded = pending.result(timeout=5)
+
+    assert deleted.status_code == 204
+    assert uploaded.status_code == 404
+    assert uploaded.json()["error"]["code"] == "workspace_not_found"
+    with app.state.database.session() as session:
+        assert session.scalar(
+            select(func.count()).select_from(materials).where(
+                materials.c.project_id == workspace_id
+            )
+        ) == 0
 
 
 def test_workspace_delete_restores_material_objects_when_index_cleanup_fails(
@@ -380,6 +443,45 @@ def test_workspace_delete_restores_material_objects_when_index_cleanup_fails(
     assert failed.status_code == 500
     assert restored.status_code == 200
     assert restored.content == b"workspace material"
+
+
+def test_workspace_delete_restores_state_when_learning_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token = _register(client, "workspace-delete-learning-rollback@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study complete workspace rollback"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"workspace rollback material", "text/plain")},
+        ).json()[0]
+        original_delete = app.state.learning.delete
+
+        def delete_then_fail(owner_id: str, project_id: str) -> None:
+            original_delete(owner_id, project_id)
+            raise RuntimeError("learning cleanup failed")
+
+        monkeypatch.setattr(app.state.learning, "delete", delete_then_fail)
+        failed = client.delete(f"/workspaces/{workspace_id}", headers=headers)
+        snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
+        restored = client.get(
+            f"/workspaces/{workspace_id}/materials/{material['id']}/download",
+            headers=headers,
+        )
+
+    assert failed.status_code == 500
+    assert snapshot.status_code == 200
+    assert restored.status_code == 200
+    assert restored.content == b"workspace rollback material"
 
 
 def test_pending_bulk_material_delete_is_recovered_after_process_interruption(

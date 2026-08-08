@@ -55,8 +55,12 @@ describe("workspace state boundaries", () => {
     expect(stateSource).toContain("applySnapshot");
     expect(practiceSource).toContain("questionRequestIdRef");
     expect(practiceSource).toContain("attemptIdRef");
+    expect(practiceSource).toContain("practiceGenerationRef.current += 1");
     expect(practiceSource).toContain("refineq.practice-draft:");
+    expect(workspaceSource).toContain("isPracticeGenerationCurrent(generation)");
+    expect(workspaceSource).toContain("key={workspace.id}");
     expect(agentSource).toContain("api.chatWorkspace");
+    expect(agentSource).toContain("agentGenerationRef.current === generation");
   });
 });
 

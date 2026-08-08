@@ -177,6 +177,27 @@ class AtomicJsonStore:
         with self._lock_for(path):
             return self._deserialize(path)
 
+    def restore(
+        self,
+        owner_id: str,
+        collection: str,
+        record_id: str,
+        record: StoredRecord,
+    ) -> StoredRecord:
+        """Restore an exact deleted record without overwriting a concurrent survivor."""
+
+        path = self._record_path(owner_id, collection, record_id)
+        with self._lock_for(path):
+            if path.exists():
+                return self._deserialize(path)
+            restored = StoredRecord(
+                schema_version=record.schema_version,
+                version=record.version,
+                data=deepcopy(record.data),
+            )
+            self._write_unlocked(path, restored)
+            return restored
+
     def delete(self, owner_id: str, collection: str, record_id: str) -> None:
         """Remove one exact owner-scoped record without affecting peer records."""
 

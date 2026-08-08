@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from refineq.storage.json_store import AtomicJsonStore
+from refineq.storage.json_store import AtomicJsonStore, StoredRecord
 from refineq.workspaces.models import LearningWorkspace
 
 WORKSPACE_SCHEMA_VERSION = 1
@@ -51,6 +51,18 @@ class WorkspaceRepository:
     def get(self, owner_id: str, workspace_id: str) -> LearningWorkspace:
         record = self._store.read(owner_id, "workspaces", workspace_id)
         return LearningWorkspace.model_validate(record.data)
+
+    def snapshot(self, owner_id: str, workspace_id: str) -> StoredRecord:
+        return self._store.read(owner_id, "workspaces", workspace_id)
+
+    def restore(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        record: StoredRecord,
+    ) -> LearningWorkspace:
+        restored = self._store.restore(owner_id, "workspaces", workspace_id, record)
+        return LearningWorkspace.model_validate(restored.data)
 
     def update(
         self,

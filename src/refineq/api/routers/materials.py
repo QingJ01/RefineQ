@@ -163,6 +163,8 @@ def _store_and_index(
         )
     stored_objects = []
     try:
+        project_id = documents[0].project_id
+        _require_project(request, owner_id, project_id)
         indexed_documents: list[MaterialDocument] = []
         for document, payload in zip(documents, material_payloads, strict=True):
             stored = request.app.state.object_storage.put(

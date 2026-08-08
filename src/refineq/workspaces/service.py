@@ -273,25 +273,57 @@ class WorkspaceService:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
 
     def delete(self, owner_id: str, workspace_id: str) -> None:
-        with self._learning.plan_transaction(owner_id, workspace_id):
-            try:
-                self._workspaces.get(owner_id, workspace_id)
-            except RecordNotFoundError as error:
-                raise WorkspaceNotFoundError("Learning workspace not found") from error
-            materials = self._knowledge.list_materials(
-                owner_id=owner_id,
-                project_id=workspace_id,
-            )
-            if materials:
-                pending = self._material_deletions.prepare(
+        workspace_snapshot = None
+        learning_snapshot = None
+        session_snapshots = []
+        pending = None
+        try:
+            with self._learning.plan_transaction(owner_id, workspace_id):
+                try:
+                    self._workspaces.get(owner_id, workspace_id)
+                except RecordNotFoundError as error:
+                    raise WorkspaceNotFoundError("Learning workspace not found") from error
+                workspace_snapshot = self._workspaces.snapshot(owner_id, workspace_id)
+                learning_snapshot = self._learning.get(owner_id, workspace_id)
+                session_snapshots = self._sessions.snapshot_for_workspace(
+                    owner_id,
+                    workspace_id,
+                )
+                materials = self._knowledge.list_materials(
                     owner_id=owner_id,
                     project_id=workspace_id,
-                    material_ids=[material.id for material in materials],
                 )
+                if materials:
+                    pending = self._material_deletions.prepare(
+                        owner_id=owner_id,
+                        project_id=workspace_id,
+                        material_ids=[material.id for material in materials],
+                    )
+                self._learning.delete(owner_id, workspace_id)
+                self._sessions.delete_for_workspace(owner_id, workspace_id)
+                self._workspaces.delete(owner_id, workspace_id)
+
+            if pending is not None:
                 self._material_deletions.complete(pending)
-            self._learning.delete(owner_id, workspace_id)
-            self._sessions.delete_for_workspace(owner_id, workspace_id)
-            self._workspaces.delete(owner_id, workspace_id)
+        except Exception:
+            try:
+                if pending is not None and pending.directory.exists():
+                    self._material_deletions.rollback(pending)
+            finally:
+                if workspace_snapshot is not None and learning_snapshot is not None:
+                    with self._learning.plan_transaction(owner_id, workspace_id):
+                        self._workspaces.restore(
+                            owner_id,
+                            workspace_id,
+                            workspace_snapshot,
+                        )
+                        self._learning.restore(
+                            owner_id,
+                            workspace_id,
+                            learning_snapshot,
+                        )
+                        self._sessions.restore_snapshots(owner_id, session_snapshots)
+            raise
 
     def snapshot(self, owner_id: str, workspace_id: str) -> WorkspaceSnapshot:
         try:

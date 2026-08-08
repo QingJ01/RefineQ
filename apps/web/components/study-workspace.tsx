@@ -120,8 +120,10 @@ export function StudyWorkspace({
   const {
     answer,
     attemptIdRef,
+    capturePracticeGeneration,
     clearPracticeState,
     hydratePractice,
+    isPracticeGenerationCurrent,
     learningMode,
     practiceBusy,
     question,
@@ -376,6 +378,7 @@ export function StudyWorkspace({
 
   async function getQuestion(request: PracticeRequest = {}) {
     if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
     questionRequestIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
@@ -387,6 +390,7 @@ export function StudyWorkspace({
           ...request,
         }),
         (nextQuestion) => {
+          if (!isPracticeGenerationCurrent(generation)) return;
           if (question) {
             window.sessionStorage.removeItem(
               `refineq.practice-draft:${workspace.id}:${question.id}`,
@@ -400,42 +404,47 @@ export function StudyWorkspace({
         },
       );
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
   async function submitAnswer() {
     if (!auth || !workspace || !question) return;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
+    const attemptId = attemptIdRef.current;
     try {
       const graded = await api.submitWorkspaceAnswer(
           auth.access_token,
           workspace.id,
           question.id,
           answer,
-          attemptIdRef.current,
+          attemptId,
         );
+      if (!isPracticeGenerationCurrent(generation)) return;
       setResult(graded);
       attemptIdRef.current = null;
       window.sessionStorage.removeItem(
         `refineq.practice-draft:${workspace.id}:${question.id}`,
       );
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      if (!isPracticeGenerationCurrent(generation)) return;
       setProgress(snapshot.progress);
       setEvidence(snapshot.evidence);
       setPlan(snapshot.plan);
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
   async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean) {
     if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
     try {
@@ -445,6 +454,7 @@ export function StudyWorkspace({
         target.id,
         saved,
       );
+      if (!isPracticeGenerationCurrent(generation)) return;
       setQuestion((current) => current?.id === updated.id
         ? { ...current, saved: updated.saved }
         : current);
@@ -452,9 +462,9 @@ export function StudyWorkspace({
         ? [updated, ...current.filter((item) => item.id !== updated.id)]
         : current.filter((item) => item.id !== updated.id));
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
@@ -494,6 +504,7 @@ export function StudyWorkspace({
 
   async function retryAttempt(attempt: AttemptInsight) {
     if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
     try {
@@ -502,6 +513,7 @@ export function StudyWorkspace({
         workspace.id,
         attempt.question_id,
       );
+      if (!isPracticeGenerationCurrent(generation)) return;
       setQuestion(retried);
       setResult(null);
       setAnswer("");
@@ -509,9 +521,9 @@ export function StudyWorkspace({
       attemptIdRef.current = null;
       router.push(learningPath(workspace.id, "today"));
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
-      setPracticeBusy(false);
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
   }
 
@@ -520,6 +532,7 @@ export function StudyWorkspace({
     input: AttemptFeedbackInput,
   ) {
     if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
     setError("");
     try {
       const updated = await api.updateWorkspaceAttemptFeedback(
@@ -528,6 +541,7 @@ export function StudyWorkspace({
         attempt.attempt_id,
         input,
       );
+      if (!isPracticeGenerationCurrent(generation)) return;
       setInsights((current) => current ? {
         ...current,
         attempts: current.attempts.map((item) => item.attempt_id === updated.attempt_id
@@ -535,7 +549,7 @@ export function StudyWorkspace({
           : item),
       } : current);
     } catch (caught) {
-      reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
       throw caught;
     }
   }
@@ -980,6 +994,7 @@ export function StudyWorkspace({
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span><button aria-label={t("routingDismiss")} onClick={() => setError("")}>×</button></div>}
           {section === "today" && (
             <LearningSessionCanvas
+              key={workspace.id}
               locale={locale}
               t={t}
               workspace={workspace}

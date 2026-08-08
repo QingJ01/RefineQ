@@ -158,6 +158,47 @@ class SqlRecordStore:
                 raise RecordNotFoundError(":".join(identity.values()))
             return self._stored(row)
 
+    def restore(
+        self,
+        owner_id: str,
+        collection: str,
+        record_id: str,
+        record: StoredRecord,
+    ) -> StoredRecord:
+        """Restore an exact deleted record without overwriting a concurrent survivor."""
+
+        identity = self._identity(owner_id, collection, record_id)
+        lock_key = ":".join(identity.values())
+        with self._lock_for(lock_key), self._session() as session:
+            self._lock_owner_write(session, identity["owner_id"])
+            statement = select(records).filter_by(**identity)
+            if self.database.is_postgresql:
+                statement = statement.with_for_update()
+            row = session.execute(statement).one_or_none()
+            if row is not None:
+                return self._stored(row)
+
+            try:
+                with session.begin_nested():
+                    session.execute(
+                        insert(records).values(
+                            **identity,
+                            schema_version=record.schema_version,
+                            version=record.version,
+                            data=deepcopy(record.data),
+                            updated_at=utc_now(),
+                        )
+                    )
+                    session.flush()
+            except IntegrityError:
+                survivor = session.execute(select(records).filter_by(**identity)).one()
+                return self._stored(survivor)
+            return StoredRecord(
+                schema_version=record.schema_version,
+                version=record.version,
+                data=deepcopy(record.data),
+            )
+
     def delete(self, owner_id: str, collection: str, record_id: str) -> None:
         identity = self._identity(owner_id, collection, record_id)
         with self._lock_for(":".join(identity.values())), self._session() as session:

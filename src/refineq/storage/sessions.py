@@ -42,13 +42,33 @@ class SessionRepository:
         self._store.delete(owner_id, "sessions", session_id)
 
     def delete_for_workspace(self, owner_id: str, workspace_id: str) -> None:
+        for _, record in self.snapshot_for_workspace(owner_id, workspace_id):
+            session_id = record.data.get("session_id")
+            if isinstance(session_id, str):
+                self.delete(owner_id, session_id)
+
+    def snapshot_for_workspace(
+        self,
+        owner_id: str,
+        workspace_id: str,
+    ) -> list[tuple[str, StoredRecord]]:
+        snapshots: list[tuple[str, StoredRecord]] = []
         for record in self.list(owner_id):
             data = record.data
             if (data.get("workspace_id") or data.get("project_id")) != workspace_id:
                 continue
             session_id = data.get("session_id")
             if isinstance(session_id, str):
-                self.delete(owner_id, session_id)
+                snapshots.append((session_id, record))
+        return snapshots
+
+    def restore_snapshots(
+        self,
+        owner_id: str,
+        snapshots: list[tuple[str, StoredRecord]],
+    ) -> None:
+        for session_id, record in snapshots:
+            self._store.restore(owner_id, "sessions", session_id, record)
 
     def mutate(
         self,

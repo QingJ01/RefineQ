@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { api } from "@/lib/api";
 import type { AnswerResult, LearningMode, PracticeQuestion } from "@/lib/types";
@@ -19,9 +19,11 @@ type CoachContext = {
 
 export function useAgentState() {
   const [coachSessionId, setCoachSessionId] = useState<string | undefined>();
+  const agentGenerationRef = useRef(0);
 
   const askCoach = useCallback(async (message: string, context: CoachContext) => {
     if (!context.token || !context.workspaceId) throw new Error(context.errorMessage);
+    const generation = agentGenerationRef.current;
     const reply = await api.chatWorkspace(
       context.token,
       context.workspaceId,
@@ -37,11 +39,16 @@ export function useAgentState() {
         feedback: context.result?.feedback,
       },
     );
-    setCoachSessionId(reply.session_id);
+    if (agentGenerationRef.current === generation) {
+      setCoachSessionId(reply.session_id);
+    }
     return reply;
   }, [coachSessionId]);
 
-  const resetAgent = useCallback(() => setCoachSessionId(undefined), []);
+  const resetAgent = useCallback(() => {
+    agentGenerationRef.current += 1;
+    setCoachSessionId(undefined);
+  }, []);
 
   return { askCoach, resetAgent };
 }
