@@ -264,6 +264,10 @@ test("learner completes and restores a capability learning journey", async ({ pa
     );
     await expect(page.getByTestId("session-practice-stage").locator("h2")).toHaveText(savedPrompt);
     await page.getByTestId("skip-question").click();
+    await expect(page.getByTestId("session-practice-stage")).not.toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
 
     await page.getByTestId("practice-answer").fill(
       "The stated request is export, but the recurring job is reliable weekly reporting. I would interview five similar users, compare their current workaround, and test a lightweight report prototype before committing to an export feature.",

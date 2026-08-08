@@ -49,13 +49,18 @@ def _upsert_review_session(raw_plan: dict[str, Any], candidate: StudySession) ->
         for item in sessions
         if not (
             item.get("activity") == "review"
+            and str(item.get("id", "")).startswith("review_")
             and item.get("topic_id") == candidate.topic_id
             and item.get("status", "planned") != "completed"
         )
     ]
     sessions.append(candidate.model_dump(mode="json"))
 
-    reviews = [item for item in sessions if item.get("activity") == "review"]
+    reviews = [
+        item
+        for item in sessions
+        if item.get("activity") == "review" and str(item.get("id", "")).startswith("review_")
+    ]
     excess = len(reviews) - MAX_REVIEW_SESSIONS
     if excess > 0:
         removable = sorted(
