@@ -1413,6 +1413,23 @@ describe("global calendar route", () => {
   });
 });
 
+
+describe("unified authenticated shell styling", () => {
+  it("gives shared navigation and the global calendar explicit desktop and mobile layouts", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toContain("/* Unified authenticated application shell */");
+    expect(styles).toContain(".app-sidebar {");
+    expect(styles).toContain(".global-calendar-shell {");
+    expect(styles).toContain(".global-calendar-layout {");
+    expect(styles).toContain('.global-calendar [data-color="0"]');
+    expect(styles).toContain("@media (max-width: 900px)");
+  });
+});
+
 describe("plan setting validation", () => {
   it("requires a goal, a future date, valid minutes, and every topic exactly once", () => {
     const invalid = validatePlanSettings({

@@ -73,7 +73,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
   await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
-    await page.getByTestId("workspace-home-link").click();
+    await page.getByTestId("app-nav-home").click();
     await page.getByTestId("learning-intent").fill(
       "I want to practice conversational Spanish for an upcoming trip",
     );
@@ -172,6 +172,10 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.keyboard.press("Tab");
     await expect(page.locator(".skip-link")).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByTestId("app-nav-home")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("app-nav-calendar")).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(page.getByTestId("workspace-switcher")).toBeFocused();
     await expect(page.getByTestId("workspace-switcher")).toBeVisible();
     expect((await page.getByTestId("workspace-switcher").boundingBox())?.height).toBeGreaterThanOrEqual(44);
@@ -214,7 +218,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       ) repeatedRestoreRequests.push(url.pathname);
     };
     page.on("request", recordRestoreRequest);
-    await page.getByTestId("workspace-home-link").click();
+    await page.getByTestId("app-nav-home").click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId("learning-intent")).toBeVisible();
     await page.goBack();
@@ -385,7 +389,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   });
 
   await test.step("update and export the account without losing the active workspace", async () => {
-    await page.getByTestId("nav-account").click();
+    await page.getByTestId("app-nav-account").click();
     await expect(page).toHaveURL(/\/account$/);
     await expect(page.getByTestId("account-center")).toBeVisible();
     const profileForm = page.getByTestId("account-profile-form");
@@ -506,7 +510,7 @@ test("administrator routes and operations survive real navigation", async ({ pag
   await page.getByTestId("auth-submit").click();
   await expect(page.getByTestId("learning-intent")).toBeVisible();
 
-  await page.getByTestId("home-admin").click();
+  await page.getByTestId("app-nav-admin").click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.getByTestId("admin-overview")).toBeVisible();
   await expect(page.getByTestId("admin-system-status")).toBeVisible();
