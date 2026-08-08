@@ -33,4 +33,3 @@ def list_calendar(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": error.code, "message": str(error)},
         ) from error
-

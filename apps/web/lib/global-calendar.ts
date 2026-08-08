@@ -56,4 +56,3 @@ export function workspaceColorIndex(workspaceId: string): number {
   }
   return hash % WORKSPACE_COLOR_COUNT;
 }
-

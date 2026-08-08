@@ -90,4 +90,3 @@ describe("global calendar view model", () => {
     expect(workspaceColorIndex("math")).toBeLessThan(8);
   });
 });
-

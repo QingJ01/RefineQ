@@ -208,4 +208,3 @@ Create representative workspaces/tasks in isolated local data. Verify `/`, `/cal
 **Step 5: Commit**
 
 Commit message: `style: align authenticated pages around shared shell`
-

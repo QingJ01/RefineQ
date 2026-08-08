@@ -40,4 +40,3 @@ class CalendarResponse(BaseModel):
 
     _normalize_starts_at = field_validator("starts_at", mode="after")(_as_utc)
     _normalize_ends_at = field_validator("ends_at", mode="after")(_as_utc)
-
