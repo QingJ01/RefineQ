@@ -239,7 +239,19 @@ test("learner completes and restores a capability learning journey", async ({ pa
     const savedPrompt = await page.getByTestId("session-practice-stage").locator("h2").innerText();
     await page.getByTestId("save-question").click();
     await expect(page.getByTestId("save-question")).toHaveAttribute("aria-pressed", "true");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("practice-answer").fill("unfinished mobile draft");
     await page.getByTestId("skip-question").click();
+    await expect(page.getByRole("dialog")).toContainText(/unsaved|未提交/i);
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(page.getByTestId("practice-answer")).toHaveValue("unfinished mobile draft");
+    await expect(page.getByTestId("session-practice-stage")).toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
+    await page.getByTestId("skip-question").click();
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await page.setViewportSize({ width: 1440, height: 1024 });
     await expect(page.getByTestId("session-practice-stage")).not.toHaveAttribute(
       "data-question-id",
       firstQuestionId!,

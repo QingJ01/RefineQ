@@ -1364,13 +1364,18 @@ describe("accessible application shell", () => {
     const loadingPath = fileURLToPath(new URL("../app/loading.tsx", import.meta.url));
     const errorPath = fileURLToPath(new URL("../app/error.tsx", import.meta.url));
     const notFoundPath = fileURLToPath(new URL("../app/not-found.tsx", import.meta.url));
+    const globalErrorPath = fileURLToPath(new URL("../app/global-error.tsx", import.meta.url));
 
     expect(existsSync(loadingPath)).toBe(true);
     expect(existsSync(errorPath)).toBe(true);
     expect(existsSync(notFoundPath)).toBe(true);
+    expect(existsSync(globalErrorPath)).toBe(true);
     expect(readFileSync(loadingPath, "utf8")).toContain('data-testid="route-loading"');
     expect(readFileSync(errorPath, "utf8")).toContain("reset()");
     expect(readFileSync(notFoundPath, "utf8")).toContain('href="/"');
+    expect(readFileSync(loadingPath, "utf8")).toContain("useSessionLocale");
+    expect(readFileSync(errorPath, "utf8")).toContain("useSessionLocale");
+    expect(readFileSync(notFoundPath, "utf8")).toContain("useSessionLocale");
   });
 
   it("provides application and social metadata", () => {

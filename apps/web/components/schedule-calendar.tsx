@@ -63,6 +63,7 @@ export function ScheduleCalendar({
     apply: zh ? "应用" : "Apply",
     review: zh ? "复习" : "Review",
   }[activity ?? "learn"]);
+  const topicLabel = (topicId: string) => topicLabels[topicId] ?? (zh ? "未命名主题" : "Untitled topic");
 
   function beginEdit(session: StudySession) {
     setEditingId(session.id);
@@ -114,7 +115,7 @@ export function ScheduleCalendar({
               return (
                 <button type="button" key={key} className={selectedDate === key ? "calendar-day selected" : "calendar-day"} onClick={() => setSelectedDate(key)}>
                   <span>{date.getDate()}</span>
-                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} key={session.id}>{activityLabel(session.activity)} · {topicLabels[session.topic_id] ?? session.topic_id}</i>)}</div>
+                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} key={session.id}>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</i>)}</div>
                 </button>
               );
             })}
@@ -134,7 +135,7 @@ export function ScheduleCalendar({
                   </div>
                 ) : (
                   <button type="button" className={`agenda-event activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} onClick={() => beginEdit(session)}>
-                    <i /><span><strong>{activityLabel(session.activity)} · {topicLabels[session.topic_id] ?? session.topic_id}</strong><small>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date(session.planned_at))} · {session.minutes} {zh ? "分钟" : "min"}</small></span>
+                    <i /><span><strong>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</strong><small>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date(session.planned_at))} · {session.minutes} {zh ? "分钟" : "min"}</small></span>
                   </button>
                 )}
               </li>

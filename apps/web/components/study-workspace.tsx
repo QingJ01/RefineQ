@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
 import { LearningReport } from "@/components/learning-report";
@@ -45,6 +46,11 @@ import { localizeApiError } from "@/lib/error-messages";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
+import {
+  guardPracticeNavigation,
+  hasUnsavedPracticeDraft,
+  type PracticeNavigationAction,
+} from "@/lib/practice-navigation";
 import { isAbortError } from "@/lib/upload-flow";
 import {
   clearLearningSession,
@@ -157,6 +163,8 @@ export function StudyWorkspace({
   const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
   const appliedActionIdsRef = useRef(new Set<string>());
   const activeCoachWorkspaceIdRef = useRef<string | null>(null);
+  const pendingPracticeActionRef = useRef<PracticeNavigationAction | null>(null);
+  const [draftConfirmOpen, setDraftConfirmOpen] = useState(false);
 
   const applySnapshot = useCallback((snapshot: WorkspaceSnapshot) => {
     if (activeCoachWorkspaceIdRef.current !== snapshot.workspace.id) {
@@ -177,6 +185,29 @@ export function StudyWorkspace({
       setModelConfigured,
     );
   }, [auth?.access_token, setModelConfigured]);
+
+  function runGuardedPracticeAction(action: PracticeNavigationAction): boolean {
+    return guardPracticeNavigation(
+      hasUnsavedPracticeDraft(answer, Boolean(question), Boolean(result)),
+      action,
+      (pending) => {
+        pendingPracticeActionRef.current = pending;
+        setDraftConfirmOpen(true);
+      },
+    );
+  }
+
+  function confirmDraftReplacement() {
+    const pending = pendingPracticeActionRef.current;
+    pendingPracticeActionRef.current = null;
+    setDraftConfirmOpen(false);
+    if (pending) void pending();
+  }
+
+  function cancelDraftReplacement() {
+    pendingPracticeActionRef.current = null;
+    setDraftConfirmOpen(false);
+  }
 
   useEffect(() => {
     const token = auth?.access_token;
@@ -522,101 +553,94 @@ export function StudyWorkspace({
     }
   }
 
-  async function practiceTopic(topicId: string, difficulty?: number) {
-    if (!workspace) return;
-    router.push(learningPath(workspace.id, "today"));
-    await getQuestion({
-      topicId,
-      difficulty,
-      learningMode,
-      replace: question !== null,
-    });
-    window.requestAnimationFrame(() => {
-      document.getElementById("active-practice")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    });
-  }
-
-  async function startReview(review: DueReviewInsight) {
-    if (!workspace) return;
-    router.push(learningPath(workspace.id, "today"));
-    await getQuestion({
-      topicId: review.topic_id,
-      reviewSessionId: review.session_id,
-      learningMode,
-      replace: question !== null,
-    });
-    window.requestAnimationFrame(() => {
-      document.getElementById("active-practice")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    });
-  }
-
-  async function retryAttempt(attempt: AttemptInsight) {
-    if (!auth || !workspace) return;
-    const generation = capturePracticeGeneration();
-    setPracticeBusy(true);
-    setError("");
-    try {
-      const retried = await api.retryWorkspaceQuestion(
-        auth.access_token,
-        workspace.id,
-        attempt.question_id,
-      );
-      if (!isPracticeGenerationCurrent(generation)) return;
-      setQuestion(retried);
-      setResult(null);
-      setMasteryBefore(null);
-      setAnswer("");
-      questionRequestIdRef.current = null;
-      attemptIdRef.current = null;
+  function practiceTopic(topicId: string, difficulty?: number) {
+    runGuardedPracticeAction(async () => {
+      if (!workspace) return;
       router.push(learningPath(workspace.id, "today"));
-    } catch (caught) {
-      if (isPracticeGenerationCurrent(generation)) reportError(caught);
-    } finally {
-      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
-    }
-  }
-
-  async function practiceSavedQuestion(saved: PracticeQuestion) {
-    if (!auth || !workspace) return;
-    const generation = capturePracticeGeneration();
-    setPracticeBusy(true);
-    setError("");
-    try {
-      const retried = await api.retryWorkspaceQuestion(
-        auth.access_token,
-        workspace.id,
-        saved.id,
-      );
-      if (!isPracticeGenerationCurrent(generation)) return;
-      if (question) {
-        window.sessionStorage.removeItem(
-          `refineq.practice-draft:${workspace.id}:${question.id}`,
-        );
-      }
-      setQuestion(retried);
-      setResult(null);
-      setMasteryBefore(null);
-      setAnswer("");
-      questionRequestIdRef.current = null;
-      attemptIdRef.current = null;
-      router.push(learningPath(workspace.id, "today"));
+      await getQuestion({
+        topicId,
+        difficulty,
+        learningMode,
+        replace: question !== null,
+      });
       window.requestAnimationFrame(() => {
         document.getElementById("active-practice")?.scrollIntoView({
           behavior: "smooth",
           block: "start",
         });
       });
-    } catch (caught) {
-      if (isPracticeGenerationCurrent(generation)) reportError(caught);
-    } finally {
-      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
-    }
+    });
+  }
+
+  function startReview(review: DueReviewInsight) {
+    runGuardedPracticeAction(async () => {
+      if (!workspace) return;
+      router.push(learningPath(workspace.id, "today"));
+      await getQuestion({
+        topicId: review.topic_id,
+        reviewSessionId: review.session_id,
+        learningMode,
+        replace: question !== null,
+      });
+      window.requestAnimationFrame(() => {
+        document.getElementById("active-practice")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+  }
+
+  function retryAttempt(attempt: AttemptInsight) {
+    runGuardedPracticeAction(async () => {
+      if (!auth || !workspace) return;
+      const generation = capturePracticeGeneration();
+      setPracticeBusy(true);
+      setError("");
+      try {
+        const retried = await api.retryWorkspaceQuestion(auth.access_token, workspace.id, attempt.question_id);
+        if (!isPracticeGenerationCurrent(generation)) return;
+        setQuestion(retried);
+        setResult(null);
+        setMasteryBefore(null);
+        setAnswer("");
+        questionRequestIdRef.current = null;
+        attemptIdRef.current = null;
+        router.push(learningPath(workspace.id, "today"));
+      } catch (caught) {
+        if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      } finally {
+        if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+      }
+    });
+  }
+
+  function practiceSavedQuestion(saved: PracticeQuestion) {
+    runGuardedPracticeAction(async () => {
+      if (!auth || !workspace) return;
+      const generation = capturePracticeGeneration();
+      setPracticeBusy(true);
+      setError("");
+      try {
+        const retried = await api.retryWorkspaceQuestion(auth.access_token, workspace.id, saved.id);
+        if (!isPracticeGenerationCurrent(generation)) return;
+        if (question) window.sessionStorage.removeItem(`refineq.practice-draft:${workspace.id}:${question.id}`);
+        setQuestion(retried);
+        setResult(null);
+        setMasteryBefore(null);
+        setAnswer("");
+        questionRequestIdRef.current = null;
+        attemptIdRef.current = null;
+        router.push(learningPath(workspace.id, "today"));
+        window.requestAnimationFrame(() => {
+          document.getElementById("active-practice")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      } catch (caught) {
+        if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      } finally {
+        if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+      }
+    });
   }
 
   async function updateAttemptFeedback(
@@ -819,10 +843,10 @@ export function StudyWorkspace({
   }
 
   function changeLearningMode(mode: LearningMode) {
-    setLearningMode(mode);
-    if (question) {
-      void getQuestion({ learningMode: mode, replace: true });
-    }
+    runGuardedPracticeAction(() => {
+      setLearningMode(mode);
+      if (question) return getQuestion({ learningMode: mode, replace: true }).then(() => undefined);
+    });
   }
 
   async function updateLearningWorkspace(
@@ -1195,7 +1219,7 @@ export function StudyWorkspace({
               }}
               onStartTask={() => { void getQuestion({ learningMode }); }}
               onSubmit={submitAnswer}
-              onNextTask={() => { void getQuestion({ learningMode, replace: true }); }}
+              onNextTask={() => { runGuardedPracticeAction(() => getQuestion({ learningMode, replace: true }).then(() => undefined)); }}
               onRetryTask={() => { if (question) void practiceSavedQuestion(question); }}
               onViewProgress={() => router.push(learningPath(workspace.id, "progress"))}
               onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
@@ -1314,6 +1338,16 @@ export function StudyWorkspace({
           )}
         </section>
       </section>
+      <ConfirmDialog
+        open={draftConfirmOpen}
+        title={locale === "zh" ? "放弃未提交的作答？" : "Discard the unsaved answer?"}
+        description={locale === "zh" ? "继续会清空当前草稿并切换题目；取消会保留现有内容。" : "Continuing clears the current draft and changes the task. Cancel keeps your answer."}
+        confirmLabel={locale === "zh" ? "放弃并继续" : "Discard and continue"}
+        cancelLabel={locale === "zh" ? "保留草稿" : "Keep draft"}
+        tone="danger"
+        onConfirm={confirmDraftReplacement}
+        onCancel={cancelDraftReplacement}
+      />
     </main>
   );
 }

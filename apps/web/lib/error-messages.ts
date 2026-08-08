@@ -34,6 +34,19 @@ const messages: Record<Locale, Record<string, string>> = {
     not_found: "没有找到请求的内容。",
     service_unavailable: "服务暂时不可用，请稍后重试。",
     conflict: "当前状态已发生变化，请刷新后重试。",
+    learning_conflict: "学习状态已变化，请重新同步后再试。",
+    learning_error: "学习服务暂时无法完成操作，请稍后重试。",
+    learning_not_seeded: "这个学习空间尚未准备完成。",
+    invalid_learning_constraints: "学习目标、日期或时长设置不完整。",
+    question_not_found: "找不到这道题，可能已被历史记录清理。",
+    attempt_not_found: "找不到这次作答记录。",
+    agent_session_not_found: "找不到这段教练对话。",
+    agent_session_conflict: "教练对话状态已变化，请重新同步。",
+    agent_session_limit: "教练对话数量已达到上限，请先清理旧对话。",
+    agent_error: "学习 Agent 暂时无法完成请求。",
+    integration_not_configured: "这项外部能力尚未配置。",
+    project_not_found: "找不到对应的学习空间。",
+    invalid_identifier: "请求标识无效。",
   },
   en: {
     material_bulk_delete_failed: "The selected materials could not be deleted safely. Files and indexes were restored where possible.",
@@ -66,6 +79,19 @@ const messages: Record<Locale, Record<string, string>> = {
     not_found: "The requested item could not be found.",
     service_unavailable: "The service is temporarily unavailable. Try again later.",
     conflict: "The item changed. Refresh and try again.",
+    learning_conflict: "Learning state changed. Resync and try again.",
+    learning_error: "The learning service could not finish this action. Try again shortly.",
+    learning_not_seeded: "This learning space is not ready yet.",
+    invalid_learning_constraints: "The learning goal, date, or time constraints are incomplete.",
+    question_not_found: "That question is no longer available.",
+    attempt_not_found: "That attempt could not be found.",
+    agent_session_not_found: "That coach conversation could not be found.",
+    agent_session_conflict: "The coach conversation changed. Resync and try again.",
+    agent_session_limit: "The coach conversation limit has been reached. Remove an older conversation first.",
+    agent_error: "The learning Agent could not finish this request.",
+    integration_not_configured: "This integration has not been configured.",
+    project_not_found: "That learning space could not be found.",
+    invalid_identifier: "The request identifier is invalid.",
   },
 };
 
@@ -75,6 +101,11 @@ const fallbacks: Record<Locale, string> = {
 };
 
 export function localizeApiError(caught: unknown, locale: Locale): string {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return locale === "zh"
+      ? "当前网络已断开，请恢复连接后重试。"
+      : "You are offline. Reconnect and try again.";
+  }
   if (caught instanceof ApiError) {
     return messages[locale][caught.code] ?? fallbacks[locale];
   }

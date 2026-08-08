@@ -36,6 +36,7 @@ const copy = {
     modelUnknown: "暂时无法确认学习 Agent 状态。本地练习、资料和进度仍可继续使用。",
     configure: "前往配置",
     recheck: "重新检测",
+    contactAdmin: "请联系管理员配置学习 Agent 模型。",
     fullCoach: "完整对话与历史",
     applied: "已执行",
     confirm: "这个动作会清空当前题的未提交内容，是否继续？",
@@ -56,6 +57,7 @@ const copy = {
     modelUnknown: "The learning Agent status is unavailable. Local practice, material, and progress remain available.",
     configure: "Open settings",
     recheck: "Check again",
+    contactAdmin: "Please contact an administrator to configure the learning Agent model.",
     fullCoach: "Full conversation and history",
     applied: "Applied",
     confirm: "This action will clear the unsubmitted draft for the current question. Continue?",
@@ -301,6 +303,7 @@ export function SessionCoach({
       {modelConfigured !== true && (
         <div className="coach-capability-notice" role="status">
           <p>{modelConfigured === false ? text.modelMissing : text.modelUnknown}</p>
+          {modelConfigured === false && !isAdmin && <p>{text.contactAdmin}</p>}
           {isAdmin && onConfigure && (
             <button
               type="button"

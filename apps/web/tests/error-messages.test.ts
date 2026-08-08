@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/api";
 import { localizeApiError } from "../lib/error-messages";
 
 
 describe("localized API errors", () => {
+  afterEach(() => vi.unstubAllGlobals());
   it("maps stable API codes without leaking backend English", () => {
     expect(localizeApiError(
       new ApiError(401, "invalid_credentials", "Invalid email or password"),
@@ -47,5 +48,20 @@ describe("localized API errors", () => {
   it("uses a safe localized fallback for unknown failures", () => {
     expect(localizeApiError(new Error("internal storage path"), "zh"))
       .toBe("操作没有完成，请稍后重试。");
+  });
+
+  it("distinguishes an offline browser from a server failure", () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    expect(localizeApiError(new TypeError("Failed to fetch"), "zh"))
+      .toBe("当前网络已断开，请恢复连接后重试。");
+  });
+
+  it("covers learning, Agent, and integration error codes", () => {
+    expect(localizeApiError(new ApiError(409, "learning_conflict", "raw"), "en"))
+      .toBe("Learning state changed. Resync and try again.");
+    expect(localizeApiError(new ApiError(404, "attempt_not_found", "raw"), "zh"))
+      .toBe("找不到这次作答记录。");
+    expect(localizeApiError(new ApiError(409, "integration_not_configured", "raw"), "en"))
+      .toBe("This integration has not been configured.");
   });
 });

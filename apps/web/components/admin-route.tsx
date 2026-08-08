@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { AdminConsole } from "@/components/admin-console";
 import { BrandMark } from "@/components/brand";
 import { api, ApiError } from "@/lib/api";
+import { localizeApiError } from "@/lib/error-messages";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "@/lib/session";
 import type { IntegrationKind, Locale } from "@/lib/types";
 import type { AdminSection } from "@/lib/admin-routes";
@@ -51,7 +52,7 @@ export function AdminRoute({
           clearLearningSession(window.sessionStorage);
           router.replace("/");
         } else {
-          setVerificationError(caught instanceof Error ? caught.message : "Verification failed");
+          setVerificationError(localizeApiError(caught, session.locale ?? "zh"));
         }
       });
     return () => { active = false; };

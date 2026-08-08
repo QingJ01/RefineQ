@@ -384,6 +384,8 @@ describe("focused learning components", () => {
     expect(materialHtml).toContain('data-testid="practice-grounding"');
     expect(materialHtml).toContain("材料依据");
     expect(materialHtml).toContain('data-testid="practice-sources"');
+    expect(materialHtml).toContain("未命名主题");
+    expect(materialHtml).not.toContain("user-needs · 今日学习");
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
@@ -1271,6 +1273,19 @@ describe("focused learning components", () => {
     expect(html).toContain("学习 Agent 尚未配置模型");
     expect(html).toContain('data-testid="coach-configure-model"');
     expect(html).toContain("前往配置");
+  });
+
+  it("tells a learner who can configure an unavailable model", () => {
+    const html = renderToStaticMarkup(
+      <SessionCoach
+        locale="en"
+        modelConfigured={false}
+        onAsk={async () => ({ session_id: "session-1", message: "reply", citations: [], sources: [] })}
+      />,
+    );
+
+    expect(html).toContain("contact an administrator");
+    expect(html).not.toContain('data-testid="coach-configure-model"');
   });
 
   it("keeps local learning explicit when model capability status cannot be checked", () => {

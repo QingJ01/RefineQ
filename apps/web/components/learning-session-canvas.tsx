@@ -208,7 +208,7 @@ export function LearningSessionCanvas({
   );
   const activeTopicId = question?.topic_id ?? nextSession?.topic_id;
   const topic = activeTopicId
-    ? progress?.topics?.[activeTopicId] ?? activeTopicId
+    ? progress?.topics?.[activeTopicId] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")
     : workspace.topics[0] ?? workspace.title;
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const agentRef = useRef<HTMLDetailsElement>(null);
