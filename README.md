@@ -55,6 +55,29 @@ npm run dev
 
 打开 `http://127.0.0.1:3000`。
 
+## 可选 SMTP 密码找回
+
+密码找回入口只有在后端完整配置 SMTP 后才会显示。至少设置
+`REFINEQ_PUBLIC_SITE_URL`、`REFINEQ_SMTP_HOST` 和 `REFINEQ_SMTP_FROM_EMAIL`；需要认证时同时设置
+`REFINEQ_SMTP_USERNAME` 与 `REFINEQ_SMTP_PASSWORD`。默认使用 587 端口和 STARTTLS；隐式 TLS
+请把 `REFINEQ_SMTP_STARTTLS=false`、`REFINEQ_SMTP_USE_SSL=true`。未配置时不会创建无法投递的重置令牌。
+
+`REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN=true` 只用于隔离的本地浏览器测试，不得用于公开环境。
+
+## 准备演示数据
+
+演示种子使用当前 `REFINEQ_DATABASE_URL` 和数据目录，不会重置已有进度。密码只能从运行时环境传入，
+命令不会把密码打印到输出：
+
+```powershell
+$env:REFINEQ_DEMO_EMAIL = "learner@refineq.local"
+$env:REFINEQ_DEMO_PASSWORD = "使用至少 12 字节的临时强密码"
+refineq-demo
+Remove-Item Env:REFINEQ_DEMO_PASSWORD
+```
+
+预置数据仅用于产品演示，不代表真实用户、访谈或参赛证据。
+
 ## 创建管理员
 
 密码不会写入仓库或配置文件：

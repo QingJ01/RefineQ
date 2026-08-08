@@ -39,9 +39,9 @@ test.beforeAll(() => {
 });
 
 
-test("learner completes and restores a capability learning journey", async ({ page }, testInfo) => {
+test("learner completes and restores a source-grounded exam journey", async ({ page }, testInfo) => {
   test.slow();
-  const uniqueEmail = `capability-learner-${Date.now()}@example.com`;
+  const uniqueEmail = `exam-learner-${Date.now()}@example.com`;
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") browserErrors.push(message.text());
@@ -51,13 +51,13 @@ test("learner completes and restores a capability learning journey", async ({ pa
   await page.setViewportSize({ width: 1440, height: 1024 });
   await page.goto("/");
   await page.getByTestId("register-tab").click();
-  await page.getByTestId("display-name").fill("Capability learner");
+  await page.getByTestId("display-name").fill("Exam learner");
   await page.getByTestId("email").fill(uniqueEmail);
   await page.getByTestId("password").fill("correct-horse-battery-staple");
   await page.getByTestId("auth-submit").click();
   await page
     .getByTestId("learning-intent")
-    .fill("I want to learn product thinking, validate real user needs, and complete an interview analysis");
+    .fill("Computer Architecture midterm on October 25, 90 minutes a day, starting with pipelines and caches");
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
@@ -65,6 +65,11 @@ test("learner completes and restores a capability learning journey", async ({ pa
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   await expect(page.locator(".session-steps li")).toHaveCount(4);
+  const initialExamDays = Number.parseInt(
+    await page.getByTestId("exam-countdown").innerText(),
+    10,
+  );
+  expect(initialExamDays).toBeGreaterThan(30);
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
   await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
@@ -114,11 +119,18 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
   });
 
-  await test.step("use a short, varied capability path", async () => {
+  await test.step("use a short, varied exam path", async () => {
     await page.getByTestId("nav-path").click();
     await expect(page).toHaveURL(/\/path$/);
     await expect(page.locator(".plan-session")).toHaveCount(7);
-    await expect(page.locator(".plan-activity")).toHaveCount(7);
+    await page.getByTestId("toggle-plan-sessions").click();
+    await expect(page.getByTestId("toggle-plan-sessions")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const planSessionCount = await page.locator(".plan-session").count();
+    expect(planSessionCount).toBeGreaterThan(30);
+    await expect(page.locator(".plan-activity")).toHaveCount(planSessionCount);
     const firstSession = page.locator(".plan-session").first();
     await expect(firstSession.locator(".plan-topic strong")).not.toContainText("topic_");
     await firstSession.locator('[data-testid^="complete-session-"]').click();
@@ -135,7 +147,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("plan-settings-cancel").click();
     await expect(goal).toHaveValue(originalGoal);
 
-    await goal.fill(`${originalGoal} with a reviewed case study`);
+    await goal.fill(`${originalGoal} with a timed mock exam`);
     await page.getByTestId("plan-daily-minutes").fill("35");
     const movableTopic = page.locator('[data-testid^="plan-topic-down-"]:not(:disabled)').first();
     if (await movableTopic.count()) await movableTopic.click();
@@ -150,7 +162,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("plan-settings-regenerate").click();
     await page.getByTestId("confirm-dialog-confirm").click();
     await expect(page.getByTestId("confirm-dialog")).toBeHidden();
-    await expect(page.locator(".plan-session")).toHaveCount(7);
+    await expect(page.locator(".plan-session")).toHaveCount(planSessionCount);
   });
 
   await test.step("keep mobile navigation accessible", async () => {
@@ -187,7 +199,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("mobile-sticky-task-action")).toHaveCSS("position", "sticky");
     await page.getByTestId("mobile-shortcut-path").click();
     await page.waitForTimeout(450);
-    await page.screenshot({ path: testInfo.outputPath("capability-learning-mobile.png") });
+    await page.screenshot({ path: testInfo.outputPath("exam-learning-mobile.png") });
     await page.setViewportSize({ width: 1440, height: 1024 });
   });
 
@@ -212,58 +224,58 @@ test("learner completes and restores a capability learning journey", async ({ pa
     expect(repeatedRestoreRequests).toEqual([]);
   });
 
-  await test.step("upload a real interview source", async () => {
+  await test.step("upload computer architecture study sources", async () => {
     await page.getByTestId("nav-materials").click();
     await page.locator('input[type="file"]').setInputFiles({
-      name: "user-interview.txt",
+      name: "computer-architecture-notes.txt",
       mimeType: "text/plain",
       buffer: Buffer.from(
-        "用户需求验证：A user asked for data export, but repeated interview evidence showed the underlying need was a trustworthy weekly reporting workflow. Validate the problem before choosing a feature solution.",
+        "Computer Architecture midterm review: pipelines overlap fetch, decode, execute, memory, and write-back to improve throughput; caches use temporal and spatial locality. 流水线的数据冒险可以通过转发或停顿处理，缓存利用局部性降低平均访存时间。",
       ),
     });
     await expect(
       page.locator(".material-list .material-title-row > span").getByText(
-        "user-interview.txt",
+        "computer-architecture-notes.txt",
         { exact: true },
       ),
     ).toBeVisible();
     await page.locator('input[type="file"]').setInputFiles({
-      name: "interview-notes.md",
+      name: "cache-review.md",
       mimeType: "text/markdown",
       buffer: Buffer.from(
-        "# Research notes\n\nThree interviewees described a manual reporting handoff and unclear ownership.",
+        "# 缓存复习\n\n平均访存时间由命中时间、缺失率和缺失代价共同决定。直接映射缓存中，一个主存块只有一个候选位置。",
       ),
     });
-    const notesMaterial = page.locator(".material-list li").filter({ hasText: "interview-notes.md" });
+    const notesMaterial = page.locator(".material-list li").filter({ hasText: "cache-review.md" });
     await expect(notesMaterial).toBeVisible();
     await notesMaterial.locator('[data-testid^="material-edit-"]').click();
-    await notesMaterial.locator(".material-edit-form input").nth(0).fill("Weekly research notes");
-    await notesMaterial.locator(".material-edit-form input").nth(1).fill("research, interview");
+    await notesMaterial.locator(".material-edit-form input").nth(0).fill("缓存复习笔记");
+    await notesMaterial.locator(".material-edit-form input").nth(1).fill("exam, cache");
     await notesMaterial.locator('.material-edit-form button[type="submit"]').click();
-    await expect(notesMaterial).toContainText("Weekly research notes");
-    await page.getByTestId("material-filter-tag").selectOption("research");
+    await expect(notesMaterial).toContainText("缓存复习笔记");
+    await page.getByTestId("material-filter-tag").selectOption("exam");
     await expect(page.locator(".material-list li")).toHaveCount(1);
     await page.getByTestId("material-sort").selectOption("title");
     await page.getByTestId("material-filter-tag").selectOption("all");
     await expect(page.locator(".material-list li")).toHaveCount(2);
-    await page.getByTestId("material-search").fill("weekly reporting workflow");
+    await page.getByTestId("material-search").fill("流水线 数据冒险");
     await page.locator(".material-search button").click();
-    await expect(page.locator(".material-search-results")).toContainText("user-interview.txt");
+    await expect(page.locator(".material-search-results")).toContainText("computer-architecture-notes.txt");
     await page.getByTestId("nav-today").click();
-    await expect(page.locator(".session-sources")).toContainText("user-interview.txt");
+    await expect(page.locator(".session-sources")).toContainText("computer-architecture-notes.txt");
   });
 
-  await test.step("complete two case-learning tasks", async () => {
-    await page.getByTestId("learning-mode-case").click();
-    await expect(page.getByTestId("learning-mode-case")).toHaveAttribute("aria-pressed", "true");
+  await test.step("complete two exam-learning tasks", async () => {
+    await page.getByTestId("learning-mode-exam").click();
+    await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute("aria-pressed", "true");
     await page.getByTestId("session-start-task").click();
     await expect(page.getByTestId("session-practice-stage")).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath("capability-learning-practice.png") });
+    await page.screenshot({ path: testInfo.outputPath("exam-learning-practice.png") });
     const firstQuestionId = await page.getByTestId("session-practice-stage").getAttribute("data-question-id");
     expect(firstQuestionId).toBeTruthy();
 
     await page.getByTestId("practice-sources").click();
-    await expect(page.getByRole("dialog")).toContainText("user-interview.txt");
+    await expect(page.getByRole("dialog")).toContainText("computer-architecture-notes.txt");
     await page.keyboard.press("Escape");
     const savedPrompt = await page.getByTestId("session-practice-stage").locator("h2").innerText();
     await page.getByTestId("save-question").click();
@@ -299,7 +311,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     );
 
     await page.getByTestId("practice-answer").fill(
-      "The stated request is export, but the recurring job is reliable weekly reporting. I would interview five similar users, compare their current workaround, and test a lightweight report prototype before committing to an export feature.",
+      "流水线通过让多条指令的取指、译码、执行、访存和写回阶段重叠来提高吞吐量。遇到 RAW 数据冒险时可用转发把结果送到后续指令，无法转发时插入停顿；分支预测错误则清空错误路径。易错点是吞吐量提高不等于单条指令延迟一定下降。",
     );
     await page.getByTestId("submit-answer").click();
     await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
@@ -307,7 +319,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
 
     await page.getByTestId("next-question").click();
     await page.getByTestId("practice-answer").fill(
-      "I would separate the requested solution from the underlying outcome, gather behavioral evidence, define a falsifiable success signal, and compare the smallest alternatives before building.",
+      "缓存依靠时间局部性和空间局部性减少访问主存的次数。平均访存时间等于命中时间加缺失率乘缺失代价；计算时必须把百分比换成小数，并区分直接映射中的冲突缺失与容量缺失。",
     );
     await page.getByTestId("submit-answer").click();
     await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
@@ -323,9 +335,9 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("progress-topic-detail")).toBeVisible();
     const rubric = page.locator('[data-testid^="attempt-rubric-"]').first();
     await rubric.locator("summary").click();
-    await expect(rubric).toContainText("user-interview.txt");
+    await expect(rubric).toContainText("computer-architecture-notes.txt");
     const note = rubric.locator('[data-testid^="attempt-note-"]');
-    await note.fill("Please review how the evidence was weighed.");
+    await note.fill("Please review how the source-grounded reasoning was weighed.");
     await rubric.locator('[data-testid^="save-attempt-note-"]').click();
     const appeal = rubric.locator('[data-testid^="appeal-attempt-"]');
     await appeal.click();
@@ -342,7 +354,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("nav-materials").click();
     await expect(
       page.locator(".material-list .material-title-row > span").getByText(
-        "user-interview.txt",
+        "computer-architecture-notes.txt",
         { exact: true },
       ),
     ).toBeVisible();
@@ -351,7 +363,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("session-coach-input")).toBeDisabled();
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
     await page.waitForTimeout(450);
-    await page.screenshot({ path: testInfo.outputPath("capability-learning-desktop.png") });
+    await page.screenshot({ path: testInfo.outputPath("exam-learning-desktop.png") });
   });
 
   await test.step("show a localized recovery error even before authentication is restored", async () => {
@@ -377,10 +389,10 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page).toHaveURL(/\/account$/);
     await expect(page.getByTestId("account-center")).toBeVisible();
     const profileForm = page.getByTestId("account-profile-form");
-    await profileForm.locator("input").first().fill("Capability learner updated");
+    await profileForm.locator("input").first().fill("Exam learner updated");
     await profileForm.locator("button").click();
     await expect(page.locator(".account-identity-stamp strong")).toHaveText(
-      "Capability learner updated",
+      "Exam learner updated",
     );
 
     const downloadPromise = page.waitForEvent("download");
@@ -410,6 +422,80 @@ test("learner completes and restores a capability learning journey", async ({ pa
     (message) => !message.includes("status of 409"),
   );
   expect(unexpectedBrowserErrors).toEqual([]);
+});
+
+
+test("mobile learner completes a source-grounded exam loop", async ({ page }, testInfo) => {
+  test.slow();
+  const uniqueEmail = `mobile-exam-${Date.now()}@example.com`;
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Mobile exam learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.getByTestId("learning-intent").fill(
+    "10 月 25 日考计算机组成原理期中，每天能学 90 分钟，先补流水线和缓存",
+  );
+  await page.getByTestId("start-learning").click();
+
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+  const routeNotice = page.getByTestId("workspace-route-notice");
+  if (await routeNotice.isVisible()) await routeNotice.getByRole("button").last().click();
+
+  await page.getByTestId("mobile-shortcut-materials").click();
+  await expect(page).toHaveURL(/\/materials$/);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "mobile-computer-architecture.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "流水线通过重叠取指、译码、执行、访存和写回提高吞吐量。RAW 数据冒险可用转发或停顿处理。缓存利用时间局部性和空间局部性降低平均访存时间。",
+    ),
+  });
+  await expect(
+    page.locator(".material-list .material-title-row > span").getByText(
+      "mobile-computer-architecture.txt",
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  await page.getByTestId("mobile-shortcut-today").click();
+  await expect(page).toHaveURL(/\/today$/);
+  await expect(page.locator(".session-sources")).toContainText(
+    "mobile-computer-architecture.txt",
+  );
+  await page.getByTestId("learning-mode-exam").click();
+  await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByTestId("session-start-task").click();
+  await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+  await page.getByTestId("practice-sources").click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "mobile-computer-architecture.txt",
+  );
+  await page.keyboard.press("Escape");
+  await page.getByTestId("practice-answer").fill(
+    "流水线让多条指令的不同阶段重叠执行，从而提高吞吐量。遇到 RAW 数据冒险时，优先通过转发把结果送到后续指令，无法转发时插入停顿；分支预测错误要清空错误路径。易错点是把吞吐量提升误认为单条指令延迟一定降低。",
+  );
+  await page.getByTestId("submit-answer").click();
+  await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
+  await expect(page.locator(".feedback-score")).toContainText("/100");
+
+  await page.getByTestId("mobile-shortcut-progress").click();
+  await expect(page).toHaveURL(/\/progress$/);
+  await expect(page.locator(".evidence-timeline > li")).toHaveCount(1);
+  await expect(page.locator('[data-testid^="attempt-rubric-"]').first()).toContainText(
+    "mobile-computer-architecture.txt",
+  );
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("mobile-exam-loop.png") });
 });
 
 

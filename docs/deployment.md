@@ -22,6 +22,7 @@ Before a shared or public deployment, edit `.env` and change:
 - the matching password inside `REFINEQ_DATABASE_URL` (URL-encode special characters)
 - `REFINEQ_MODEL_ENCRYPTION_KEY`
 - `REFINEQ_DOMAIN`
+- `REFINEQ_PUBLIC_SITE_URL` so password-reset links point to the public HTTPS origin
 - `REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS` before enabling an S3-compatible service
 
 Generate the Fernet integration-encryption key with:
@@ -45,6 +46,37 @@ extension and application schema, then exposes readiness only after both databas
 checks pass.
 
 Open `http://localhost` when `REFINEQ_DOMAIN=:80`.
+
+## Optional SMTP password recovery
+
+Password recovery stays hidden and reset tokens are not created unless SMTP has both a host and
+sender configured. Set these values in `.env` when recovery is required:
+
+```dotenv
+REFINEQ_PUBLIC_SITE_URL=https://learn.example.com
+REFINEQ_SMTP_HOST=smtp.example.com
+REFINEQ_SMTP_PORT=587
+REFINEQ_SMTP_FROM_EMAIL=RefineQ <no-reply@example.com>
+REFINEQ_SMTP_USERNAME=
+REFINEQ_SMTP_PASSWORD=
+REFINEQ_SMTP_STARTTLS=true
+REFINEQ_SMTP_USE_SSL=false
+```
+
+Set username and password together when the relay requires authentication. For implicit TLS,
+disable STARTTLS and enable `REFINEQ_SMTP_USE_SSL`. Keep
+`REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN=false` in every shared or public environment.
+
+## Seed presentation-only data
+
+Set `REFINEQ_DEMO_PASSWORD` in the runtime environment, then run the idempotent seed inside the API
+container. The command uses the configured database and never prints the password:
+
+```powershell
+docker compose --env-file .env -f infra/compose.yml exec api refineq-demo
+```
+
+The seeded account and learning records are presentation fixtures, not user-research evidence.
 
 ## Create the first administrator
 

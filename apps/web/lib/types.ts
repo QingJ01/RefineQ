@@ -337,6 +337,10 @@ export interface PasswordResetAccepted {
   reset_token?: string | null;
 }
 
+export interface AuthCapabilities {
+  password_reset_available: boolean;
+}
+
 export interface PublicModelSettings {
   base_url: string;
   model: string;

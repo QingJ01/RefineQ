@@ -1567,6 +1567,29 @@ describe("accessible application shell", () => {
       "REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN",
     );
   });
+
+  it("shows password recovery only after public capability detection", () => {
+    const authSource = readFileSync(
+      fileURLToPath(new URL("../components/auth-panel.tsx", import.meta.url)),
+      "utf8",
+    );
+    const apiSource = readFileSync(
+      fileURLToPath(new URL("../lib/api.ts", import.meta.url)),
+      "utf8",
+    );
+    const typesSource = readFileSync(
+      fileURLToPath(new URL("../lib/types.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(typesSource).toContain("AuthCapabilities");
+    expect(typesSource).toContain("password_reset_available: boolean");
+    expect(apiSource).toContain('this.request("/auth/capabilities")');
+    expect(authSource).toContain("api.getAuthCapabilities()");
+    expect(authSource).toContain("passwordResetAvailable &&");
+    expect(authSource).toContain('window.location.hash.startsWith("#reset-token=")');
+    expect(authSource).toContain("window.history.replaceState");
+  });
 });
 
 

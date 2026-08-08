@@ -76,6 +76,12 @@ class PasswordResetAccepted(BaseModel):
     reset_token: str | None = None
 
 
+class AuthCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password_reset_available: bool
+
+
 class PasswordResetComplete(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

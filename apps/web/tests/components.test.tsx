@@ -605,7 +605,7 @@ describe("focused learning components", () => {
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('autoComplete="current-password"');
     expect(html).toContain('data-testid="toggle-password"');
-    expect(html).toContain('data-testid="forgot-password"');
+    expect(html).not.toContain('data-testid="forgot-password"');
   });
 
   it("starts with one personal Agent prompt instead of a project form", () => {

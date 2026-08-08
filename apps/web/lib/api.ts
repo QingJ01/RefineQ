@@ -11,6 +11,7 @@ import type {
   AnswerResult,
   AttemptFeedbackInput,
   AttemptFeedbackResponse,
+  AuthCapabilities,
   AuthResponse,
   LearningWorkspace,
   LearningInsights,
@@ -143,6 +144,10 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+  }
+
+  getAuthCapabilities(): Promise<AuthCapabilities> {
+    return this.request("/auth/capabilities");
   }
 
   requestPasswordReset(email: string): Promise<PasswordResetAccepted> {

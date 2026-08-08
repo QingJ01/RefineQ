@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from refineq.api.app import create_app
 from refineq.api.routers.projects import ProjectCreateRequest, create_project
 from refineq.config import Settings
-from refineq.database.schema import records, system_settings
+from refineq.database.schema import password_reset_tokens, records, system_settings
 from refineq.identity.service import (
     AccountDeletionError,
     IdentityService,
@@ -40,6 +40,16 @@ def _register(client: TestClient, email: str) -> dict[str, object]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+class RecordingPasswordResetDelivery:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send(self, email: str, token: str) -> None:
+        self.sent.append((email, token))
 
 
 def test_first_user_registration_hashes_the_password(tmp_path: Path) -> None:
@@ -328,6 +338,59 @@ def test_password_reset_token_is_hidden_by_default_for_every_email(tmp_path: Pat
     assert existing.status_code == 202
     assert missing.status_code == 202
     assert existing.json() == missing.json() == {"accepted": True, "reset_token": None}
+    with app.state.database.session() as session:
+        assert session.scalar(select(func.count()).select_from(password_reset_tokens)) == 0
+
+
+def test_auth_capabilities_report_only_available_password_reset_delivery(
+    tmp_path: Path,
+) -> None:
+    disabled_app = _app(tmp_path / "disabled")
+    exposed_app = create_app(
+        Settings(
+            data_root=tmp_path / "exposed" / "data",
+            password_reset_expose_token=True,
+            _env_file=None,
+        )
+    )
+    delivery = RecordingPasswordResetDelivery()
+    smtp_app = create_app(
+        Settings(data_root=tmp_path / "smtp" / "data", _env_file=None),
+        password_reset_delivery=delivery,
+    )
+
+    with TestClient(disabled_app) as client:
+        assert client.get("/auth/capabilities").json() == {"password_reset_available": False}
+    with TestClient(exposed_app) as client:
+        assert client.get("/auth/capabilities").json() == {"password_reset_available": True}
+    with TestClient(smtp_app) as client:
+        assert client.get("/auth/capabilities").json() == {"password_reset_available": True}
+
+
+def test_password_reset_schedules_smtp_delivery_without_exposing_token(
+    tmp_path: Path,
+) -> None:
+    delivery = RecordingPasswordResetDelivery()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        password_reset_delivery=delivery,
+    )
+
+    with TestClient(app) as client:
+        _register(client, "mail-reset@example.com")
+        existing = client.post(
+            "/auth/password-reset/request",
+            json={"email": " MAIL-RESET@EXAMPLE.COM "},
+        )
+        missing = client.post(
+            "/auth/password-reset/request",
+            json={"email": "missing-reset@example.com"},
+        )
+
+    assert existing.json() == missing.json() == {"accepted": True, "reset_token": None}
+    assert len(delivery.sent) == 1
+    assert delivery.sent[0][0] == "mail-reset@example.com"
+    assert len(delivery.sent[0][1]) >= 20
 
 
 def test_password_reset_revokes_access_tokens_issued_before_password_change(
