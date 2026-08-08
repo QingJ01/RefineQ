@@ -5,20 +5,16 @@ import {
   BookOpen,
   CalendarDays,
   ChartNoAxesColumnIncreasing,
-  House,
-  Languages,
-  LogOut,
   Route,
-  Settings2,
   Sparkles,
-  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
-import { BrandMark, BrandName } from "@/components/brand";
+import { AppSidebar } from "@/components/app-sidebar";
+import { BrandMark } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { InitialDiagnostic } from "@/components/initial-diagnostic";
@@ -1213,6 +1209,7 @@ export function StudyWorkspace({
       <>
         {error && <div className="error-banner" role="alert"><strong>{t("error")}</strong><span>{error}</span></div>}
         <LearningHome
+          locale={locale}
           t={t}
           busy={homeBusy}
           workspaces={workspaces}
@@ -1223,7 +1220,6 @@ export function StudyWorkspace({
           showArchived={showArchived}
           onToggleArchived={toggleArchivedWorkspaces}
           isAdmin={auth.user.role === "admin"}
-          onAdmin={() => router.push("/admin")}
           onLogout={logout}
           onToggleLocale={toggleLocale}
         />
@@ -1245,68 +1241,48 @@ export function StudyWorkspace({
 
   return (
     <main id="main-content" className="workspace-shell">
-      <aside className="workspace-sidebar">
-        <Link className="sidebar-brand wordmark-button" href="/" onClick={prepareRouteNavigation} aria-label="RefineQ">
-          <BrandMark className="brand-mark" size={36} />
-          <BrandName />
-        </Link>
-        <Link
-          data-testid="workspace-home-link"
-          className="workspace-home-link"
-          href="/"
-          onClick={prepareHomeNavigation}
-        >
-          <House size={18} />
-          <span>{t("learningHome")}</span>
-        </Link>
-        <WorkspaceSwitcher
+      <div className="workspace-sidebar">
+        <AppSidebar
           locale={locale}
-          current={workspace}
+          active="workspace"
           workspaces={workspaces}
-          currentProgress={Math.round(averageMastery * 100)}
-          onSelect={(target) => openWorkspace(target)}
-          onAllSpaces={returnHome}
-        />
-        <span className="workspace-nav-label">{t("workspaceSections")}</span>
-        <nav className="workspace-nav" aria-label={t("workspaceSections")}>
-          {nav.map(({ id, icon: Icon }) => (
-            <Link
-              key={id}
-              data-testid={`nav-${id}`}
-              className={section === id ? "active" : ""}
-              href={learningPath(workspace.id, id)}
-              onClick={prepareSectionNavigation}
-              aria-label={t(id)}
-              aria-current={section === id ? "page" : undefined}
-            >
-              <Icon size={19} />
-              <span>{t(id)}</span>
-            </Link>
-          ))}
-          {auth.user.role === "admin" && (
-            <Link
-              data-testid="nav-admin"
-              href="/admin"
-              aria-label={t("administration")}
-            >
-              <Settings2 size={19} />
-              <span>{t("administration")}</span>
-            </Link>
+          currentWorkspaceId={workspace.id}
+          isAdmin={auth.user.role === "admin"}
+          contextLabel={t("workspaceSections")}
+          contextNavigation={(
+            <>
+              <WorkspaceSwitcher
+                locale={locale}
+                current={workspace}
+                workspaces={workspaces}
+                currentProgress={Math.round(averageMastery * 100)}
+                onSelect={(target) => openWorkspace(target)}
+                onAllSpaces={returnHome}
+              />
+              <div className="workspace-nav">
+                {nav.map(({ id, icon: Icon }) => (
+                  <Link
+                    key={id}
+                    data-testid={`nav-${id}`}
+                    className={section === id ? "active" : ""}
+                    href={learningPath(workspace.id, id)}
+                    onClick={prepareSectionNavigation}
+                    aria-label={t(id)}
+                    aria-current={section === id ? "page" : undefined}
+                  >
+                    <Icon size={19} />
+                    <span>{t(id)}</span>
+                  </Link>
+                ))}
+              </div>
+            </>
           )}
-          <Link
-            data-testid="nav-account"
-            href="/account"
-            aria-label={t("account")}
-          >
-            <UserRound size={19} />
-            <span>{t("account")}</span>
-          </Link>
-        </nav>
-        <div className="sidebar-actions">
-          <button className="quiet-button" onClick={toggleLocale}><Languages size={16} /> {t("language")}</button>
-          <button className="quiet-button" onClick={logout}><LogOut size={16} /> {t("logout")}</button>
-        </div>
-      </aside>
+          onToggleLocale={toggleLocale}
+          onLogout={logout}
+          onNavigate={prepareRouteNavigation}
+          onHomeNavigate={prepareHomeNavigation}
+        />
+      </div>
       <section className="workspace-stage">
         <header className="mobile-section-context" data-testid="mobile-section-context">
           <div>

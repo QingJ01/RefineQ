@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/brand";
 import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
 import { clearLearningSession, loadLearningSession, saveLearningSession } from "@/lib/session";
-import type { IntegrationKind, Locale } from "@/lib/types";
+import type { IntegrationKind, LearningWorkspace, Locale } from "@/lib/types";
 import type { AdminSection } from "@/lib/admin-routes";
 import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
 
@@ -23,6 +23,7 @@ export function AdminRoute({
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [locale, setLocale] = useState<Locale>("zh");
+  const [workspaces, setWorkspaces] = useState<LearningWorkspace[]>([]);
   const [verificationError, setVerificationError] = useState("");
   const [verificationNonce, setVerificationNonce] = useState(0);
 
@@ -46,6 +47,9 @@ export function AdminRoute({
         }
         setVerificationError("");
         setToken(session.token);
+        void api.listWorkspaces(session.token)
+          .then((items) => { if (active) setWorkspaces(items); })
+          .catch(() => { if (active) setWorkspaces([]); });
       })
       .catch((caught: unknown) => {
         if (!active) return;
@@ -85,6 +89,7 @@ export function AdminRoute({
     <AdminConsole
       token={token}
       locale={locale}
+      workspaces={workspaces}
       activeKind={activeKind}
       activeSection={activeSection}
       onLogout={logout}

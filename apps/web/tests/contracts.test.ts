@@ -117,11 +117,16 @@ describe("administrator routing", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(adminPage)).toBe(true);
     expect(existsSync(integrationPage)).toBe(true);
     expect(existsSync(operationsPage)).toBe(true);
-    expect(workspaceSource).toContain('router.push("/admin")');
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('href="/admin"');
     expect(workspaceSource).not.toContain('section === "admin"');
     expect(workspaceSource).not.toContain('"coach" | "admin"');
   });
@@ -298,13 +303,18 @@ describe("durable learner routing", () => {
       fileURLToPath(new URL("../components/workspace-switcher.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
-    expect(workspaceSource).toContain('data-testid="workspace-home-link"');
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('data-testid="app-nav-home"');
     expect(workspaceSource).toContain("<WorkspaceSwitcher");
     expect(switcherSource).toContain('data-testid="workspace-switcher"');
-    expect(workspaceSource).toContain('className="workspace-nav-label"');
+    expect(workspaceSource).toContain('contextLabel={t("workspaceSections")}');
     expect(workspaceSource).not.toContain('className="sidebar-learning"');
-    expect(workspaceSource).toContain('onClick={prepareHomeNavigation}');
+    expect(workspaceSource).toContain('onHomeNavigate={prepareHomeNavigation}');
     expect(workspaceSource).toContain('data-testid="workspace-route-state"');
     expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
@@ -477,11 +487,16 @@ describe("authentication and API errors", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(accountPage)).toBe(true);
-    expect(homeSource).toContain('data-testid="home-account"');
-    expect(workspaceSource).toContain('data-testid="nav-account"');
-    expect(workspaceSource).toContain('href="/account"');
+    expect(homeSource).toContain("<AppSidebar");
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('data-testid="app-nav-account"');
+    expect(sidebarSource).toContain('href="/account"');
   });
 
   it("delays releasing the account export until the browser can start the download", () => {

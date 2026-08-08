@@ -596,7 +596,7 @@ test("learner can reset a forgotten password and sign in again", async ({ page }
   await page.getByTestId("email").fill(uniqueEmail);
   await page.getByTestId("password").fill(originalPassword);
   await page.getByTestId("auth-submit").click();
-  await page.getByTestId("home-logout").click();
+  await page.getByTestId("app-logout").click();
 
   await page.getByTestId("forgot-password").click();
   await page.getByTestId("email").fill(uniqueEmail);

@@ -6,6 +6,7 @@ import { AuthPanel } from "../components/auth-panel";
 import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
+import { AppSidebar } from "../components/app-sidebar";
 import { LearningHome } from "../components/learning-home";
 import { InitialDiagnostic } from "../components/initial-diagnostic";
 import { LearningReport } from "../components/learning-report";
@@ -26,6 +27,66 @@ import type { SearchSource } from "../lib/types";
 
 
 const t = translator("en");
+
+const sidebarWorkspaces = [{
+  id: "math-space",
+  title: "Mathematics",
+  subject: "Mathematics",
+  goal: "Pass the final",
+  topics: ["Limits"],
+  keywords: ["calculus"],
+  routing_summary: "Calculus study",
+  archived: false,
+  created_at: "2026-08-01T00:00:00Z",
+  last_active_at: "2026-08-08T00:00:00Z",
+}];
+
+
+describe("shared authenticated sidebar", () => {
+  it("keeps global destinations, recent spaces, contextual navigation, and utilities together", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="en"
+        active="calendar"
+        workspaces={sidebarWorkspaces}
+        isAdmin
+        contextLabel="ACCOUNT"
+        contextNavigation={<a href="#profile">Profile</a>}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="app-sidebar"');
+    expect(html).toContain('data-testid="app-nav-home"');
+    expect(html).toContain('data-testid="app-nav-calendar"');
+    expect(html).toContain('href="/calendar"');
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain('href="/#recent-learning"');
+    expect(html).toContain('href="/learn/math-space/today"');
+    expect(html).toContain('data-testid="app-nav-admin"');
+    expect(html).toContain('data-testid="app-nav-account"');
+    expect(html).toContain("Profile");
+    expect(html).toContain('data-testid="app-language"');
+    expect(html).toContain('data-testid="app-logout"');
+  });
+
+  it("does not expose administrator navigation to learners", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="home"
+        workspaces={[]}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain('data-testid="app-nav-admin"');
+    expect(html).toContain("学习首页");
+    expect(html).toContain("总日历");
+  });
+});
 
 describe("focused learning components", () => {
   it("renders an accessible initial self-assessment for every topic", () => {
@@ -52,6 +113,7 @@ describe("focused learning components", () => {
     const html = renderToStaticMarkup(
       <AccountCenter
         locale="en"
+        workspaces={sidebarWorkspaces}
         user={{
           id: "user-1",
           email: "learner@example.com",
@@ -65,15 +127,23 @@ describe("focused learning components", () => {
         onExport={async () => undefined}
         onLogoutAll={async () => undefined}
         onDeleteAccount={async () => undefined}
+        onLogout={() => undefined}
       />,
     );
 
     expect(html).toContain('data-testid="account-center"');
+    expect(html).toContain('data-testid="app-sidebar"');
+    expect(html).toContain('data-testid="app-nav-account"');
+    expect(html).toMatch(/data-testid="app-nav-account"[^>]*aria-current="page"/);
     expect(html).toContain('data-testid="account-profile-form"');
     expect(html).toContain('data-testid="account-password-form"');
     expect(html).toContain('data-testid="account-export"');
     expect(html).toContain('data-testid="account-logout-all"');
     expect(html).toContain('data-testid="account-delete-confirmation"');
+    expect(html).toContain('id="profile"');
+    expect(html).toContain('id="security"');
+    expect(html).toContain('id="data-sessions"');
+    expect(html).toContain('id="danger-zone"');
     expect(html).toContain("Type learner@example.com to confirm");
     expect(html).toContain("Delete account permanently");
   });
@@ -532,21 +602,24 @@ describe("focused learning components", () => {
   it("renders a concise administrator overview without full configuration forms", () => {
     const html = renderToStaticMarkup(
       <AdminConsole
-        token="admin-token"
-        locale="zh"
+          token="admin-token"
+          locale="zh"
+          workspaces={sidebarWorkspaces}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}
       />,
     );
 
-    expect(html).toContain('class="admin-console"');
+      expect(html).toContain('class="admin-console"');
+      expect(html).toContain('data-testid="app-sidebar"');
+      expect(html).toMatch(/data-testid="app-nav-admin"[^>]*aria-current="page"/);
     expect(html).toContain('data-testid="admin-overview"');
     expect(html).toContain('data-testid="admin-system-status"');
     expect(html).toContain('data-testid="admin-next-action"');
     expect(html).toContain('data-testid="admin-principles"');
     expect(html).not.toContain('data-testid="admin-integration-link-');
     expect(html).not.toContain('data-testid="integration-card-');
-    expect(html).toContain('data-testid="admin-logout"');
+    expect(html).toContain('data-testid="app-logout"');
   });
 
   it("renders only the selected integration on a detail route", () => {
@@ -637,6 +710,7 @@ describe("focused learning components", () => {
   it("starts with one personal Agent prompt instead of a project form", () => {
     const html = renderToStaticMarkup(
       <LearningHome
+          locale="zh"
         t={translator("zh")}
         busy={false}
         workspaces={[]}
@@ -650,11 +724,12 @@ describe("focused learning components", () => {
     expect(html).toContain("今天想学什么");
     expect(html).not.toContain("项目名称");
     expect(html).toContain('class="home-shell"');
-    expect(html).toContain('class="home-sidebar"');
+      expect(html).toContain('class="home-sidebar"');
+      expect(html).toContain('data-testid="app-sidebar"');
     expect(html).toContain('class="learning-composer"');
     expect(html).toContain("RefineQ");
-    expect(html).toContain('data-testid="home-logout"');
-    expect(html).toContain('data-testid="home-language"');
+    expect(html).toContain('data-testid="app-logout"');
+    expect(html).toContain('data-testid="app-language"');
   });
 
   it("makes recent learning and workspace correction actions operable", () => {
