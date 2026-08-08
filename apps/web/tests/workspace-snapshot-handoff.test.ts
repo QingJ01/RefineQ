@@ -5,6 +5,7 @@ import {
   consumeWorkspaceSnapshot,
   removeWorkspaceSnapshot,
   saveWorkspaceSnapshot,
+  WORKSPACE_SNAPSHOT_TTL_MS,
 } from "../lib/workspace-snapshot-handoff";
 import type { WorkspaceSnapshot } from "../lib/types";
 
@@ -50,10 +51,46 @@ describe("workspace snapshot handoff", () => {
   it("hands a prefetched snapshot to the next route exactly once", () => {
     const storage = new MemoryStorage();
 
-    saveWorkspaceSnapshot(storage, snapshot);
+    saveWorkspaceSnapshot(storage, snapshot, 1_000);
 
-    expect(consumeWorkspaceSnapshot(storage, "workspace-1")).toEqual(snapshot);
-    expect(consumeWorkspaceSnapshot(storage, "workspace-1")).toBeNull();
+    expect(consumeWorkspaceSnapshot(storage, "workspace-1", 1_001)).toEqual(snapshot);
+    expect(consumeWorkspaceSnapshot(storage, "workspace-1", 1_001)).toBeNull();
+  });
+
+  it("preserves local learning mode, mastery baseline, and topic suggestions", () => {
+    const storage = new MemoryStorage();
+    const enriched = {
+      ...snapshot,
+      topic_suggestions: [{
+        id: "suggestion-1",
+        name: "Continuity",
+        source_material_ids: ["material-1"],
+      }],
+      client_state: { learningMode: "project" as const, masteryBefore: 0.35 },
+    };
+
+    saveWorkspaceSnapshot(storage, enriched, 1_000);
+
+    expect(consumeWorkspaceSnapshot(storage, "workspace-1", 1_001)).toEqual(enriched);
+  });
+
+  it("rejects an expired snapshot and removes it", () => {
+    const storage = new MemoryStorage();
+    saveWorkspaceSnapshot(storage, snapshot, 1_000);
+
+    expect(consumeWorkspaceSnapshot(
+      storage,
+      "workspace-1",
+      1_000 + WORKSPACE_SNAPSHOT_TTL_MS + 1,
+    )).toBeNull();
+    expect(consumeWorkspaceSnapshot(storage, "workspace-1", 1_001)).toBeNull();
+  });
+
+  it("degrades safely when browser storage is full", () => {
+    const storage = new MemoryStorage();
+    storage.setItem = () => { throw new DOMException("full", "QuotaExceededError"); };
+
+    expect(saveWorkspaceSnapshot(storage, snapshot, 1_000)).toBe(false);
   });
 
   it("does not return a snapshot for a different workspace", () => {

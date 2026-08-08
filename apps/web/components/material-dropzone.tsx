@@ -17,6 +17,7 @@ import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "reac
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
+import { consumeHistoryUploadContinuation } from "@/lib/history-navigation-guard";
 import type { Translator } from "@/lib/i18n";
 import type {
   Locale,
@@ -113,6 +114,7 @@ export function MaterialDropzone({
   topicSuggestions = [],
   acceptingTopicSuggestionId = null,
   onAcceptTopicSuggestion,
+  onUploadActivityChange,
   materials,
 }: {
   t: Translator;
@@ -126,6 +128,7 @@ export function MaterialDropzone({
   topicSuggestions?: TopicSuggestion[];
   acceptingTopicSuggestionId?: string | null;
   onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
+  onUploadActivityChange?: (active: boolean) => void;
   materials: MaterialRecord[];
 }) {
   const copy = organizationCopy[locale];
@@ -178,6 +181,16 @@ export function MaterialDropzone({
   const selectedMaterials = materials.filter((material) => selectedIds.has(material.id));
   const allVisibleSelected = visibleMaterials.length > 0
     && visibleMaterials.every((material) => selectedIds.has(material.id));
+  const uploadActive = queue.some((item) => (
+    item.status === "queued" || item.status === "uploading"
+  ));
+
+  useEffect(() => {
+    onUploadActivityChange?.(uploadActive);
+    return () => {
+      if (uploadActive) onUploadActivityChange?.(false);
+    };
+  }, [onUploadActivityChange, uploadActive]);
 
   useEffect(() => {
     uploadQueue.open();
@@ -189,6 +202,7 @@ export function MaterialDropzone({
     const controllers = activeControllersRef.current;
     return () => {
       window.removeEventListener("beforeunload", beforeUnload);
+      if (consumeHistoryUploadContinuation()) return;
       uploadQueue.close();
       controllers.forEach((controller) => controller.abort());
       controllers.clear();

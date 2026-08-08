@@ -1307,6 +1307,30 @@
   margin: 0 auto;
 }
 
+.plan-view-toggle {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.plan-view-toggle button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--muted-strong);
+}
+
+.plan-view-toggle button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .learning-path-view .plan-card,
 .learning-progress-view .progress-insights,
 .learning-progress-view .ledger,
@@ -1326,6 +1350,19 @@
 .learning-progress-view .page-section-heading {
   grid-column: 1 / -1;
   margin-bottom: 2px;
+}
+
+.learning-progress-view .learning-record {
+  grid-column: 1 / -1;
+  scroll-margin-top: 24px;
+}
+
+.learning-progress-view > .page-section-heading a {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 @media (max-width: 1180px) {
@@ -3832,6 +3869,50 @@ textarea:focus {
 .plan-session-actions button:disabled {
   cursor: wait;
   opacity: 0.52;
+}
+
+.plan-session-editor {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 80px auto auto;
+  align-items: end;
+  gap: 6px;
+}
+
+.plan-session-editor label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.plan-session-editor input,
+.plan-session-editor button {
+  min-height: 30px;
+}
+
+.plan-session-editor button {
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+}
+
+@media (max-width: 760px) {
+  .plan-session-editor {
+    width: 100%;
+    grid-column: 3;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plan-session-editor input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .plan-session-editor button {
+    min-height: 40px;
+  }
 }
 
 .sequence {
@@ -6778,6 +6859,7 @@ textarea:focus {
 .calendar-event.color-1 { background: #ff9f0a; }
 .calendar-event.color-2 { background: #30b95d; }
 .calendar-event.color-3 { background: #af52de; }
+.calendar-event.completed { opacity: .58; text-decoration: line-through; }
 .day-agenda { border-left: 1px solid var(--border); padding: 22px 18px; background: #f7f7f9; }
 .day-agenda h3 { margin: 5px 0 18px; }
 .day-agenda > p { color: var(--muted); font-size: 12px; }
@@ -6786,6 +6868,9 @@ textarea:focus {
 .agenda-event > i { border-radius: 999px; background: #0a84ff; }
 .agenda-event > span { display: grid; gap: 4px; }
 .agenda-event small { color: var(--muted); }
+.agenda-event.completed > span { opacity: .62; }
+.agenda-event-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; }
+.agenda-event-actions button { min-height: 28px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); color: var(--muted-strong); font-size: 9px; }
 .calendar-editor { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: #fff; box-shadow: 0 4px 18px rgba(28,35,52,.08); }
 .calendar-editor label { display: grid; gap: 5px; color: var(--muted-strong); font-size: 11px; }
 .calendar-editor input { min-width: 0; }
@@ -7146,8 +7231,7 @@ textarea:focus {
   gap: 5px;
 }
 
-.app-sidebar-label,
-.app-recent-spaces > small {
+.app-sidebar-label {
   display: block;
   margin: 0 10px 4px;
   color: #8c8e94;
@@ -7159,7 +7243,6 @@ textarea:focus {
 }
 
 .app-nav-item,
-.app-spaces-all,
 .app-space-link,
 .app-sidebar-context nav > a,
 .app-sidebar-context nav > div > a,
@@ -7182,7 +7265,6 @@ textarea:focus {
 }
 
 .app-nav-item:hover,
-.app-spaces-all:hover,
 .app-space-link:hover,
 .app-sidebar-context nav > a:hover,
 .app-sidebar-context nav > div > a:hover,
@@ -7193,7 +7275,6 @@ textarea:focus {
 }
 
 .app-nav-item:active,
-.app-spaces-all:active,
 .app-space-link:active,
 .app-sidebar-context a:active,
 .app-utility-link:active,
@@ -7223,15 +7304,6 @@ textarea:focus {
 
 .app-sidebar-spaces .app-sidebar-label {
   margin-top: 17px;
-}
-
-.app-spaces-all {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.app-spaces-all > svg:last-child {
-  color: #a3a5aa;
 }
 
 .app-recent-spaces {

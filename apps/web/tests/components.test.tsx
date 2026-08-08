@@ -95,7 +95,7 @@ describe("shared authenticated sidebar", () => {
 
     expect(html).not.toContain('data-testid="app-nav-admin"');
     expect(html).toContain("学习首页");
-    expect(html).toContain("总日历");
+    expect(html).toContain("跨空间日程");
   });
 
   it("keeps administration navigation separate from learner spaces", () => {
@@ -234,8 +234,8 @@ describe("cross-workspace calendar", () => {
     expect(html).toContain("2 tasks");
     expect(html).toContain("75 min");
     expect(html).toContain("2 spaces");
-    expect(html).toContain('href="/learn/math-space/calendar?session=session-math-1"');
-    expect(html).toContain('href="/learn/english-space/calendar?session=session-english-1"');
+    expect(html).toContain('href="/learn/math-space/today?session=session-math-1"');
+    expect(html).toContain('href="/learn/english-space/today?session=session-english-1"');
     expect(html).toContain("Open in learning space");
     expect(html).not.toContain(">Save<");
     expect(html).not.toContain(">Delete<");
@@ -345,9 +345,13 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain("RefineQ 学习时间表");
+    expect(html).toContain("计划日历");
     expect(html).toContain("导数应用");
     expect(html).toContain('data-testid="schedule-calendar"');
+    expect(html).toContain('data-testid="start-calendar-session-session-calendar"');
+    expect(html).toContain('data-testid="complete-calendar-session-session-calendar"');
+    expect(html).toContain('data-testid="defer-calendar-session-session-calendar"');
+    expect(html).toContain('data-testid="edit-calendar-session-session-calendar"');
   });
 
   it("labels learning and review activities in the calendar", () => {
@@ -1045,6 +1049,7 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="complete-session-session-1"');
     expect(html).toContain('data-testid="defer-session-session-1"');
     expect(html).toContain('data-testid="start-session-session-1"');
+    expect(html).toContain('data-testid="edit-session-session-1"');
   });
 
   it("renders editable plan settings with save, cancel, ordering, and regeneration controls", () => {

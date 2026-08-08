@@ -1,5 +1,19 @@
 export type PracticeNavigationAction = () => void | Promise<void>;
 
+export type NavigationBlockReason = "upload" | "draft";
+
+export function navigationBlockReason({
+  uploadActive,
+  unsavedDraft,
+}: {
+  uploadActive: boolean;
+  unsavedDraft: boolean;
+}): NavigationBlockReason | null {
+  if (uploadActive) return "upload";
+  if (unsavedDraft) return "draft";
+  return null;
+}
+
 export function hasUnsavedPracticeDraft(
   answer: string,
   hasQuestion: boolean,

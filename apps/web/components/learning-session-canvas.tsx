@@ -21,7 +21,7 @@ import { SessionCoach } from "@/components/session-coach";
 import { SourceDrawer } from "@/components/source-drawer";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type { Translator } from "@/lib/i18n";
-import { buildSessionSteps, sessionStage } from "@/lib/learning-session";
+import { buildSessionSteps, selectTodayPlanSession, sessionStage } from "@/lib/learning-session";
 import type {
   AgentReply,
   AnswerResult,
@@ -35,6 +35,7 @@ import type {
   SavedPracticeQuestion,
   SearchSource,
   StudyPlan,
+  StudySession,
 } from "@/lib/types";
 
 
@@ -57,6 +58,7 @@ const interfaceCopy = {
     currentOutput: "本次产出",
     outputHint: "一份可复用的分析或实践成果",
     startTask: "进入实战任务",
+    startPlannedSession: "开始今日计划",
     submit: "提交分析，查看反馈",
     answerPlaceholder: "写下你的分析、步骤或可交付成果…",
     save: "收藏任务",
@@ -87,6 +89,7 @@ const interfaceCopy = {
     currentOutput: "Session output",
     outputHint: "A reusable analysis or practical artifact",
     startTask: "Start applied task",
+    startPlannedSession: "Start today’s plan",
     submit: "Submit for feedback",
     answerPlaceholder: "Write your analysis, steps, or deliverable…",
     save: "Save task",
@@ -153,6 +156,8 @@ export function LearningSessionCanvas({
   onLearningModeChange,
   onAnswerChange,
   onStartTask,
+  onStartPlanSession,
+  preferredSessionId,
   onSubmit,
   onNextTask,
   onRetryTask,
@@ -186,6 +191,8 @@ export function LearningSessionCanvas({
   onLearningModeChange: (mode: LearningMode) => void;
   onAnswerChange: (answer: string) => void;
   onStartTask: () => void | Promise<void>;
+  onStartPlanSession?: (session: StudySession) => void | Promise<void>;
+  preferredSessionId?: string | null;
   onSubmit: () => void | Promise<void>;
   onNextTask: () => void | Promise<void>;
   onRetryTask?: () => void | Promise<void>;
@@ -204,10 +211,13 @@ export function LearningSessionCanvas({
   const steps = buildSessionSteps(learningMode, locale);
   const stage = sessionStage(question, result);
   const activeIndex = stage === "learn" ? 1 : stage === "practice" ? 2 : 3;
-  const nextSession = useMemo(
-    () => plan?.sessions.find((item) => item.status !== "completed"),
-    [plan],
-  );
+  const nextSession = useMemo(() => {
+    const sessions = plan?.sessions ?? [];
+    const preferred = preferredSessionId
+      ? sessions.find((item) => item.id === preferredSessionId && item.status !== "completed")
+      : undefined;
+    return preferred ?? selectTodayPlanSession(sessions);
+  }, [plan, preferredSessionId]);
   const activeTopicId = question?.topic_id ?? nextSession?.topic_id;
   const topic = activeTopicId
     ? progress?.topics?.[activeTopicId] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")
@@ -316,9 +326,11 @@ export function LearningSessionCanvas({
                   className="primary-action session-primary"
                   data-testid="session-start-task"
                   disabled={busy}
-                  onClick={() => void onStartTask()}
+                  onClick={() => void (nextSession && onStartPlanSession
+                    ? onStartPlanSession(nextSession)
+                    : onStartTask())}
                 >
-                  {text.startTask} <ArrowRight size={18} />
+                  {nextSession ? text.startPlannedSession : text.startTask} <ArrowRight size={18} />
                 </button>
               </div>
             </article>

@@ -24,7 +24,7 @@ function sessionOrigin(): string {
   return typeof location === "undefined" ? "refineq://local" : location.origin;
 }
 
-export function loadLearningSession(storage: Storage): LearningSession | null {
+export function loadLearningSession(storage: Pick<Storage, "getItem">): LearningSession | null {
   const raw = storage.getItem(SESSION_KEY);
   if (!raw) return null;
   try {

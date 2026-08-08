@@ -3,7 +3,12 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiClient, ApiError, authHeaders } from "../lib/api";
+import {
+  ApiClient,
+  ApiError,
+  authHeaders,
+  subscribeUnauthorized,
+} from "../lib/api";
 import { shouldClearAccountSession } from "../components/account-center";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
@@ -212,7 +217,9 @@ describe("administrator routing", () => {
 
 describe("durable learner routing", () => {
   it("uses capability-oriented learner routes and keeps legacy links recoverable", () => {
-    expect(learningSections).toEqual(["today", "path", "materials", "calendar", "progress"]);
+    expect(learningSections).toEqual(["today", "plan", "materials", "progress"]);
+    expect(parseLearningSection("path")).toBe("plan");
+    expect(parseLearningSection("calendar")).toBe("plan");
     expect(parseLearningSection("evidence")).toBe("progress");
     expect(parseLearningSection("coach")).toBe("today");
   });
@@ -359,6 +366,44 @@ describe("durable learner routing", () => {
     expect(resolveSource).not.toContain("saveWorkspaceSnapshot");
   });
 
+  it("hands off every volatile learning field and resets user-scoped state on exit", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const shellSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-app-shell.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource).toContain("topic_suggestions: topicSuggestions");
+    expect(workspaceSource).toContain("client_state:");
+    expect(workspaceSource).toContain("setMasteryBefore(snapshot.client_state.masteryBefore)");
+    expect(workspaceSource).toContain("setLearningMode(snapshot.client_state.learningMode)");
+    expect(workspaceSource).toContain("persistWorkspaceHandoffRef.current = persistWorkspaceHandoff");
+    expect(workspaceSource).toContain("persistWorkspaceHandoffRef.current()");
+    expect(workspaceSource).toContain("savedSession?.token !== activeToken");
+    expect(workspaceSource).toContain("installHistoryNavigationGuard");
+    expect(workspaceSource).toContain("clearUserScopedSessionState(window.sessionStorage)");
+    expect(shellSource).toContain("subscribeUnauthorized");
+    expect(shellSource).toContain("if (!isCurrentUserSession(window.sessionStorage, token)) return;");
+    expect(shellSource).toContain("clearUserScopedSessionState(window.sessionStorage)");
+  });
+
+  it("marks home navigation busy before dropping the active workspace", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const prepareStart = workspaceSource.indexOf("function commitHomeNavigation");
+    const logoutStart = workspaceSource.indexOf("function prepareRouteNavigation", prepareStart);
+    const prepareSource = workspaceSource.slice(prepareStart, logoutStart);
+
+    expect(prepareSource.indexOf("setHomeBusy(true)")).toBeGreaterThanOrEqual(0);
+    expect(prepareSource.indexOf("setHomeBusy(true)"))
+      .toBeLessThan(prepareSource.indexOf("setWorkspace(null)"));
+  });
+
   it("renders the automatic routing decision with correction controls", () => {
     const workspaceSource = readFileSync(
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
@@ -373,6 +418,19 @@ describe("durable learner routing", () => {
     expect(workspaceSource).toContain("route.reason");
     expect(workspaceSource).toContain("undoWorkspaceRoute");
   });
+
+  it("keeps reviews on Today and gives learning records their own anchor", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource.match(/<ReviewQueue/g)).toHaveLength(1);
+    expect(workspaceSource).toContain('{section === "today" && (');
+    expect(workspaceSource).toContain('id="learning-record"');
+    expect(workspaceSource).toContain('href="#learning-record"');
+    expect(workspaceSource).toContain("onStartPlanSession={startPlanSession}");
+  });
 });
 
 
@@ -386,6 +444,9 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toContain("grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);");
     expect(styles).toContain("max-width: 1600px;");
     expect(styles).not.toContain("min-height: max(760px, calc(100vh - 108px));");
+    expect(styles).toMatch(
+      /@media \(max-width: 760px\)[\s\S]*\.plan-session-editor\s*\{[^}]*grid-column: 3;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
+    );
   });
 
   it("places capability progress and the evidence ledger side by side on wide screens", () => {
@@ -576,6 +637,48 @@ describe("authentication and API errors", () => {
     });
   });
 
+  it("broadcasts an authenticated 401 so every product area can reset consistently", async () => {
+    const unauthorized = vi.fn();
+    const unsubscribe = subscribeUnauthorized(unauthorized);
+    const client = new ApiClient("/api", async () => new Response(
+      JSON.stringify({ error: { code: "unauthorized", message: "Expired" } }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    ));
+
+    try {
+      await expect(client.getProfile("expired-token")).rejects.toBeInstanceOf(ApiError);
+      expect(unauthorized).toHaveBeenCalledWith("expired-token");
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("deduplicates short-lived profile and workspace reads without crossing tokens", async () => {
+    const calls: string[] = [];
+    const client = new ApiClient("/api", async (input) => {
+      calls.push(String(input));
+      const isProfile = String(input).endsWith("/auth/me");
+      return new Response(JSON.stringify(isProfile ? {
+        id: "user-1",
+        email: "learner@example.com",
+        display_name: "Learner",
+        role: "learner",
+        created_at: "2026-08-08T00:00:00Z",
+      } : []), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await Promise.all([
+      client.getProfile("token-1"),
+      client.getProfile("token-1"),
+      client.listWorkspaces("token-1"),
+      client.listWorkspaces("token-1"),
+    ]);
+    await client.getProfile("token-2");
+
+    expect(calls.filter((path) => path.endsWith("/auth/me"))).toHaveLength(2);
+    expect(calls.filter((path) => path.endsWith("/workspaces"))).toHaveLength(1);
+  });
+
   it("supports no-content mutation responses", async () => {
     const client = new ApiClient("/api", async () => new Response(null, { status: 204 }));
 
@@ -749,6 +852,13 @@ describe("authentication and API errors", () => {
 
     expect(materialSource).toContain('addEventListener("beforeunload"');
     expect(materialSource).toContain("controller.abort()");
+    expect(materialSource).toContain("consumeHistoryUploadContinuation()");
+    expect(materialSource).toContain("onUploadActivityChange");
+    expect(workspaceSource).toContain("onUploadActivityChange={setUploadInProgress}");
+    expect(workspaceSource).toContain("navigationBlockReason");
+    expect(workspaceSource).toContain("event.preventDefault()");
+    expect(workspaceSource).toContain("pendingRouteActionRef.current");
+    expect(workspaceSource).toContain("workspaceRef.current?.id === targetWorkspaceId");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
     expect(workspaceSource).toContain("learningModeForActivity(session.activity");
@@ -1121,14 +1231,15 @@ describe("persistent personal learning session", () => {
     expect(sources.every((source) => !source.includes("window.localStorage"))).toBe(true);
   });
 
-  it("clears workspace snapshots from every account exit surface", () => {
+  it("clears every user-scoped browser value from every account exit surface", () => {
     const sources = [
       "../components/study-workspace.tsx",
       "../components/account-center.tsx",
       "../components/admin-route.tsx",
+      "../components/global-calendar-route.tsx",
     ].map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"));
 
-    expect(sources.every((source) => source.includes("clearWorkspaceSnapshots(window.sessionStorage)")))
+    expect(sources.every((source) => source.includes("clearUserScopedSessionState(window.sessionStorage)")))
       .toBe(true);
   });
 
@@ -1391,7 +1502,7 @@ describe("global calendar API", () => {
 
 
 describe("global calendar route", () => {
-  it("loads a bounded owner calendar and hands task deep links back to workspace calendar", () => {
+  it("loads a bounded owner calendar and hands task deep links to an executable Today session", () => {
     const page = fileURLToPath(new URL("../app/calendar/page.tsx", import.meta.url));
     const route = fileURLToPath(new URL("../components/global-calendar-route.tsx", import.meta.url));
     const workspaceSource = readFileSync(
@@ -1409,7 +1520,7 @@ describe("global calendar route", () => {
     expect(routeSource).toContain("calendarGridRange");
     expect(routeSource).toContain("includeArchived");
     expect(workspaceSource).toContain("new URLSearchParams(window.location.search)");
-    expect(workspaceSource).toContain("focusedSessionId={focusedCalendarSessionId}");
+    expect(workspaceSource).toContain("preferredSessionId={focusedPlanSessionId}");
   });
 });
 
@@ -1819,4 +1930,87 @@ it("treats model capability checks as optional and propagates runtime unavailabi
   expect(workspaceSource).toContain("onModelUnavailable={() => setModelConfigured(false)}");
   expect(canvasSource).toContain("onModelUnavailable={onModelUnavailable}");
   expect(agentSource).toContain("onModelUnavailable?.()");
+});
+
+
+describe("navigation efficiency remediation", () => {
+  it("invalidates cached identity and workspace collections after successful mutations", async () => {
+    const calls: string[] = [];
+    const client = new ApiClient("/api", async (input) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.endsWith("/auth/me") || path.endsWith("/auth/profile")) {
+        return new Response(JSON.stringify({
+          id: "user-1",
+          email: "learner@example.com",
+          display_name: "Learner",
+          role: "learner",
+          created_at: "2026-08-08T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path.endsWith("/workspaces/space-1") || path.endsWith("/workspaces/resolve")) {
+        return new Response(JSON.stringify({ id: "space-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.getProfile("token");
+    await client.updateProfile("token", "Updated");
+    await client.getProfile("token");
+    await client.listWorkspaces("token");
+    await client.updateWorkspace("token", "space-1", { title: "Updated" });
+    await client.listWorkspaces("token");
+    await client.resolveWorkspace("token", "new goal");
+    await client.listWorkspaces("token");
+
+    expect(calls.filter((path) => path.endsWith("/auth/me"))).toHaveLength(2);
+    expect(calls.filter((path) => path.endsWith("/workspaces"))).toHaveLength(3);
+  });
+
+  it("keeps locale out of data-fetch dependencies and restores independent reads in parallel", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const adminSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-console.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource).not.toContain("auth?.access_token, locale, section");
+    expect(adminSource).not.toContain("[locale, nonce, token]");
+    expect(adminSource).not.toContain("[activeSection, locale, token, loadNonce]");
+    expect(workspaceSource).toContain("api.listWorkspaces(saved.token),");
+    expect(workspaceSource).toContain("api.getWorkspaceInsights(saved.token, selected.id)");
+    expect(workspaceSource.match(/applySnapshot\(snapshot\);\s+if \(restoredInsights\)/g))
+      .toHaveLength(2);
+    expect(workspaceSource).toContain("api.getWorkspaceInsights(saved.token, selected.id).catch(() => null)");
+    expect(workspaceSource).toContain("persistWorkspaceHandoffRef.current();\n          setWorkspace(null)");
+  });
+
+  it("uses client-side routing after dirty-form confirmation and removes retired navigation CSS", () => {
+    const adminSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-console.tsx", import.meta.url)),
+      "utf8",
+    );
+    const adminRouteSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-route.tsx", import.meta.url)),
+      "utf8",
+    );
+    const cssSource = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(adminRouteSource).toContain("router.push(");
+    expect(adminSource).not.toContain("window.location.assign(pendingHref)");
+    expect(cssSource).not.toContain(".app-spaces-all");
+    expect(cssSource).not.toContain(".app-recent-spaces > small");
+  });
 });

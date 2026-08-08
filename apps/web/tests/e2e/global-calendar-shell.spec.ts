@@ -32,9 +32,9 @@ test("shared shell connects global calendar, workspace task, and account", async
   expect(calendarBox).not.toBeNull();
   expect(sidebarBox!.x + sidebarBox!.width).toBeLessThanOrEqual(calendarBox!.x + 1);
 
-  await testInfo.attach("global-calendar-desktop", {
-    body: await page.screenshot({ fullPage: true }),
-    contentType: "image/png",
+  await page.screenshot({
+    path: testInfo.outputPath("global-calendar-desktop.png"),
+    fullPage: true,
   });
 
   const eventDay = page.locator(".global-calendar-day:has(i)").first();
@@ -43,16 +43,16 @@ test("shared shell connects global calendar, workspace task, and account", async
   const taskLink = page.locator(".global-day-agenda a").first();
   await expect(taskLink).toBeVisible();
   await taskLink.click();
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/calendar\?session=.+/);
-  await expect(page.locator('[data-focused="true"]').first()).toBeVisible();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today\?session=.+/);
+  await expect(page.getByTestId("session-start-task")).toContainText(/Start today’s plan|开始今日计划/);
 
   await page.getByTestId("app-nav-account").click();
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByTestId("account-center")).toBeVisible();
   await expect(page.getByTestId("app-sidebar")).toBeVisible();
-  await testInfo.attach("account-shared-shell", {
-    body: await page.screenshot({ fullPage: true }),
-    contentType: "image/png",
+  await page.screenshot({
+    path: testInfo.outputPath("account-shared-shell.png"),
+    fullPage: true,
   });
 
   await page.getByTestId("app-nav-calendar").click();
@@ -62,8 +62,8 @@ test("shared shell connects global calendar, workspace task, and account", async
   await expect(page.getByTestId("global-calendar")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
-  await testInfo.attach("global-calendar-mobile", {
-    body: await page.screenshot({ fullPage: true }),
-    contentType: "image/png",
+  await page.screenshot({
+    path: testInfo.outputPath("global-calendar-mobile.png"),
+    fullPage: true,
   });
 });
