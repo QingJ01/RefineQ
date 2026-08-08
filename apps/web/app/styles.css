@@ -6994,3 +6994,50 @@ textarea:focus {
     grid-template-columns: 1fr 1fr;
   }
 }
+.session-title-meta,
+.session-reflect-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.session-exam-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.learning-report-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.learning-report-grid > div {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+}
+
+.learning-report-grid strong {
+  font-size: 1.25rem;
+}
+
+.learning-report-grid span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.calendar-event.activity-review,
+.agenda-event.activity-review > i {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .learning-report-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

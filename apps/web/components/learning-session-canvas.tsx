@@ -42,6 +42,7 @@ const modeCopy: Record<Locale, Record<LearningMode, string>> = {
   zh: { concept: "概念学习", case: "案例拆解", project: "项目实战", exam: "模拟考试" },
   en: { concept: "Concept", case: "Case study", project: "Project", exam: "Mock exam" },
 };
+const SESSION_RENDERED_AT = Date.now();
 
 const interfaceCopy = {
   zh: {
@@ -152,6 +153,8 @@ export function LearningSessionCanvas({
   onStartTask,
   onSubmit,
   onNextTask,
+  onRetryTask,
+  onViewProgress,
   onToggleSaved,
   onPracticeSaved,
   onOpenLibrary,
@@ -183,6 +186,8 @@ export function LearningSessionCanvas({
   onStartTask: () => void | Promise<void>;
   onSubmit: () => void | Promise<void>;
   onNextTask: () => void | Promise<void>;
+  onRetryTask?: () => void | Promise<void>;
+  onViewProgress?: () => void;
   onToggleSaved: (question: PracticeQuestion, saved: boolean) => void | Promise<void>;
   onPracticeSaved?: (question: SavedPracticeQuestion) => void | Promise<void>;
   onOpenLibrary: () => void;
@@ -222,6 +227,9 @@ export function LearningSessionCanvas({
   const isSaved = question
     ? Boolean(question.saved || savedQuestions.some((saved) => saved.id === question.id))
     : false;
+  const daysUntilExam = plan?.exam_at
+    ? Math.max(0, Math.ceil((new Date(plan.exam_at).getTime() - SESSION_RENDERED_AT) / 86_400_000))
+    : null;
 
   function openFullCoach() {
     if (!agentRef.current) return;
@@ -237,7 +245,14 @@ export function LearningSessionCanvas({
           <span className="kicker">REFINEQ / SESSION</span>
           <h1>{topic} · {text.today}</h1>
         </div>
-        <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+        <div className="session-title-meta">
+          {daysUntilExam !== null && (
+            <span className="session-exam-countdown" data-testid="exam-countdown">
+              <Target size={16} /> {daysUntilExam} {t("daysLeft")}
+            </span>
+          )}
+          <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+        </div>
       </header>
 
       <div className="session-layout">
@@ -427,6 +442,18 @@ export function LearningSessionCanvas({
               <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
                 <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
                   {text.next} <ArrowRight size={18} />
+                </button>
+              </div>
+              <div className="session-reflect-actions">
+                <button type="button" className="secondary-action" data-testid="reflect-view-progress" disabled={!onViewProgress} onClick={onViewProgress}>
+                  {locale === "zh" ? "看进步" : "View progress"}
+                </button>
+                <button type="button" className="secondary-action" data-testid="reflect-retry-question" disabled={busy || !onRetryTask} onClick={() => void onRetryTask?.()}>
+                  <RotateCcw size={16} /> {locale === "zh" ? "重做这题" : "Retry this task"}
+                </button>
+                <button type="button" className="secondary-action" data-testid="reflect-save-question" aria-pressed={isSaved} disabled={busy} onClick={() => void onToggleSaved(question, !isSaved)}>
+                  {isSaved ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                  {isSaved ? text.saved : text.save}
                 </button>
               </div>
             </article>

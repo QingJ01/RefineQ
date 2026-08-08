@@ -21,6 +21,7 @@ import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
+import { LearningReport } from "@/components/learning-report";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanSettings } from "@/components/plan-settings";
@@ -62,7 +63,6 @@ import type {
   PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
-  SavedPracticeQuestion,
   SearchSource,
   StudySession,
   WorkspaceRoute,
@@ -178,7 +178,7 @@ export function StudyWorkspace({
   useEffect(() => {
     const token = auth?.access_token;
     const workspaceId = workspace?.id;
-    if (section !== "progress" || !token || !workspaceId) return;
+    if ((section !== "progress" && section !== "today") || !token || !workspaceId) return;
     let active = true;
     void api.getWorkspaceInsights(token, workspaceId)
       .then((loaded) => {
@@ -566,7 +566,7 @@ export function StudyWorkspace({
     }
   }
 
-  async function practiceSavedQuestion(saved: SavedPracticeQuestion) {
+  async function practiceSavedQuestion(saved: PracticeQuestion) {
     if (!auth || !workspace) return;
     const generation = capturePracticeGeneration();
     setPracticeBusy(true);
@@ -1169,12 +1169,21 @@ export function StudyWorkspace({
               onStartTask={() => { void getQuestion({ learningMode }); }}
               onSubmit={submitAnswer}
               onNextTask={() => { void getQuestion({ learningMode, replace: true }); }}
+              onRetryTask={() => { if (question) void practiceSavedQuestion(question); }}
+              onViewProgress={() => router.push(learningPath(workspace.id, "progress"))}
               onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
               onPracticeSaved={(saved) => { void practiceSavedQuestion(saved); }}
               onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
               onAskCoach={askSessionCoach}
               onApplyCoachAction={applyCoachAction}
               onCoachTurnHandled={() => { pendingTurnIdRef.current = null; }}
+            />
+          )}
+          {section === "today" && (insights?.due_reviews.length ?? 0) > 0 && (
+            <ReviewQueue
+              locale={locale}
+              reviews={insights?.due_reviews ?? []}
+              onStartReview={startReview}
             />
           )}
           {section === "path" && (
@@ -1235,6 +1244,9 @@ export function StudyWorkspace({
                 <h2>{t("progress")}</h2>
                 <p>{locale === "zh" ? "把能力变化、实践反馈和下一步安排放在一起。" : "Capability change, task feedback, and next actions in one place."}</p>
               </div>
+              {insights && progress && (
+                <LearningReport locale={locale} progress={progress} insights={insights} />
+              )}
               <ReviewQueue
                 locale={locale}
                 reviews={insights?.due_reviews ?? []}

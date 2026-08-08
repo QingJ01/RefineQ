@@ -7,6 +7,7 @@ import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
 import { LearningHome } from "../components/learning-home";
+import { LearningReport } from "../components/learning-report";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
@@ -83,6 +84,87 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="schedule-calendar"');
   });
 
+  it("labels learning and review activities in the calendar", () => {
+    const html = renderToStaticMarkup(
+      <ScheduleCalendar
+        locale="en"
+        topicLabels={{ limits: "Limits" }}
+        onUpdateSession={() => undefined}
+        plan={{
+          id: "plan-calendar",
+          goal: "Pass calculus",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-review",
+            topic_id: "limits",
+            planned_at: "2026-08-10T08:00:00Z",
+            minutes: 20,
+            activity: "review",
+          }],
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-activity="review"');
+    expect(html).toContain("Review");
+  });
+
+  it("summarizes only the latest seven days and reports mastery change honestly", () => {
+    const html = renderToStaticMarkup(
+      <LearningReport
+        locale="en"
+        now={new Date("2026-08-08T12:00:00Z")}
+        progress={{
+          goal: "Pass calculus",
+          mastery: { limits: 0.7 },
+          topics: { limits: "Limits" },
+          topic_order: ["limits"],
+          diagnostic_count: 1,
+          attempt_count: 8,
+          plan_id: "plan-1",
+        }}
+        insights={{
+          workspace_id: "workspace-1",
+          due_reviews: [],
+          topics: [],
+          mastery_history: [
+            { attempt_id: "old", topic_id: "limits", mastery: 0.4, observed_at: "2026-07-31T12:00:00Z" },
+            { attempt_id: "new", topic_id: "limits", mastery: 0.7, observed_at: "2026-08-07T12:00:00Z" },
+          ],
+          attempts: [{
+            attempt_id: "new",
+            question_id: "question-1",
+            topic_id: "limits",
+            topic_name: "Limits",
+            question_prompt: "Explain limits",
+            answer: "An approached value",
+            is_correct: true,
+            mastery: 0.7,
+            score: 90,
+            feedback: "Good",
+            strengths: [],
+            gaps: [],
+            misconceptions: [],
+            citations: [],
+            sources: [],
+            grounding: "general",
+            grading_mode: "ai",
+            mastery_updated: true,
+            observed_at: "2026-08-07T12:00:00Z",
+            learner_note: null,
+            appealed: false,
+          }],
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="learning-report"');
+    expect(html).toContain("1 attempt");
+    expect(html).toContain("+30%");
+    expect(html).not.toContain("8 attempts");
+  });
+
   it.each([
     ["applied", "coach-action-applied"],
     ["confirmation_required", "coach-action-confirmation_required"],
@@ -154,7 +236,13 @@ describe("focused learning components", () => {
           created_at: "2026-08-07T00:00:00Z",
           last_active_at: "2026-08-07T00:00:00Z",
         }}
-        plan={null}
+        plan={{
+          id: "plan-1",
+          goal: "完成产品考试",
+          exam_at: "2099-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [],
+        }}
         progress={null}
         materials={[{
           id: "interview",
@@ -207,6 +295,7 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="saved-question-list"');
     expect(html).toContain("分析已收藏的用户访谈原题");
     expect(html).toContain('data-testid="practice-saved-question"');
+    expect(html).toContain('data-testid="exam-countdown"');
     expect(html).not.toContain('data-testid="session-upload-prompt"');
     expect(html).not.toContain("证据账本");
   });
@@ -301,6 +390,9 @@ describe("focused learning components", () => {
     expect(feedbackHtml).toContain("用户访谈原文.md");
     expect(feedbackHtml).toContain("42%");
     expect(feedbackHtml).toContain("60%");
+    expect(feedbackHtml).toContain('data-testid="reflect-view-progress"');
+    expect(feedbackHtml).toContain('data-testid="reflect-retry-question"');
+    expect(feedbackHtml).toContain('data-testid="reflect-save-question"');
   });
 
   it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {
