@@ -29,6 +29,7 @@ const copy = {
     confirmTitle: "重新生成学习课表？",
     confirmDescription: "现有日程会被替换；已完成的相同主题活动会尽量保留。",
     confirm: "确认重新生成",
+    untitledTopic: "未命名主题",
   },
   en: {
     summary: "Adjust learning plan",
@@ -50,6 +51,7 @@ const copy = {
     confirmTitle: "Regenerate the learning schedule?",
     confirmDescription: "Existing sessions will be replaced. Completed matching activities are preserved when possible.",
     confirm: "Regenerate schedule",
+    untitledTopic: "Untitled topic",
   },
 } as const;
 
@@ -205,18 +207,18 @@ export function PlanSettings({
           {order.map((topic, index) => (
             <div key={topic} data-testid={`plan-topic-${topic}`}>
               <span>{String(index + 1).padStart(2, "0")}</span>
-              <strong>{topics[topic] ?? topic}</strong>
+              <strong>{topics[topic] ?? text.untitledTopic}</strong>
               <button
                 type="button"
                 data-testid={`plan-topic-up-${topic}`}
-                aria-label={`${text.moveUp}: ${topics[topic] ?? topic}`}
+                aria-label={`${text.moveUp}: ${topics[topic] ?? text.untitledTopic}`}
                 disabled={index === 0}
                 onClick={() => move(topic, -1)}
               ><ArrowUp size={15} /></button>
               <button
                 type="button"
                 data-testid={`plan-topic-down-${topic}`}
-                aria-label={`${text.moveDown}: ${topics[topic] ?? topic}`}
+                aria-label={`${text.moveDown}: ${topics[topic] ?? text.untitledTopic}`}
                 disabled={index === order.length - 1}
                 onClick={() => move(topic, 1)}
               ><ArrowDown size={15} /></button>

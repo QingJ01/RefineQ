@@ -75,6 +75,8 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("start-learning").click();
     await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
     await expect(page.locator(".workspace-switcher > strong")).not.toHaveText(workspaceTitle);
+    const secondWorkspaceUrl = page.url();
+    const secondWorkspaceId = new URL(secondWorkspaceUrl).pathname.split("/")[2];
 
     const trigger = page.getByTestId("workspace-switcher");
     await trigger.click();
@@ -95,6 +97,21 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByRole("menuitem", { name: new RegExp(workspaceTitle) }).click();
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
     await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+
+    await page.route(`**/api/workspaces/${secondWorkspaceId}/snapshot`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "service_unavailable", message: "temporary" } }),
+      });
+    });
+    await page.goBack();
+    await expect(page).toHaveURL(secondWorkspaceUrl);
+    await expect(page.getByTestId("workspace-route-state")).toBeVisible();
+    await expect(page.locator(".workspace-switcher")).toHaveCount(0);
+    await page.unroute(`**/api/workspaces/${secondWorkspaceId}/snapshot`);
+    await page.goForward();
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
   });
 
   await test.step("use a short, varied capability path", async () => {
@@ -175,12 +192,24 @@ test("learner completes and restores a capability learning journey", async ({ pa
   });
 
   await test.step("return to personal home and recover the same workspace with browser history", async () => {
+    const repeatedRestoreRequests: string[] = [];
+    const recordRestoreRequest = (request: { url(): string }) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname.endsWith("/api/auth/me")
+        || /\/api\/workspaces\/?$/.test(url.pathname)
+        || url.pathname.endsWith("/snapshot")
+      ) repeatedRestoreRequests.push(url.pathname);
+    };
+    page.on("request", recordRestoreRequest);
     await page.getByTestId("workspace-home-link").click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId("learning-intent")).toBeVisible();
     await page.goBack();
     await expect(page).toHaveURL(/\/learn\/[^/]+\/path$/);
     await expect(page.getByTestId("learning-path-view")).toBeVisible();
+    page.off("request", recordRestoreRequest);
+    expect(repeatedRestoreRequests).toEqual([]);
   });
 
   await test.step("upload a real interview source", async () => {
@@ -236,8 +265,33 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("practice-sources").click();
     await expect(page.getByRole("dialog")).toContainText("user-interview.txt");
     await page.keyboard.press("Escape");
+    const savedPrompt = await page.getByTestId("session-practice-stage").locator("h2").innerText();
     await page.getByTestId("save-question").click();
     await expect(page.getByTestId("save-question")).toHaveAttribute("aria-pressed", "true");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("practice-answer").fill("unfinished mobile draft");
+    await page.getByTestId("skip-question").click();
+    await expect(page.getByRole("dialog")).toContainText(/unsaved|未提交/i);
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(page.getByTestId("practice-answer")).toHaveValue("unfinished mobile draft");
+    await expect(page.getByTestId("session-practice-stage")).toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
+    await page.getByTestId("skip-question").click();
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await page.setViewportSize({ width: 1440, height: 1024 });
+    await expect(page.getByTestId("session-practice-stage")).not.toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
+    await expect(page.getByTestId("saved-question-list")).toContainText(savedPrompt);
+    await page.getByTestId("practice-saved-question").first().click();
+    await expect(page.getByTestId("session-practice-stage")).toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
+    await expect(page.getByTestId("session-practice-stage").locator("h2")).toHaveText(savedPrompt);
     await page.getByTestId("skip-question").click();
     await expect(page.getByTestId("session-practice-stage")).not.toHaveAttribute(
       "data-question-id",
@@ -260,7 +314,8 @@ test("learner completes and restores a capability learning journey", async ({ pa
 
     await page.getByTestId("nav-progress").click();
     await expect(page).toHaveURL(/\/progress$/);
-    await expect(page.locator(".evidence-timeline li")).toHaveCount(2);
+    await expect(page.locator('[data-testid^="attempt-rubric-"]').first()).toBeVisible();
+    await expect(page.locator(".evidence-timeline > li")).toHaveCount(2);
     await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
     await expect(page.getByTestId("review-queue-empty")).toBeVisible();
 
@@ -297,6 +352,24 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
     await page.waitForTimeout(450);
     await page.screenshot({ path: testInfo.outputPath("capability-learning-desktop.png") });
+  });
+
+  await test.step("show a localized recovery error even before authentication is restored", async () => {
+    await page.route("**/api/auth/me", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "service_unavailable", message: "temporary" } }),
+      });
+    });
+    await page.reload();
+    await expect(page.getByTestId("auth-restore-error")).toBeVisible();
+    await page.unroute("**/api/auth/me");
+    await page.reload();
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
+    for (let index = browserErrors.length - 1; index >= 0; index -= 1) {
+      if (browserErrors[index].includes("status of 503")) browserErrors.splice(index, 1);
+    }
   });
 
   await test.step("update and export the account without losing the active workspace", async () => {

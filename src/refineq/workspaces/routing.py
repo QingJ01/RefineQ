@@ -94,6 +94,26 @@ _SUBJECT_HINTS: dict[str, tuple[str, ...]] = {
         "literature review",
         "research",
     ),
+    "computing": (
+        "计算机组成原理",
+        "操作系统",
+        "计算机网络",
+        "数据库",
+        "编译原理",
+        "软件工程",
+        "机器学习",
+        "深度学习",
+        "人工智能",
+        "前端",
+        "后端",
+        "computer organization",
+        "operating system",
+        "computer network",
+        "database",
+        "compiler",
+        "software engineering",
+        "machine learning",
+    ),
     "science": (
         "物理",
         "化学",
@@ -175,6 +195,7 @@ _BROAD_SUBJECT_TERMS = {
     "growth operations",
     "writing",
     "research",
+    "computing",
     "science",
     "humanities",
 }
@@ -245,6 +266,14 @@ def _capability_topics(subject: str, normalized: str) -> list[str]:
             (("检索", "综合", "synthesis", "literature review"), "证据检索与综合"),
             (("研究问题", "research question"), "研究问题定义"),
         ),
+        "computing": (
+            (("流水线", "pipeline"), "流水线与冒险"),
+            (("缓存", "cache"), "缓存与存储层次"),
+            (("事务", "transaction"), "事务与并发控制"),
+            (("索引", "index"), "索引与查询优化"),
+            (("进程", "线程", "process", "thread"), "进程与线程"),
+            (("算法", "复杂度", "algorithm"), "算法与复杂度"),
+        ),
     }
     return [
         label
@@ -285,6 +314,9 @@ def _suggested_title(intent: str, subject: str) -> str:
         return "写作能力"
     if subject == "research":
         return "研究能力"
+    if subject == "computing":
+        matched = [hint for hint in _SUBJECT_HINTS["computing"] if hint.casefold() in normalized]
+        return max(matched, key=len) if matched else "计算机学习"
     if subject == "mathematics":
         is_advanced = any(key in normalized for key in ("高数", "微积分", "极限"))
         return "高等数学" if is_advanced else "数学学习"
@@ -298,7 +330,12 @@ def _suggested_title(intent: str, subject: str) -> str:
         return "理科学习"
     if subject == "humanities":
         return "人文学习"
-    compact = intent.strip().splitlines()[0][:24].strip("，。！？,.!? ")
+    compact = re.sub(
+        r"(?:\d+月\d+日|\d+号|下周|明天|后天|每天\S{0,4}\d+\s*分钟|考试|准备|我想|想学)",
+        "",
+        intent.strip().splitlines()[0],
+    )
+    compact = compact.strip("，。！？、,.!? ")[:20].strip("，。！？、,.!? ")
     return compact or "个人学习"
 
 

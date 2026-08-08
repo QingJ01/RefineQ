@@ -3,6 +3,8 @@ import "./styles.css";
 
 import type { Metadata } from "next";
 
+import { LearningAppShell } from "@/components/learning-app-shell";
+
 
 const description = "自动理解学习目标，用计划、练习、资料和证据陪你持续进步。";
 
@@ -45,7 +47,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="zh-CN">
       <body>
         <a className="skip-link" href="#main-content">跳到主要内容</a>
-        {children}
+        <LearningAppShell>{children}</LearningAppShell>
       </body>
     </html>
   );

@@ -30,13 +30,6 @@ class ErrorType(StrEnum):
     METACOGNITIVE = "metacognitive"
 
 
-class ReviewRating(StrEnum):
-    AGAIN = "again"
-    HARD = "hard"
-    GOOD = "good"
-    EASY = "easy"
-
-
 class LearningMode(StrEnum):
     """How a learner wants to build a capability in the current session."""
 
@@ -99,28 +92,6 @@ class ErrorDiagnosis(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     explanation: str = "Insufficient evidence to determine the error category."
     is_confirmed: bool = False
-
-
-class ReviewState(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    knowledge_point_id: str = Field(min_length=1)
-    due_at: datetime
-    interval_days: int = Field(default=0, ge=0)
-    streak: int = Field(default=0, ge=0)
-    lapses: int = Field(default=0, ge=0)
-
-    _normalize_due_at = field_validator("due_at", mode="after")(_as_utc)
-
-
-class ReviewTask(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    id: str = Field(min_length=1)
-    owner_id: str = Field(min_length=1)
-    knowledge_point_id: str = Field(min_length=1)
-    knowledge_type: KnowledgeType
-    state: ReviewState
 
 
 class LearningEvidence(BaseModel):

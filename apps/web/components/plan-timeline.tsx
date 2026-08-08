@@ -13,6 +13,7 @@ export function PlanTimeline({
   onUpdateSession,
   onStartSession,
   busySessionId,
+  practiceBusy = false,
   topicLabels = {},
 }: {
   plan: StudyPlan | null;
@@ -24,12 +25,24 @@ export function PlanTimeline({
   ) => void | Promise<void>;
   onStartSession?: (session: StudySession) => void | Promise<void>;
   busySessionId?: string | null;
+  practiceBusy?: boolean;
   topicLabels?: Record<string, string>;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   if (!plan) {
-    return <div className="empty-note">{t("noPlan")}</div>;
+    return (
+      <section className="content-card guided-empty-state" data-testid="plan-empty-guide">
+        <span className="kicker">PATH / READY</span>
+        <h2>{t("noPlan")}</h2>
+        <p>{locale === "zh" ? "先回到今日学习确认目标与学习范围，RefineQ 会据此生成可调整的学习路径。" : "Return to Today to confirm the goal and learning scope. RefineQ will then create an adjustable study path."}</p>
+        <ol>
+          <li>{locale === "zh" ? "确认想获得的能力或考试目标" : "Confirm the capability or exam goal"}</li>
+          <li>{locale === "zh" ? "补充截止日期与每日投入" : "Add a target date and daily commitment"}</li>
+          <li>{locale === "zh" ? "生成后可在这里改期、完成或重新规划" : "Reschedule, complete, or regenerate sessions here"}</li>
+        </ol>
+      </section>
+    );
   }
   const rows = buildPlanRows(plan, locale === "zh" ? "zh-CN" : "en-US", topicLabels);
   const visibleRows = expanded ? rows : rows.slice(0, 7);
@@ -69,7 +82,7 @@ export function PlanTimeline({
                 type="button"
                 className="plan-start-action"
                 data-testid={`start-session-${session.id}`}
-                disabled={busySessionId === session.id}
+                disabled={practiceBusy || busySessionId === session.id}
                 onClick={() => void onStartSession?.(session)}
               >{t("startSession")}</button>
               <button

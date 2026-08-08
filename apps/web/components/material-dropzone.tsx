@@ -12,7 +12,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { DragEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
@@ -25,6 +25,7 @@ import type {
 } from "@/lib/types";
 import {
   clearSelectedFiles,
+  createSerialTaskQueue,
   type UploadValidationError,
   validateUploadFile,
 } from "@/lib/upload-flow";
@@ -38,6 +39,11 @@ interface UploadItem {
   status: UploadState;
   error?: UploadValidationError | "upload_failed";
   controller?: AbortController;
+}
+
+interface QueuedUpload {
+  id: string;
+  run: () => Promise<void>;
 }
 
 const organizationCopy = {
@@ -116,6 +122,8 @@ export function MaterialDropzone({
 }) {
   const copy = organizationCopy[locale];
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeControllersRef = useRef(new Set<AbortController>());
+  const [uploadQueue] = useState(() => createSerialTaskQueue<QueuedUpload>((item) => item.run()));
   const [queue, setQueue] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [query, setQuery] = useState("");
@@ -163,6 +171,22 @@ export function MaterialDropzone({
   const allVisibleSelected = visibleMaterials.length > 0
     && visibleMaterials.every((material) => selectedIds.has(material.id));
 
+  useEffect(() => {
+    uploadQueue.open();
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (activeControllersRef.current.size === 0 && uploadQueue.pendingCount() === 0) return;
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    const controllers = activeControllersRef.current;
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      uploadQueue.close();
+      controllers.forEach((controller) => controller.abort());
+      controllers.clear();
+    };
+  }, [uploadQueue]);
+
   function patchQueue(id: string, patch: Partial<UploadItem>) {
     setQueue((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
   }
@@ -179,6 +203,7 @@ export function MaterialDropzone({
 
   async function uploadFile(item: UploadItem) {
     const controller = new AbortController();
+    activeControllersRef.current.add(controller);
     patchQueue(item.id, { status: "uploading", error: undefined, controller });
     try {
       const uploaded = await onUpload([item.file], controller.signal);
@@ -193,9 +218,10 @@ export function MaterialDropzone({
       if (!controller.signal.aborted) {
         patchQueue(item.id, { status: "failed", error: "upload_failed", controller: undefined });
       }
+    } finally {
+      activeControllersRef.current.delete(controller);
     }
   }
-
   function selected(files: File[]) {
     if (files.length === 0) return;
     const items = files.map((file): UploadItem => {
@@ -208,16 +234,19 @@ export function MaterialDropzone({
       };
     });
     setQueue((current) => [...items, ...current]);
-    items.filter((item) => !item.error).forEach((item) => void uploadFile(item));
+    uploadQueue.enqueue(items
+      .filter((item) => !item.error)
+      .map((item) => ({ id: item.id, run: () => uploadFile(item) })));
     clearSelectedFiles(inputRef.current);
   }
 
   function retryUpload(item: UploadItem) {
     if (validateUploadFile(item.file)) return;
-    void uploadFile(item);
+    uploadQueue.enqueue([{ id: item.id, run: () => uploadFile(item) }]);
   }
 
   function cancelUpload(item: UploadItem) {
+    uploadQueue.remove((queued) => queued.id === item.id);
     item.controller?.abort();
     patchQueue(item.id, { status: "cancelled", controller: undefined });
   }
@@ -338,7 +367,7 @@ export function MaterialDropzone({
       >
         <Upload size={28} strokeWidth={1.3} /><strong>{t("chooseFiles")}</strong><span>{t("uploadHint")}</span>
       </button>
-      <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md,.markdown" onChange={(event) => selected(Array.from(event.target.files ?? []))} />
+      <input ref={inputRef} hidden multiple type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => selected(Array.from(event.target.files ?? []))} />
 
       {queue.length > 0 && (
         <div className="upload-queue-block">

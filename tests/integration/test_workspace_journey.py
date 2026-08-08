@@ -749,7 +749,7 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
     with TestClient(app) as client:
-        token, _ = _register(client)
+        token, user_id = _register(client)
         headers = {"Authorization": f"Bearer {token}"}
         workspace_id = client.post(
             "/workspaces/resolve",
@@ -793,6 +793,7 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         assert [item["id"] for item in listed.json()] == [question["id"]]
         assert snapshot.json()["saved_questions"] == listed.json()
         assert snapshot.json()["active_question"]["id"] == question["id"]
+        assert snapshot.json()["active_question"]["prompt"] == question["prompt"]
         assert snapshot.json()["last_answer"]["attempt_id"] == "saved-attempt"
         assert any(
             session["activity"] == "review"
@@ -826,6 +827,18 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             f"/workspaces/{workspace_id}/learning/questions/saved",
             headers=headers,
         )
+
+        def prune_answered_question(data: dict) -> dict:
+            data["progress"]["question_history"].pop(question["id"], None)
+            return data
+
+        app.state.learning.mutate(user_id, workspace_id, prune_answered_question)
+        recovered_snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        )
+        assert recovered_snapshot.json()["active_question"]["id"] == question["id"]
+        assert recovered_snapshot.json()["active_question"]["prompt"] == question["prompt"]
 
     assert forbidden.status_code == 404
     assert unknown.status_code == 409

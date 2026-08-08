@@ -7,11 +7,11 @@ import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
 import { LearningHome } from "../components/learning-home";
+import { LearningReport } from "../components/learning-report";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
 import { PlanTimeline } from "../components/plan-timeline";
 import { PlanSettings } from "../components/plan-settings";
-import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
 import { ProgressTopicDetail } from "../components/progress-topic-detail";
 import { ReviewQueue } from "../components/review-queue";
@@ -81,6 +81,106 @@ describe("focused learning components", () => {
     expect(html).toContain("RefineQ 学习时间表");
     expect(html).toContain("导数应用");
     expect(html).toContain('data-testid="schedule-calendar"');
+  });
+
+  it("labels learning and review activities in the calendar", () => {
+    const html = renderToStaticMarkup(
+      <ScheduleCalendar
+        locale="en"
+        topicLabels={{ limits: "Limits" }}
+        onUpdateSession={() => undefined}
+        plan={{
+          id: "plan-calendar",
+          goal: "Pass calculus",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-review",
+            topic_id: "limits",
+            planned_at: "2026-08-10T08:00:00Z",
+            minutes: 20,
+            activity: "review",
+          }],
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-activity="review"');
+    expect(html).toContain("Review");
+  });
+
+  it("renders guided empty cards for plans, schedules, and progress", () => {
+    const planHtml = renderToStaticMarkup(
+      <PlanTimeline locale="en" t={t} plan={null} />,
+    );
+    const scheduleHtml = renderToStaticMarkup(
+      <ScheduleCalendar locale="en" plan={null} onUpdateSession={() => undefined} />,
+    );
+    const progressHtml = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={null} />,
+    );
+
+    expect(planHtml).toContain('data-testid="plan-empty-guide"');
+    expect(scheduleHtml).toContain('data-testid="schedule-empty-guide"');
+    expect(progressHtml).toContain('data-testid="progress-empty-guide"');
+    expect(planHtml).toContain("content-card");
+    expect(scheduleHtml).toContain("content-card");
+    expect(progressHtml).toContain("content-card");
+  });
+
+  it("summarizes only the latest seven days and reports mastery change honestly", () => {
+    const html = renderToStaticMarkup(
+      <LearningReport
+        locale="en"
+        now={new Date("2026-08-08T12:00:00Z")}
+        progress={{
+          goal: "Pass calculus",
+          mastery: { limits: 0.7 },
+          topics: { limits: "Limits" },
+          topic_order: ["limits"],
+          diagnostic_count: 1,
+          attempt_count: 8,
+          plan_id: "plan-1",
+        }}
+        insights={{
+          workspace_id: "workspace-1",
+          due_reviews: [],
+          topics: [],
+          mastery_history: [
+            { attempt_id: "old", topic_id: "limits", mastery: 0.4, observed_at: "2026-07-31T12:00:00Z" },
+            { attempt_id: "new", topic_id: "limits", mastery: 0.7, observed_at: "2026-08-07T12:00:00Z" },
+          ],
+          attempts: [{
+            attempt_id: "new",
+            question_id: "question-1",
+            topic_id: "limits",
+            topic_name: "Limits",
+            question_prompt: "Explain limits",
+            answer: "An approached value",
+            is_correct: true,
+            mastery: 0.7,
+            score: 90,
+            feedback: "Good",
+            strengths: [],
+            gaps: [],
+            misconceptions: [],
+            citations: [],
+            sources: [],
+            grounding: "general",
+            grading_mode: "ai",
+            mastery_updated: true,
+            observed_at: "2026-08-07T12:00:00Z",
+            learner_note: null,
+            appealed: false,
+          }],
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="learning-report"');
+    expect(html).toContain("1 attempt");
+    expect(html).toContain("+30%");
+    expect(html).not.toContain("8 attempts");
   });
 
   it.each([
@@ -154,7 +254,13 @@ describe("focused learning components", () => {
           created_at: "2026-08-07T00:00:00Z",
           last_active_at: "2026-08-07T00:00:00Z",
         }}
-        plan={null}
+        plan={{
+          id: "plan-1",
+          goal: "完成产品考试",
+          exam_at: "2099-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [],
+        }}
         progress={null}
         materials={[{
           id: "interview",
@@ -171,7 +277,14 @@ describe("focused learning components", () => {
         result={null}
         busy={false}
         learningMode="case"
-        savedQuestions={[]}
+        savedQuestions={[{
+          id: "saved-question-1",
+          topic_id: "user-needs",
+          prompt: "分析已收藏的用户访谈原题",
+          difficulty_level: 2,
+          saved: true,
+          saved_at: "2026-08-08T00:00:00Z",
+        }]}
         onLearningModeChange={() => undefined}
         onAnswerChange={() => undefined}
         onStartTask={() => undefined}
@@ -197,6 +310,11 @@ describe("focused learning components", () => {
     expect(html).toContain("反馈复盘");
     expect(html).toContain("用户访谈原文.md");
     expect(html).toContain('data-testid="session-coach"');
+    expect(html).toContain('data-testid="saved-question-list"');
+    expect(html).toContain("分析已收藏的用户访谈原题");
+    expect(html).toContain('data-testid="practice-saved-question"');
+    expect(html).toContain('data-testid="exam-countdown"');
+    expect(html).not.toContain('data-testid="session-upload-prompt"');
     expect(html).not.toContain("证据账本");
   });
 
@@ -213,6 +331,7 @@ describe("focused learning components", () => {
       grounding: "material" | "general",
       sources: SearchSource[],
       reflect = false,
+      restoreQuestion = true,
     ) => renderToStaticMarkup(
       <LearningSessionCanvas
         locale="zh"
@@ -232,13 +351,14 @@ describe("focused learning components", () => {
         plan={null}
         progress={null}
         materials={[]}
-        question={{
+        question={restoreQuestion ? {
           id: "question-1",
           topic_id: "user-needs",
           prompt: "分析用户当前的替代方案",
+          explanation: "这道题用于检验你能否从行为证据识别真实需求。",
           grounding,
           sources,
-        }}
+        } : null}
         answer=""
         result={reflect ? {
           attempt_id: "attempt-1",
@@ -260,6 +380,7 @@ describe("focused learning components", () => {
           mastery_updated: true,
           replayed: false,
         } : null}
+        masteryBefore={0.42}
         busy={false}
         learningMode="case"
         savedQuestions={[]}
@@ -277,16 +398,28 @@ describe("focused learning components", () => {
     const materialHtml = renderGrounding("material", [source]);
     const generalHtml = renderGrounding("general", []);
     const feedbackHtml = renderGrounding("material", [source], true);
+    const recoveryHtml = renderGrounding("material", [source], true, false);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
+    expect(materialHtml).toContain('data-testid="question-explanation"');
+    expect(materialHtml).toContain("这道题用于检验你能否从行为证据识别真实需求。");
     expect(materialHtml).toContain("材料依据");
     expect(materialHtml).toContain('data-testid="practice-sources"');
+    expect(materialHtml).toContain("未命名主题");
+    expect(materialHtml).not.toContain("user-needs · 今日学习");
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
     expect(feedbackHtml).toContain("材料依据");
     expect(feedbackHtml).toContain('data-testid="feedback-sources"');
     expect(feedbackHtml).toContain("用户访谈原文.md");
+    expect(feedbackHtml).toContain("42%");
+    expect(feedbackHtml).toContain("60%");
+    expect(feedbackHtml).toContain('data-testid="reflect-view-progress"');
+    expect(feedbackHtml).toContain('data-testid="reflect-retry-question"');
+    expect(feedbackHtml).toContain('data-testid="reflect-save-question"');
+    expect(recoveryHtml).toContain('data-testid="reflect-recovery"');
+    expect(recoveryHtml).toContain('data-testid="next-question"');
   });
 
   it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {
@@ -329,6 +462,7 @@ describe("focused learning components", () => {
           mastery_updated: false,
           replayed: false,
         }}
+        masteryBefore={0.42}
         busy={false}
         learningMode="concept"
         savedQuestions={[]}
@@ -345,6 +479,7 @@ describe("focused learning components", () => {
 
     expect(html).toContain("这次还没有识别到明确亮点");
     expect(html).toContain("请先补充完整回答，再生成针对性改进建议");
+    expect(html).toContain('data-testid="mastery-unchanged"');
   });
 
   it("renders a reusable accessible confirmation dialog", () => {
@@ -587,7 +722,7 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain("limits");
+    expect(html).toContain("Untitled topic");
     expect(html).toContain("01");
     expect(html).toContain("45 min");
     expect(html).toContain("Learn");
@@ -760,6 +895,66 @@ describe("focused learning components", () => {
     expect(emptyHtml).toContain('data-testid="review-queue-empty"');
   });
 
+  it("keeps insight placeholders honest and disables every practice entry while generating", () => {
+    const reviewHtml = renderToStaticMarkup(
+      <ReviewQueue
+        locale="en"
+        loading
+        busy
+        reviews={[{
+          session_id: "review-1",
+          topic_id: "limits",
+          topic_name: "Limits",
+          due_at: "2026-08-08T08:00:00Z",
+          minutes: 20,
+          overdue: true,
+        }]}
+        onStartReview={() => undefined}
+      />,
+    );
+    const progressHtml = renderToStaticMarkup(
+      <ProgressInsights
+        t={t}
+        loading
+        busy
+        progress={{
+          goal: "Pass calculus",
+          mastery: { limits: 0.3 },
+          topics: { limits: "Limits" },
+          topic_order: ["limits"],
+          diagnostic_count: 0,
+          attempt_count: 0,
+          plan_id: "plan-1",
+        }}
+        onPracticeTopic={() => undefined}
+      />,
+    );
+    const planHtml = renderToStaticMarkup(
+      <PlanTimeline
+        locale="en"
+        t={t}
+        practiceBusy
+        plan={{
+          id: "plan-1",
+          goal: "Pass calculus",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-1",
+            topic_id: "limits",
+            planned_at: "2026-08-09T08:00:00Z",
+            minutes: 45,
+          }],
+        }}
+        onStartSession={() => undefined}
+      />,
+    );
+
+    expect(reviewHtml).toContain('data-testid="review-queue-loading"');
+    expect(progressHtml).toContain('data-testid="progress-insights-loading"');
+    expect(planHtml.match(/data-testid="start-session-session-1"[^>]*disabled/)?.[0]).toBeTruthy();
+  });
+
   it("adds rubric, source, retry, note, and appeal actions to attempt evidence", () => {
     const html = renderToStaticMarkup(
       <EvidenceLedger
@@ -848,181 +1043,6 @@ describe("focused learning components", () => {
     expect(html).toContain('aria-label="Close"');
   });
 
-  it("never renders an expected answer in the practice card", () => {
-    const html = renderToStaticMarkup(
-      <PracticeCard
-        t={t}
-        question={{
-          id: "question-1",
-          topic_id: "limits",
-          prompt: "Explain a limit",
-          difficulty_level: 3,
-          citations: ["notes#0"],
-          sources: [{
-            citation_id: "notes#0",
-            material_id: "material-1",
-            filename: "notes.md",
-            chunk_index: 0,
-            text: "A limit is an approached value.",
-            score: 0.91,
-          }],
-          saved: false,
-        }}
-        answer=""
-        result={null}
-        busy={false}
-        difficulty={null}
-        savedQuestions={[]}
-        onAnswerChange={() => undefined}
-        onGetQuestion={() => undefined}
-        onSubmit={() => undefined}
-        onDifficultyChange={() => undefined}
-        onToggleSaved={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Explain a limit");
-    expect(html).not.toContain("expected_answer");
-    expect(html).toContain("content-card practice-card");
-    expect(html).toContain('data-testid="practice-difficulty"');
-    expect(html).toContain('data-testid="skip-question"');
-    expect(html).toContain('data-testid="save-question"');
-    expect(html).toContain('data-testid="practice-sources"');
-  });
-
-  it("renders explainable AI grading feedback", () => {
-    const html = renderToStaticMarkup(
-      <PracticeCard
-        t={translator("zh")}
-        question={{
-          id: "question-1",
-          topic_id: "limits",
-          prompt: "解释函数极限",
-          difficulty_level: 3,
-          citations: ["notes#0"],
-          mode: "ai",
-        }}
-        answer="函数值趋近的目标"
-        result={{
-          attempt_id: "attempt-1",
-          question_id: "question-1",
-          topic_id: "limits",
-          is_correct: true,
-          mastery: 0.6,
-          difficulty_level: 3,
-          evidence_id: "evidence-1",
-          score: 88,
-          feedback: "核心概念正确，可以补充形式化定义。",
-          strengths: ["说明了趋近"],
-          gaps: ["缺少形式化定义"],
-          misconceptions: [],
-          citations: ["notes#0"],
-          sources: [{
-            citation_id: "notes#0",
-            material_id: "material-1",
-            filename: "notes.md",
-            chunk_index: 0,
-            text: "函数极限是函数值趋近的目标。",
-            score: 0.91,
-          }],
-          grading_mode: "ai",
-          mastery_updated: true,
-          replayed: false,
-        }}
-        busy={false}
-        difficulty={3}
-        savedQuestions={[]}
-        onAnswerChange={() => undefined}
-        onGetQuestion={() => undefined}
-        onSubmit={() => undefined}
-        onDifficultyChange={() => undefined}
-        onToggleSaved={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("88");
-    expect(html).toContain("核心概念正确");
-    expect(html).toContain("说明了趋近");
-    expect(html).toContain("缺少形式化定义");
-    expect(html).toContain("难度 3");
-    expect(html).toContain("AI 判分");
-    expect(html).not.toContain("notes#0");
-    expect(html).toContain('data-testid="practice-sources"');
-  });
-
-  it("offers a next question after grading instead of resubmitting the old one", () => {
-    const html = renderToStaticMarkup(
-      <PracticeCard
-        t={t}
-        question={{ id: "question-1", topic_id: "limits", prompt: "Explain a limit" }}
-        answer="A limit is..."
-        result={{
-          attempt_id: "attempt-1",
-          question_id: "question-1",
-          topic_id: "limits",
-          is_correct: false,
-          mastery: 0.2,
-          difficulty_level: 2,
-          evidence_id: "evidence-1",
-          score: 40,
-          feedback: "Add an example.",
-          strengths: [],
-          gaps: ["example"],
-          misconceptions: [],
-          citations: [],
-          grading_mode: "fallback",
-          mastery_updated: false,
-          replayed: false,
-        }}
-        busy={false}
-        difficulty={null}
-        savedQuestions={[]}
-        onAnswerChange={() => undefined}
-        onGetQuestion={() => undefined}
-        onSubmit={() => undefined}
-        onDifficultyChange={() => undefined}
-        onToggleSaved={() => undefined}
-      />,
-    );
-
-    expect(html).toContain('data-testid="next-question"');
-    expect(html).toContain('data-testid="retry-topic"');
-    expect(html).not.toContain('data-testid="submit-answer"');
-  });
-
-  it("renders durable saved questions as a reusable practice list", () => {
-    const html = renderToStaticMarkup(
-      <PracticeCard
-        t={t}
-        question={null}
-        answer=""
-        result={null}
-        busy={false}
-        difficulty={null}
-        savedQuestions={[{
-          id: "saved-question",
-          topic_id: "limits",
-          prompt: "Explain a one-sided limit",
-          difficulty_level: 4,
-          citations: [],
-          sources: [],
-          mode: "ai",
-          saved: true,
-          saved_at: "2026-08-07T08:00:00Z",
-        }]}
-        onAnswerChange={() => undefined}
-        onGetQuestion={() => undefined}
-        onSubmit={() => undefined}
-        onDifficultyChange={() => undefined}
-        onToggleSaved={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Explain a one-sided limit");
-    expect(html).toContain('data-testid="practice-saved-question"');
-    expect(html).toContain('data-testid="practice-saved-topic"');
-  });
-
   it("renders materials from the controlled workspace snapshot", () => {
     const html = renderToStaticMarkup(
       <MaterialDropzone
@@ -1101,11 +1121,25 @@ describe("focused learning components", () => {
     expect(html).toContain("前往配置");
   });
 
+  it("tells a learner who can configure an unavailable model", () => {
+    const html = renderToStaticMarkup(
+      <SessionCoach
+        locale="en"
+        modelConfigured={false}
+        onAsk={async () => ({ session_id: "session-1", message: "reply", citations: [], sources: [] })}
+      />,
+    );
+
+    expect(html).toContain("contact an administrator");
+    expect(html).not.toContain('data-testid="coach-configure-model"');
+  });
+
   it("keeps local learning explicit when model capability status cannot be checked", () => {
     const html = renderToStaticMarkup(
       <SessionCoach
         locale="zh"
         modelConfigured={null}
+        onRecheck={async () => true}
         onAsk={async () => ({
           session_id: "session-1",
           message: "reply",
@@ -1118,7 +1152,9 @@ describe("focused learning components", () => {
     expect(html).toContain("暂时无法确认学习 Agent 状态");
     expect(html).toContain("本地练习、资料和进度仍可继续使用");
     expect(html).toContain('data-testid="session-coach-input"');
-    expect(html).toContain("disabled");
+    expect(html).toContain('data-testid="coach-recheck"');
+    const input = html.match(/<input[^>]*data-testid="session-coach-input"[^>]*>/)?.[0];
+    expect(input).not.toContain("disabled");
   });
 
   it("makes the complete conversation workspace reachable from today's session", () => {
@@ -1169,5 +1205,7 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="agent-new-conversation"');
     expect(html).toContain("The learning Agent has not been configured");
     expect(html).toContain('data-testid="coach-configure-model"');
+    expect(html).toContain('data-testid="session-upload-prompt"');
+    expect(html).toContain('data-testid="saved-question-empty"');
   });
 });

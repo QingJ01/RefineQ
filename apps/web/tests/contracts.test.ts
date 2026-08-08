@@ -4,17 +4,30 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
+import { shouldClearAccountSession } from "../components/account-center";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
 import { validatePlanSettings } from "../lib/plan-settings";
-import { learningSections, parseLearningSection } from "../lib/learning-routes";
+import {
+  learningSections,
+  parseLearningSection,
+  resolveLearningShellPath,
+} from "../lib/learning-routes";
 import {
   clearLearningSession,
+  installSessionHandoff,
   loadLearningSession,
+  requestSessionHandoff,
   saveLearningLocale,
   saveLearningSession,
 } from "../lib/session";
-import { clearSelectedFiles, validateUploadFile } from "../lib/upload-flow";
+import {
+  clearSelectedFiles,
+  createSerialTaskQueue,
+  isAbortError,
+  runSerially,
+  validateUploadFile,
+} from "../lib/upload-flow";
 import { resolveRequestedWorkspace } from "../lib/workspace-route-state";
 import {
     buildPlanRows,
@@ -186,6 +199,8 @@ describe("administrator routing", () => {
     expect(source).toContain("c.files");
     expect(source).toContain("auditActionLabel(entry.action, locale)");
     expect(source).toContain("roleLabel(user.role, locale)");
+    expect(source).not.toContain("setError(result.message)");
+    expect(source).not.toContain("setNotice(result.message)");
   });
 });
 
@@ -257,8 +272,18 @@ describe("durable learner routing", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const layoutSource = readFileSync(
+      fileURLToPath(new URL("../app/layout.tsx", import.meta.url)),
+      "utf8",
+    );
+    const shellSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-app-shell.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(learningPage)).toBe(true);
+    expect(layoutSource).toContain("<LearningAppShell>{children}</LearningAppShell>");
+    expect(shellSource).toContain("resolveLearningShellPath(usePathname())");
     expect(workspaceSource).toContain('import Link from "next/link"');
     expect(workspaceSource).toContain("href={learningPath(workspace.id, id)}");
     expect(workspaceSource).toContain('aria-current={section === id ? "page" : undefined}');
@@ -279,18 +304,49 @@ describe("durable learner routing", () => {
     expect(switcherSource).toContain('data-testid="workspace-switcher"');
     expect(workspaceSource).toContain('className="workspace-nav-label"');
     expect(workspaceSource).not.toContain('className="sidebar-learning"');
-    expect(workspaceSource).not.toContain('onClick={prepareHomeNavigation}');
+    expect(workspaceSource).toContain('onClick={prepareHomeNavigation}');
     expect(workspaceSource).toContain('data-testid="workspace-route-state"');
     expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
 
-  it("remounts learner state when the URL switches to a different workspace", () => {
-    const routeSource = readFileSync(
-      fileURLToPath(new URL("../components/learning-route.tsx", import.meta.url)),
+  it("reuses one learner shell while home and learning URLs change", () => {
+    const shellSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-app-shell.tsx", import.meta.url)),
       "utf8",
     );
 
-    expect(routeSource).toContain("key={workspaceId}");
+    expect(shellSource.match(/<StudyWorkspace/g)).toHaveLength(2);
+    expect(shellSource).not.toContain("key={route.workspaceId}");
+    expect(resolveLearningShellPath("/")).toEqual({ kind: "home" });
+    expect(resolveLearningShellPath("/learn/space%201/materials")).toEqual({
+      kind: "workspace",
+      workspaceId: "space 1",
+      section: "materials",
+    });
+    expect(resolveLearningShellPath("/learn/space-1/unknown")).toEqual({ kind: "other" });
+    expect(resolveLearningShellPath("/admin")).toEqual({ kind: "other" });
+  });
+
+  it("never hands stale workspace state across a shared-shell route change", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const restoreStart = workspaceSource.indexOf("async function restore()");
+    const authenticatedStart = workspaceSource.indexOf("async function authenticated");
+    const restoreSource = workspaceSource.slice(restoreStart, authenticatedStart);
+    const openStart = workspaceSource.indexOf("async function openWorkspace");
+    const resolveStart = workspaceSource.indexOf("async function resolveIntent");
+    const uploadStart = workspaceSource.indexOf("async function uploadMaterials");
+    const openSource = workspaceSource.slice(openStart, resolveStart);
+    const resolveSource = workspaceSource.slice(resolveStart, uploadStart);
+
+    expect(restoreSource.indexOf("clearWorkspaceState()"))
+      .toBeLessThan(restoreSource.indexOf("api.getWorkspaceSnapshot"));
+    expect(openSource).toContain("removeWorkspaceSnapshot(window.sessionStorage, target.id)");
+    expect(openSource).not.toContain("saveWorkspaceSnapshot");
+    expect(resolveSource).toContain("removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id)");
+    expect(resolveSource).not.toContain("saveWorkspaceSnapshot");
   });
 
   it("renders the automatic routing decision with correction controls", () => {
@@ -300,6 +356,9 @@ describe("durable learner routing", () => {
     );
 
     expect(workspaceSource).toContain('data-testid="workspace-route-notice"');
+    expect(workspaceSource).toContain('data-testid="workspace-routing-summary"');
+    expect(workspaceSource).toContain("workspace.routing_summary");
+    expect(workspaceSource).not.toContain("}, 7000);");
     expect(workspaceSource).toContain("route.confidence");
     expect(workspaceSource).toContain("route.reason");
     expect(workspaceSource).toContain("undoWorkspaceRoute");
@@ -354,6 +413,11 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toMatch(/\.workspace-switcher\s*\{[^}]*min-height: 44px/s);
     expect(styles).toMatch(/\.workspace-switcher > strong\s*\{[^}]*font-size: 12px/s);
     expect(styles).toMatch(/\.session-source-link[^}]*min-height: 44px/s);
+    expect(styles).toMatch(/\.recent-card-actions button,[\s\S]*?min-width: 44px/s);
+    expect(styles).toMatch(/\.material-actions button[\s\S]*?min-height: 44px/s);
+    expect(styles).toContain("@media (hover: none)");
+    expect(styles).toMatch(/\.calendar-grid\s*\{[^}]*grid-template-columns: 1fr/s);
+    expect(styles).toMatch(/\.calendar-day\.empty\s*\{[^}]*display: none/s);
   });
 });
 
@@ -551,6 +615,130 @@ describe("authentication and API errors", () => {
 
     await rejection;
     vi.useRealTimers();
+  });
+
+  it("does not turn a caller cancellation into a timeout or product error", async () => {
+    const controller = new AbortController();
+    const client = new ApiClient("/api", async (_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")));
+    }));
+
+    const pending = client.uploadWorkspaceMaterials(
+      "token-1",
+      "workspace-1",
+      [new File(["notes"], "notes.md")],
+      controller.signal,
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(pending.catch((error) => isAbortError(error))).resolves.toBe(true);
+  });
+
+  it("does not abort response parsing after response headers arrive", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | null | undefined;
+    const client = new ApiClient("/api", async (_input, init) => {
+      signal = init?.signal;
+      return {
+        ok: true,
+        status: 200,
+        json: () => new Promise((resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          setTimeout(() => resolve({
+            id: "user-1",
+            email: "learner@example.com",
+            display_name: "Learner",
+            role: "learner",
+            created_at: "2026-08-08T00:00:00Z",
+          }), 50);
+        }),
+      } as Response;
+    }, 25);
+
+    const pending = client.getProfile("token-1");
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(pending).resolves.toMatchObject({ id: "user-1" });
+    expect(signal?.aborted).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("only clears the account session for authentication failures", () => {
+    expect(shouldClearAccountSession(new ApiError(401, "invalid_token", "expired"))).toBe(true);
+    expect(shouldClearAccountSession(new ApiError(403, "forbidden", "forbidden"))).toBe(true);
+    expect(shouldClearAccountSession(new ApiError(502, "upstream", "offline"))).toBe(false);
+    expect(shouldClearAccountSession(new Error("network"))).toBe(false);
+  });
+
+  it("runs a multi-file upload queue serially", async () => {
+    const events: string[] = [];
+    await runSerially(["one", "two", "three"], async (item) => {
+      events.push(`start:${item}`);
+      await Promise.resolve();
+      events.push(`finish:${item}`);
+    });
+
+    expect(events).toEqual([
+      "start:one", "finish:one",
+      "start:two", "finish:two",
+      "start:three", "finish:three",
+    ]);
+  });
+
+  it("keeps separately selected upload batches in one serial queue", async () => {
+    const events: string[] = [];
+    const releases: Array<() => void> = [];
+    const uploads = createSerialTaskQueue<string>(async (item) => {
+      events.push(`start:${item}`);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      events.push(`finish:${item}`);
+    });
+
+    uploads.enqueue(["one", "two"]);
+    uploads.enqueue(["three"]);
+    await vi.waitFor(() => expect(events).toEqual(["start:one"]));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(events).toEqual(["start:one", "finish:one", "start:two"]));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(events).toContain("start:three"));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(events.at(-1)).toBe("finish:three"));
+  });
+
+  it("does not start queued uploads after the queue is closed", async () => {
+    const events: string[] = [];
+    let release: (() => void) | undefined;
+    const uploads = createSerialTaskQueue<string>(async (item) => {
+      events.push(item);
+      await new Promise<void>((resolve) => { release = resolve; });
+    });
+
+    uploads.enqueue(["one", "two"]);
+    await vi.waitFor(() => expect(events).toEqual(["one"]));
+    uploads.close();
+    release?.();
+    await Promise.resolve();
+    expect(events).toEqual(["one"]);
+    expect(uploads.pendingCount()).toBe(0);
+  });
+
+  it("keeps upload cleanup and route redirects explicit in the workspace UI", () => {
+    const materialSource = readFileSync(
+      fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(materialSource).toContain('addEventListener("beforeunload"');
+    expect(materialSource).toContain("controller.abort()");
+    expect(workspaceSource).toContain("setHomeBusy(true)");
+    expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
+    expect(workspaceSource).toContain('session.activity === "review"');
+    expect(workspaceSource).toContain("startReviewSession(session.topic_id, session.id)");
+    expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
   it("uses the model timeout and stable turn identifiers for Agent chat", async () => {
@@ -914,6 +1102,56 @@ describe("persistent personal learning session", () => {
     expect(sources.every((source) => source.includes("window.sessionStorage"))).toBe(true);
     expect(sources.every((source) => !source.includes("window.localStorage"))).toBe(true);
   });
+
+  it("clears workspace snapshots from every account exit surface", () => {
+    const sources = [
+      "../components/study-workspace.tsx",
+      "../components/account-center.tsx",
+      "../components/admin-route.tsx",
+    ].map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"));
+
+    expect(sources.every((source) => source.includes("clearWorkspaceSnapshots(window.sessionStorage)")))
+      .toBe(true);
+  });
+
+  it("hands a short-lived session to a new same-origin tab", async () => {
+    type Listener = (event: MessageEvent) => void;
+    const peers = new Set<FakeChannel>();
+    class FakeChannel {
+      listeners = new Set<Listener>();
+      constructor() { peers.add(this); }
+      postMessage(message: unknown) {
+        for (const peer of peers) {
+          queueMicrotask(() => peer.listeners.forEach((listener) => listener({ data: message } as MessageEvent)));
+        }
+      }
+      addEventListener(_type: "message", listener: Listener) { this.listeners.add(listener); }
+      removeEventListener(_type: "message", listener: Listener) { this.listeners.delete(listener); }
+      close() { peers.delete(this); }
+    }
+    const storage = () => {
+      const values = new Map<string, string>();
+      return {
+        get length() { return values.size; },
+        clear: () => values.clear(),
+        getItem: (key: string) => values.get(key) ?? null,
+        key: (index: number) => Array.from(values.keys())[index] ?? null,
+        setItem: (key: string, value: string) => { values.set(key, value); },
+        removeItem: (key: string) => { values.delete(key); },
+      } satisfies Storage;
+    };
+    const existingTab = storage();
+    const newTab = storage();
+    saveLearningSession(existingTab, { token: "short-lived-token", workspaceId: "workspace-1", locale: "en" });
+    const createChannel = () => new FakeChannel();
+    const stop = installSessionHandoff(existingTab, createChannel);
+
+    const restored = await requestSessionHandoff(newTab, createChannel, 50);
+
+    expect(restored).toEqual({ token: "short-lived-token", workspaceId: "workspace-1", locale: "en" });
+    expect(loadLearningSession(newTab)).toEqual(restored);
+    stop();
+  });
 });
 
 
@@ -1078,6 +1316,8 @@ describe("plan setting validation", () => {
 describe("recoverable material and Agent interactions", () => {
   it("validates supported learning files before upload", () => {
     expect(validateUploadFile({ name: "notes.md", size: 100 })).toBeNull();
+    expect(validateUploadFile({ name: "notes.markdown", size: 100 })).toBe("unsupported_type");
+    expect(validateUploadFile({ name: "large.pdf", size: 21 * 1024 * 1024 })).toBe("file_too_large");
     expect(validateUploadFile({ name: "image.exe", size: 100 })).toBe("unsupported_type");
     expect(validateUploadFile({ name: "large.pdf", size: 30 * 1024 * 1024 })).toBe("file_too_large");
   });
@@ -1165,6 +1405,7 @@ describe("recoverable material and Agent interactions", () => {
     );
 
     expect(canvasSource).toContain("<AgentPanel");
+    expect(canvasSource).toContain("onApplyAction={onApplyCoachAction}");
     expect(canvasSource).toContain('data-testid="workspace-agent"');
     expect(workspaceSource).toContain("agentToken={auth.access_token}");
   });
@@ -1269,13 +1510,18 @@ describe("accessible application shell", () => {
     const loadingPath = fileURLToPath(new URL("../app/loading.tsx", import.meta.url));
     const errorPath = fileURLToPath(new URL("../app/error.tsx", import.meta.url));
     const notFoundPath = fileURLToPath(new URL("../app/not-found.tsx", import.meta.url));
+    const globalErrorPath = fileURLToPath(new URL("../app/global-error.tsx", import.meta.url));
 
     expect(existsSync(loadingPath)).toBe(true);
     expect(existsSync(errorPath)).toBe(true);
     expect(existsSync(notFoundPath)).toBe(true);
+    expect(existsSync(globalErrorPath)).toBe(true);
     expect(readFileSync(loadingPath, "utf8")).toContain('data-testid="route-loading"');
     expect(readFileSync(errorPath, "utf8")).toContain("reset()");
     expect(readFileSync(notFoundPath, "utf8")).toContain('href="/"');
+    expect(readFileSync(loadingPath, "utf8")).toContain("useSessionLocale");
+    expect(readFileSync(errorPath, "utf8")).toContain("useSessionLocale");
+    expect(readFileSync(notFoundPath, "utf8")).toContain("useSessionLocale");
   });
 
   it("provides application and social metadata", () => {
@@ -1351,6 +1597,7 @@ describe("learning view models", () => {
 
     expect(rows.map((row) => row.sequence)).toEqual([1, 2]);
     expect(rows[0].topic).toBe("Function limits");
+    expect(rows[1].topic).toBe("Untitled topic");
     expect(rows[0].minutesLabel).toBe("45 min");
   });
 
@@ -1384,6 +1631,7 @@ it("routes workspace restoration failures through the safe localized mapper", ()
 
   expect(restoreSource).toContain("localizeApiError(caught, saved.locale ?? \"zh\")");
   expect(restoreSource).not.toContain("caught.message");
+  expect(workspaceSource).toContain('data-testid="auth-restore-error"');
 });
 
 

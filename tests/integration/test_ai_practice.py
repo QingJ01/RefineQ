@@ -114,6 +114,7 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         question = question_response.json()
         assert question["mode"] == "ai"
         assert question["grounding"] == "material"
+        assert question["explanation"] == "检查核心概念。"
         assert question["citations"] == ["material-1#0"]
         assert question["sources"] == [
             {
@@ -382,6 +383,6 @@ def test_configured_model_cannot_claim_uploaded_material_when_retrieval_is_empty
     question = response.json()
     assert question["grounding"] == "general"
     assert question["sources"] == []
-    assert question["mode"] == "fallback"
+    assert question["mode"] == "ai"
     assert "上传材料" not in question["prompt"]
     assert "访谈原文" not in question["prompt"]

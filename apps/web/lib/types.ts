@@ -92,6 +92,7 @@ export interface PracticeQuestion {
   id: string;
   topic_id: string;
   prompt: string;
+  explanation?: string | null;
   difficulty_level?: number;
   citations?: string[];
   sources?: SearchSource[];

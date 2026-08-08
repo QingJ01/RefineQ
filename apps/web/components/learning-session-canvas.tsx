@@ -42,6 +42,7 @@ const modeCopy: Record<Locale, Record<LearningMode, string>> = {
   zh: { concept: "概念学习", case: "案例拆解", project: "项目实战", exam: "模拟考试" },
   en: { concept: "Concept", case: "Case study", project: "Project", exam: "Mock exam" },
 };
+const SESSION_RENDERED_AT = Date.now();
 
 const interfaceCopy = {
   zh: {
@@ -137,12 +138,14 @@ export function LearningSessionCanvas({
   question,
   answer,
   result,
+  masteryBefore = null,
   busy,
   learningMode,
   savedQuestions,
   agentToken,
   modelConfigured,
   onModelUnavailable,
+  onRecheckModel,
   isAdmin = false,
   onOpenAgentSettings,
   onLearningModeChange,
@@ -150,7 +153,10 @@ export function LearningSessionCanvas({
   onStartTask,
   onSubmit,
   onNextTask,
+  onRetryTask,
+  onViewProgress,
   onToggleSaved,
+  onPracticeSaved,
   onOpenLibrary,
   onAskCoach,
   onApplyCoachAction,
@@ -165,12 +171,14 @@ export function LearningSessionCanvas({
   question: PracticeQuestion | null;
   answer: string;
   result: AnswerResult | null;
+  masteryBefore?: number | null;
   busy: boolean;
   learningMode: LearningMode;
   savedQuestions: SavedPracticeQuestion[];
   agentToken?: string;
   modelConfigured?: boolean | null;
   onModelUnavailable?: () => void;
+  onRecheckModel?: () => Promise<boolean | null>;
   isAdmin?: boolean;
   onOpenAgentSettings?: () => void;
   onLearningModeChange: (mode: LearningMode) => void;
@@ -178,12 +186,15 @@ export function LearningSessionCanvas({
   onStartTask: () => void | Promise<void>;
   onSubmit: () => void | Promise<void>;
   onNextTask: () => void | Promise<void>;
+  onRetryTask?: () => void | Promise<void>;
+  onViewProgress?: () => void;
   onToggleSaved: (question: PracticeQuestion, saved: boolean) => void | Promise<void>;
+  onPracticeSaved?: (question: SavedPracticeQuestion) => void | Promise<void>;
   onOpenLibrary: () => void;
   onAskCoach: (message: string) => Promise<AgentReply>;
   onApplyCoachAction?: (
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) => Promise<CoachActionOutcome>;
   onCoachTurnHandled?: () => void;
 }) {
@@ -197,7 +208,7 @@ export function LearningSessionCanvas({
   );
   const activeTopicId = question?.topic_id ?? nextSession?.topic_id;
   const topic = activeTopicId
-    ? progress?.topics?.[activeTopicId] ?? activeTopicId
+    ? progress?.topics?.[activeTopicId] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")
     : workspace.topics[0] ?? workspace.title;
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const agentRef = useRef<HTMLDetailsElement>(null);
@@ -216,6 +227,9 @@ export function LearningSessionCanvas({
   const isSaved = question
     ? Boolean(question.saved || savedQuestions.some((saved) => saved.id === question.id))
     : false;
+  const daysUntilExam = plan?.exam_at
+    ? Math.max(0, Math.ceil((new Date(plan.exam_at).getTime() - SESSION_RENDERED_AT) / 86_400_000))
+    : null;
 
   function openFullCoach() {
     if (!agentRef.current) return;
@@ -231,7 +245,14 @@ export function LearningSessionCanvas({
           <span className="kicker">REFINEQ / SESSION</span>
           <h1>{topic} · {text.today}</h1>
         </div>
-        <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+        <div className="session-title-meta">
+          {daysUntilExam !== null && (
+            <span className="session-exam-countdown" data-testid="exam-countdown">
+              <Target size={16} /> {daysUntilExam} {t("daysLeft")}
+            </span>
+          )}
+          <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+        </div>
       </header>
 
       <div className="session-layout">
@@ -276,6 +297,17 @@ export function LearningSessionCanvas({
                 <div><Target size={17} /><span>{text.capability}</span><strong>{workspace.goal}</strong></div>
                 <div><Layers3 size={17} /><span>{text.currentOutput}</span><strong>{text.outputHint}</strong></div>
               </section>
+              {materials.length === 0 && (
+                <div className="session-upload-prompt" data-testid="session-upload-prompt">
+                  <div>
+                    <strong>{t("uploadFirstSourceTitle")}</strong>
+                    <p>{t("uploadFirstSourceHint")}</p>
+                  </div>
+                  <button type="button" className="secondary-action" onClick={onOpenLibrary}>
+                    {t("uploadFirstSourceAction")} <ArrowRight size={16} />
+                  </button>
+                </div>
+              )}
               <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
                 <button
                   type="button"
@@ -297,6 +329,12 @@ export function LearningSessionCanvas({
                 {groundingLabel}
               </span>
               <h2>{question.prompt}</h2>
+              {question.explanation && (
+                <div className="question-explanation" data-testid="question-explanation">
+                  <strong>{locale === "zh" ? "为什么考这道题" : "Why this task matters"}</strong>
+                  <p>{question.explanation}</p>
+                </div>
+              )}
               {taskSources[0]?.text && (
                 <blockquote className="session-case-evidence">
                   <span>{locale === "zh" ? "真实材料线索" : "Source evidence"}</span>
@@ -383,6 +421,18 @@ export function LearningSessionCanvas({
                     : <p className="feedback-empty">{text.noGaps}</p>}
                 </section>
               </div>
+              {result.mastery_updated && masteryBefore !== null ? (
+                <div className="session-mastery-change" data-testid="mastery-change">
+                  <span>{locale === "zh" ? "掌握度" : "Mastery"}</span>
+                  <strong>{Math.round(masteryBefore * 100)}%</strong>
+                  <ArrowRight size={16} />
+                  <strong>{Math.round(result.mastery * 100)}%</strong>
+                </div>
+              ) : !result.mastery_updated ? (
+                <p className="session-mastery-unchanged" data-testid="mastery-unchanged">
+                  {t("masteryNotUpdated")}
+                </p>
+              ) : null}
               <div className="session-review-note">
                 <Clock3 size={17} />
                 <div>
@@ -400,8 +450,66 @@ export function LearningSessionCanvas({
                   {text.next} <ArrowRight size={18} />
                 </button>
               </div>
+              <div className="session-reflect-actions">
+                <button type="button" className="secondary-action" data-testid="reflect-view-progress" disabled={!onViewProgress} onClick={onViewProgress}>
+                  {locale === "zh" ? "看进步" : "View progress"}
+                </button>
+                <button type="button" className="secondary-action" data-testid="reflect-retry-question" disabled={busy || !onRetryTask} onClick={() => void onRetryTask?.()}>
+                  <RotateCcw size={16} /> {locale === "zh" ? "重做这题" : "Retry this task"}
+                </button>
+                <button type="button" className="secondary-action" data-testid="reflect-save-question" aria-pressed={isSaved} disabled={busy} onClick={() => void onToggleSaved(question, !isSaved)}>
+                  {isSaved ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                  {isSaved ? text.saved : text.save}
+                </button>
+              </div>
             </article>
           )}
+          {stage === "reflect" && result && !question && (
+            <article className="session-feedback" data-testid="reflect-recovery" role="status">
+              <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
+              <h2>{result.feedback}</h2>
+              <p>{locale === "zh" ? "原题题面暂时无法恢复，你仍可继续下一题或查看已保存的进度。" : "The original prompt could not be restored, but you can continue or review your saved progress."}</p>
+              <div className="session-reflect-actions">
+                <button type="button" className="secondary-action" data-testid="reflect-view-progress" disabled={!onViewProgress} onClick={onViewProgress}>
+                  {locale === "zh" ? "看进步" : "View progress"}
+                </button>
+                <button type="button" className="primary-action" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
+                  {text.next} <ArrowRight size={18} />
+                </button>
+              </div>
+            </article>
+          )}
+          <section className="session-saved-questions" aria-labelledby="saved-question-heading">
+            <div className="session-saved-heading">
+              <h2 id="saved-question-heading">{t("savedQuestions")}</h2>
+              <span>{savedQuestions.length}</span>
+            </div>
+            {savedQuestions.length > 0 ? (
+              <ul data-testid="saved-question-list">
+                {savedQuestions.map((saved) => (
+                  <li key={saved.id}>
+                    <div>
+                      <span>{progress?.topics?.[saved.topic_id] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")}</span>
+                      <strong>{saved.prompt}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      data-testid="practice-saved-question"
+                      disabled={busy || !onPracticeSaved}
+                      onClick={() => void onPracticeSaved?.(saved)}
+                    >
+                      {t("practiceSavedTopic")} <ArrowRight size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="context-empty" data-testid="saved-question-empty">
+                {t("savedQuestionsEmpty")}
+              </p>
+            )}
+          </section>
         </main>
 
         <aside className="session-context">
@@ -422,6 +530,7 @@ export function LearningSessionCanvas({
             onAsk={onAskCoach}
             modelConfigured={modelConfigured}
             onModelUnavailable={onModelUnavailable}
+            onRecheck={onRecheckModel}
             isAdmin={isAdmin}
             onConfigure={onOpenAgentSettings}
             onOpenFullCoach={agentToken ? openFullCoach : undefined}
@@ -444,8 +553,10 @@ export function LearningSessionCanvas({
             locale={locale}
             modelConfigured={modelConfigured}
             onModelUnavailable={onModelUnavailable}
+            onRecheck={onRecheckModel}
             isAdmin={isAdmin}
             onOpenSettings={onOpenAgentSettings}
+            onApplyAction={onApplyCoachAction}
           />
         </details>
       )}

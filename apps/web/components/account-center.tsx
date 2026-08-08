@@ -17,7 +17,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
 import { learningPath } from "@/lib/learning-routes";
 import {
@@ -26,6 +26,7 @@ import {
   saveLearningLocale,
 } from "@/lib/session";
 import type { Locale, User } from "@/lib/types";
+import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
 
 
 const copy = {
@@ -100,6 +101,10 @@ const copy = {
     genericError: "The action did not finish. Try again shortly.",
   },
 } as const;
+
+export function shouldClearAccountSession(caught: unknown): boolean {
+  return caught instanceof ApiError && (caught.status === 401 || caught.status === 403);
+}
 
 type Action = "profile" | "password" | "export" | "sessions" | "delete";
 
@@ -302,6 +307,8 @@ export function AccountRoute() {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [backHref, setBackHref] = useState("/");
+  const [loadError, setLoadError] = useState("");
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -310,18 +317,29 @@ export function AccountRoute() {
       router.replace("/");
       return;
     }
-    api.getProfile(saved.token).then((profile) => {
+    const savedLocale = saved.locale ?? "zh";
+    void Promise.resolve().then(() => {
+      if (active) {
+        setLocale(savedLocale);
+        setLoadError("");
+      }
+      return api.getProfile(saved.token);
+    }).then((profile) => {
       if (!active) return;
-      setLocale(saved.locale ?? "zh");
       setToken(saved.token);
       setBackHref(saved.workspaceId ? learningPath(saved.workspaceId, "today") : "/");
       setUser(profile);
-    }).catch(() => {
-      clearLearningSession(window.sessionStorage);
-      router.replace("/");
+    }).catch((caught) => {
+      if (shouldClearAccountSession(caught)) {
+        clearWorkspaceSnapshots(window.sessionStorage);
+        clearLearningSession(window.sessionStorage);
+        router.replace("/");
+        return;
+      }
+      if (active) setLoadError(localizeApiError(caught, savedLocale));
     });
     return () => { active = false; };
-  }, [router]);
+  }, [reload, router]);
 
   function localized<T>(task: Promise<T>): Promise<T> {
     return task.catch((caught) => {
@@ -330,6 +348,7 @@ export function AccountRoute() {
   }
 
   function exitAccount() {
+    clearWorkspaceSnapshots(window.sessionStorage);
     clearLearningSession(window.sessionStorage);
     router.replace("/");
   }
@@ -337,7 +356,14 @@ export function AccountRoute() {
   if (!user || !token) {
     return (
       <main id="main-content" className="account-loading" aria-live="polite">
-        <BrandMark size={42} /><LoaderCircle className="spin" size={22} />
+        <BrandMark size={42} />
+        {loadError ? (
+          <div role="alert">
+            <p>{loadError}</p>
+            <button type="button" onClick={() => setReload((value) => value + 1)}>{locale === "zh" ? "重试" : "Retry"}</button>
+            <Link href="/">{locale === "zh" ? "返回学习首页" : "Back to learning"}</Link>
+          </div>
+        ) : <LoaderCircle className="spin" size={22} />}
       </main>
     );
   }

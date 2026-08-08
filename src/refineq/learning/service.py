@@ -37,6 +37,69 @@ from refineq.storage.projects import ProjectRepository
 MAX_QUESTION_HISTORY = 200
 MAX_SAVED_QUESTIONS = 100
 MAX_QUESTION_REQUESTS = 100
+MAX_REVIEW_SESSIONS = 20
+
+
+def _upsert_review_session(
+    raw_plan: dict[str, Any],
+    candidate: StudySession,
+    *,
+    not_before: datetime | None = None,
+) -> datetime:
+    """Keep the earliest useful pending review per topic and bound dynamic history."""
+
+    sessions = raw_plan["sessions"]
+    sessions[:] = [
+        item
+        for item in sessions
+        if not (
+            item.get("activity") == "review"
+            and str(item.get("id", "")).startswith("review_")
+            and item.get("topic_id") == candidate.topic_id
+            and item.get("status", "planned") != "completed"
+        )
+    ]
+    planned_review = min(
+        (
+            (item, StudySession.model_validate(item))
+            for item in sessions
+            if item.get("activity") == "review"
+            and not str(item.get("id", "")).startswith("review_")
+            and item.get("topic_id") == candidate.topic_id
+            and item.get("status", "planned") != "completed"
+        ),
+        key=lambda pair: (pair[1].planned_at, pair[1].id),
+        default=None,
+    )
+    if planned_review is None:
+        sessions.append(candidate.model_dump(mode="json"))
+        selected_at = candidate.planned_at
+    else:
+        planned_item, planned_session = planned_review
+        selected_at = min(planned_session.planned_at, candidate.planned_at)
+        if not_before is not None:
+            selected_at = max(selected_at, not_before)
+        planned_item["planned_at"] = selected_at.isoformat()
+
+    reviews = [
+        item
+        for item in sessions
+        if item.get("activity") == "review" and str(item.get("id", "")).startswith("review_")
+    ]
+    excess = len(reviews) - MAX_REVIEW_SESSIONS
+    if excess > 0:
+        removable = sorted(
+            reviews,
+            key=lambda item: (
+                item.get("status", "planned") != "completed",
+                item["planned_at"],
+                item["id"],
+            ),
+        )[:excess]
+        remove_ids = {item["id"] for item in removable}
+        sessions[:] = [item for item in sessions if item.get("id") not in remove_ids]
+    sessions.sort(key=lambda item: item["planned_at"])
+    return selected_at
 
 
 class LearningServiceError(RuntimeError):
@@ -103,6 +166,7 @@ class QuestionResponse(BaseModel):
     id: str
     topic_id: str
     prompt: str
+    explanation: str | None = None
     difficulty_level: int = Field(default=2, ge=1, le=5)
     citations: list[str] = Field(default_factory=list)
     sources: list[SearchResult] = Field(default_factory=list)
@@ -601,6 +665,9 @@ class LearningService:
             id=question["id"],
             topic_id=question["topic_id"],
             prompt=question["prompt"],
+            explanation=(
+                question.get("explanation") or (question.get("grading") or {}).get("explanation")
+            ),
             difficulty_level=question.get("difficulty_level", 2),
             citations=question.get("citations", []),
             sources=cls._question_sources(question),
@@ -706,6 +773,7 @@ class LearningService:
             proposed = {
                 "topic_id": selected_topic_id,
                 "prompt": generated.prompt,
+                "explanation": generated.explanation,
                 "expected_answer": generated.expected_answer,
                 "difficulty_level": generated.difficulty_level,
                 "learning_mode": generated.learning_mode.value,
@@ -1003,10 +1071,9 @@ class LearningService:
                         minutes=min(30, int(progress["daily_minutes"])),
                         activity="review",
                     )
-                    if not any(item["id"] == review_session.id for item in raw_plan["sessions"]):
-                        raw_plan["sessions"].append(review_session.model_dump(mode="json"))
-                        raw_plan["sessions"].sort(key=lambda item: item["planned_at"])
-                    next_review_at = review_session.planned_at
+                    next_review_at = _upsert_review_session(
+                        raw_plan, review_session, not_before=observed_at
+                    )
 
             result = {
                 "attempt_id": payload.attempt_id,
@@ -1178,6 +1245,10 @@ class LearningService:
                 )
             )
         due_reviews.sort(key=lambda item: (item.due_at, item.session_id))
+        unique_due_reviews: dict[str, DueReviewInsight] = {}
+        for review in due_reviews:
+            unique_due_reviews.setdefault(review.topic_id, review)
+        due_reviews = list(unique_due_reviews.values())[:MAX_REVIEW_SESSIONS]
         return LearningInsightsResponse(
             workspace_id=record.data.get("workspace_id") or record.data["project_id"],
             mastery_history=[
