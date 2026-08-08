@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from refineq.knowledge.index import SearchResult
-from refineq.learning.bkt import DEFAULT_BKT, update_bkt
+from refineq.learning.bkt import DEFAULT_BKT, mastery_is_stable, update_bkt
 from refineq.learning.difficulty import update_difficulty
 from refineq.learning.evidence import create_evidence, stable_id
 from refineq.learning.intelligence import (
@@ -38,6 +38,7 @@ MAX_QUESTION_HISTORY = 200
 MAX_SAVED_QUESTIONS = 100
 MAX_QUESTION_REQUESTS = 100
 MAX_REVIEW_SESSIONS = 20
+MAX_CREDITED_QUESTIONS = 50
 
 
 def _upsert_review_session(
@@ -347,6 +348,7 @@ class ProgressResponse(BaseModel):
     workspace_id: str
     goal: str
     mastery: dict[str, float]
+    stable: dict[str, bool]
     topics: dict[str, str]
     topic_order: list[str]
     diagnostic_count: int
@@ -387,6 +389,10 @@ class LearningService:
             goal=progress["goal"],
             mastery={
                 topic_id: BKTState.model_validate(state).p_mastery
+                for topic_id, state in progress["bkt_states"].items()
+            },
+            stable={
+                topic_id: mastery_is_stable(BKTState.model_validate(state))
                 for topic_id, state in progress["bkt_states"].items()
             },
             topics={
@@ -1008,18 +1014,26 @@ class LearningService:
             current_difficulty = DifficultyState.model_validate(
                 progress["difficulty_states"][topic_id]
             )
-            bkt_state = (
-                update_bkt(current_bkt, is_correct=is_correct)
-                if grade.mastery_evidence
-                else current_bkt
-            )
+            already_credited = payload.question_id in current_bkt.credited_question_ids
+            mastery_updated = grade.mastery_evidence and not already_credited
+            if mastery_updated:
+                bkt_state = update_bkt(current_bkt, is_correct=is_correct).model_copy(
+                    update={
+                        "credited_question_ids": [
+                            *current_bkt.credited_question_ids,
+                            payload.question_id,
+                        ][-MAX_CREDITED_QUESTIONS:]
+                    }
+                )
+            else:
+                bkt_state = current_bkt
             difficulty = (
                 update_difficulty(
                     current_difficulty,
                     is_correct=is_correct,
                     question_id=payload.question_id,
                 )
-                if grade.mastery_evidence
+                if mastery_updated
                 else current_difficulty
             )
             observed_at = datetime.now(UTC)
@@ -1042,7 +1056,7 @@ class LearningService:
                     "misconceptions": grade.misconceptions,
                     "citations": grade.citations,
                     "grading_mode": grade.mode,
-                    "mastery_updated": grade.mastery_evidence,
+                    "mastery_updated": mastery_updated,
                 },
             )
             raw_plan = progress.get("plan")
@@ -1094,7 +1108,7 @@ class LearningService:
                 ],
                 "grounding": self._question_grounding(question).value,
                 "grading_mode": grade.mode,
-                "mastery_updated": grade.mastery_evidence,
+                "mastery_updated": mastery_updated,
                 "next_review_at": (
                     next_review_at.isoformat() if next_review_at is not None else None
                 ),

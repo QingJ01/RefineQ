@@ -8,6 +8,7 @@ from refineq.agent.settings import ModelSettings, ModelSettingsRepository
 from refineq.knowledge.index import KnowledgeIndex, SearchResult
 from refineq.learning.intelligence import (
     GeneratedQuestion,
+    GradingModelOutput,
     GradingResult,
     LearningIntelligenceService,
     fallback_grade,
@@ -44,8 +45,13 @@ class FakeStructuredTransport:
                 "misconceptions": [],
                 "feedback": "概念基本正确，再补充函数值与极限值可以不同。",
                 "citations": ["limits-notes#0", "invented#9"],
+                "sufficient_evidence": True,
             }
         )
+
+
+def test_ai_grading_contract_requires_an_explicit_evidence_judgment() -> None:
+    assert GradingModelOutput.model_fields["sufficient_evidence"].is_required()
 
 
 def _service(tmp_path: Path, *, configured: bool = True):
@@ -237,6 +243,27 @@ def test_ai_grading_returns_explainable_feedback_and_valid_citations(
     assert result.strengths == ["说明了趋近"]
     assert result.citations == ["limits-notes#0"]
     assert transport.calls == ["QuestionModelOutput", "GradingModelOutput"]
+
+
+def test_ai_cannot_mark_a_prompt_echo_as_mastery_evidence(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path)
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="calculus",
+        topic_id="limits",
+        topic_name="函数极限",
+        mastery=0.25,
+        difficulty_level=2,
+    )
+
+    result = service.grade_answer(
+        owner_id="owner",
+        question=question,
+        answer="函数极限",
+    )
+
+    assert result.mastery_evidence is False
+    assert result.passed is False
 
 
 def test_fallback_grading_rejects_topic_echo_and_generic_filler() -> None:

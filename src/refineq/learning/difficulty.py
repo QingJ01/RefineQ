@@ -28,7 +28,14 @@ def update_difficulty(
             recent_correct_question_ids=correct_ids,
         )
 
-    wrong_count = state.consecutive_wrong + 1
+    wrong_ids = list(state.recent_wrong_question_ids)
+    if question_id not in wrong_ids:
+        wrong_ids.append(question_id)
+    wrong_count = len(wrong_ids)
     if wrong_count >= 2:
         return DifficultyState(level=max(1, state.level - 1))
-    return DifficultyState(level=state.level, consecutive_wrong=wrong_count)
+    return DifficultyState(
+        level=state.level,
+        consecutive_wrong=wrong_count,
+        recent_wrong_question_ids=wrong_ids,
+    )

@@ -81,6 +81,7 @@ export interface PlanUpdateInput {
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
+  stable?: Record<string, boolean>;
   topics: Record<string, string>;
   topic_order: string[];
   diagnostic_count: number;

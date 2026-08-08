@@ -868,6 +868,27 @@ describe("focused learning components", () => {
     expect(html).toMatch(/progress-recommendation[\s\S]*<strong>Alpha<\/strong>/);
   });
 
+  it("labels mastery only after the backend marks the evidence stable", () => {
+    const baseProgress = {
+      goal: "Pass calculus",
+      mastery: { limits: 0.99 },
+      topics: { limits: "Limits" },
+      topic_order: ["limits"],
+      diagnostic_count: 0,
+      attempt_count: 1,
+      plan_id: "plan-1",
+    };
+    const unstable = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={{ ...baseProgress, stable: { limits: false } }} />,
+    );
+    const stable = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={{ ...baseProgress, stable: { limits: true } }} />,
+    );
+
+    expect(unstable).not.toContain("Mastered");
+    expect(stable).toContain("Mastered");
+  });
+
   it("renders due reviews and a topic drill-down with stable empty states", () => {
     const reviewHtml = renderToStaticMarkup(
       <ReviewQueue

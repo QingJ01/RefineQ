@@ -54,6 +54,7 @@ class BKTState(BaseModel):
     p_guess: float = Field(default=0.2, ge=0.0, le=1.0)
     p_slip: float = Field(default=0.1, ge=0.0, le=1.0)
     evidence_count: int = Field(default=0, ge=0)
+    credited_question_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 class DiagnosticCandidate(BaseModel):
@@ -82,6 +83,7 @@ class DifficultyState(BaseModel):
     level: int = Field(default=2, ge=1, le=5)
     consecutive_wrong: int = Field(default=0, ge=0)
     recent_correct_question_ids: list[str] = Field(default_factory=list)
+    recent_wrong_question_ids: list[str] = Field(default_factory=list)
 
 
 class ErrorDiagnosis(BaseModel):

@@ -131,6 +131,9 @@ def test_intents_create_reuse_switch_and_restore_learning_spaces(
         assert body["progress"]["workspace_id"] == math_id
         assert "project_id" not in body["progress"]
         assert body["progress"]["goal"] == "我要在两周内复习高数极限"
+        assert body["progress"]["stable"] == {
+            topic_id: False for topic_id in body["progress"]["mastery"]
+        }
         assert body["plan"]["sessions"]
         assert body["materials"][0]["filename"] == "limits.md"
 

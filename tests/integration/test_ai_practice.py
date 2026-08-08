@@ -37,6 +37,7 @@ class FakeLearningModel:
                 "misconceptions": [],
                 "feedback": "回答正确，下一步练习形式化定义。",
                 "citations": [],
+                "sufficient_evidence": True,
             }
         )
 
@@ -52,6 +53,34 @@ class MaterialClaimingLearningModel:
                 "rubric": [{"criterion": "识别真实需求", "max_points": 100}],
                 "explanation": "检查案例分析能力。",
                 "citations": [],
+            }
+        )
+
+
+class SequencedGradingLearningModel(FakeLearningModel):
+    def __init__(self, scores: list[int]) -> None:
+        super().__init__()
+        self.scores = iter(scores)
+
+    def complete(self, *, settings, messages, response_model):
+        if response_model.__name__ == "QuestionModelOutput":
+            return super().complete(
+                settings=settings,
+                messages=messages,
+                response_model=response_model,
+            )
+        del settings, messages
+        self.calls.append(response_model.__name__)
+        score = next(self.scores)
+        return response_model.model_validate(
+            {
+                "score": score,
+                "strengths": ["包含可判断的解释"],
+                "gaps": [] if score >= 70 else ["仍需修正结论"],
+                "misconceptions": [],
+                "feedback": "已记录这次独立作答。",
+                "citations": [],
+                "sufficient_evidence": True,
             }
         )
 
@@ -132,7 +161,10 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         payload = {
             "attempt_id": "attempt-ai-1",
             "question_id": question["id"],
-            "answer": "极限描述函数值不断趋近的目标。",
+            "answer": (
+                "极限描述函数值不断趋近的目标，例如自变量趋近零时，"
+                "函数值可以趋近零，但不要求函数在该点等于零。"
+            ),
         }
         answer = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
@@ -207,6 +239,90 @@ def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) 
     assert answer.json()["is_correct"] is False
     assert answer.json()["mastery_updated"] is False
     assert after == before
+
+
+def test_retrying_one_question_cannot_update_mastery_or_difficulty_twice(
+    tmp_path: Path,
+) -> None:
+    model = SequencedGradingLearningModel([40, 90])
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=model,
+    )
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "independent-evidence@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Evidence Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        owner_id = auth["user"]["id"]
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习函数极限"},
+        ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id="limits-evidence",
+            filename="limits.txt",
+            text="函数极限描述函数值趋近的目标，函数在该点不一定等于极限值。",
+        )
+        admin = ensure_admin(
+            app.state.identity,
+            email="evidence-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Evidence Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "independent-question"},
+        ).json()
+        substantive_answer = (
+            "函数极限描述函数值不断趋近的目标，例如自变量趋近零时，"
+            "函数值可以趋近零，但不要求函数在该点等于零。"
+        )
+        first = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "independent-attempt-1",
+                "question_id": question["id"],
+                "answer": substantive_answer,
+            },
+        ).json()
+        retried = client.post(
+            f"/workspaces/{workspace_id}/learning/questions/{question['id']}/retry",
+            headers=headers,
+        ).json()
+        second = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "independent-attempt-2",
+                "question_id": retried["id"],
+                "answer": substantive_answer,
+            },
+        ).json()
+
+    assert first["mastery_updated"] is True
+    assert second["mastery_updated"] is False
+    assert second["mastery"] == first["mastery"]
+    assert second["difficulty_level"] == first["difficulty_level"]
 
 
 def test_workspace_practice_can_replace_a_question_at_a_chosen_difficulty(

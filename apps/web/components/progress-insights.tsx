@@ -67,7 +67,13 @@ export function ProgressInsights({
               onClick={() => onSelectTopic?.(topic)}
             >
               <span>{topicLabel(topic)}</span>
-              {topicInsight && <small>{topicInsight.attempt_count} · {topicInsight.error_count}</small>}
+              {(topicInsight || progress.stable?.[topic]) && (
+                <small>
+                  {topicInsight && `${topicInsight.attempt_count} · ${topicInsight.error_count}`}
+                  {topicInsight && progress.stable?.[topic] && " · "}
+                  {progress.stable?.[topic] && t("correct")}
+                </small>
+              )}
             </button>
             <div role="progressbar" aria-label={topicLabel(topic)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mastery * 100)}>
               <i style={{ width: `${Math.round(mastery * 100)}%` }} />
