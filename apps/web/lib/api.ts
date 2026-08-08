@@ -109,6 +109,7 @@ export class ApiClient {
           ...options.headers,
         },
       });
+      clearTimeout(timeout);
       if (!response.ok) {
         const body = await response.json().catch(() => null);
         throw new ApiError(

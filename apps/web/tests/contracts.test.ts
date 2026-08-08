@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiClient, ApiError, authHeaders } from "../lib/api";
+import { shouldClearAccountSession } from "../components/account-center";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
 import { validatePlanSettings } from "../lib/plan-settings";
@@ -191,6 +192,8 @@ describe("administrator routing", () => {
     expect(source).toContain("c.files");
     expect(source).toContain("auditActionLabel(entry.action, locale)");
     expect(source).toContain("roleLabel(user.role, locale)");
+    expect(source).not.toContain("setError(result.message)");
+    expect(source).not.toContain("setNotice(result.message)");
   });
 });
 
@@ -576,6 +579,41 @@ describe("authentication and API errors", () => {
     await expect(pending.catch((error) => isAbortError(error))).resolves.toBe(true);
   });
 
+  it("does not abort response parsing after response headers arrive", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | null | undefined;
+    const client = new ApiClient("/api", async (_input, init) => {
+      signal = init?.signal;
+      return {
+        ok: true,
+        status: 200,
+        json: () => new Promise((resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          setTimeout(() => resolve({
+            id: "user-1",
+            email: "learner@example.com",
+            display_name: "Learner",
+            role: "learner",
+            created_at: "2026-08-08T00:00:00Z",
+          }), 50);
+        }),
+      } as Response;
+    }, 25);
+
+    const pending = client.getProfile("token-1");
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(pending).resolves.toMatchObject({ id: "user-1" });
+    expect(signal?.aborted).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("only clears the account session for authentication failures", () => {
+    expect(shouldClearAccountSession(new ApiError(401, "invalid_token", "expired"))).toBe(true);
+    expect(shouldClearAccountSession(new ApiError(403, "forbidden", "forbidden"))).toBe(true);
+    expect(shouldClearAccountSession(new ApiError(502, "upstream", "offline"))).toBe(false);
+    expect(shouldClearAccountSession(new Error("network"))).toBe(false);
+  });
+
   it("runs a multi-file upload queue serially", async () => {
     const events: string[] = [];
     await runSerially(["one", "two", "three"], async (item) => {
@@ -605,6 +643,7 @@ describe("authentication and API errors", () => {
     expect(materialSource).toContain("controller.abort()");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
+    expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
   it("uses the model timeout and stable turn identifiers for Agent chat", async () => {

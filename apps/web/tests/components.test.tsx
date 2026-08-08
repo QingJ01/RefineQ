@@ -313,6 +313,7 @@ describe("focused learning components", () => {
       grounding: "material" | "general",
       sources: SearchSource[],
       reflect = false,
+      restoreQuestion = true,
     ) => renderToStaticMarkup(
       <LearningSessionCanvas
         locale="zh"
@@ -332,13 +333,13 @@ describe("focused learning components", () => {
         plan={null}
         progress={null}
         materials={[]}
-        question={{
+        question={restoreQuestion ? {
           id: "question-1",
           topic_id: "user-needs",
           prompt: "分析用户当前的替代方案",
           grounding,
           sources,
-        }}
+        } : null}
         answer=""
         result={reflect ? {
           attempt_id: "attempt-1",
@@ -378,6 +379,7 @@ describe("focused learning components", () => {
     const materialHtml = renderGrounding("material", [source]);
     const generalHtml = renderGrounding("general", []);
     const feedbackHtml = renderGrounding("material", [source], true);
+    const recoveryHtml = renderGrounding("material", [source], true, false);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
     expect(materialHtml).toContain("材料依据");
@@ -393,6 +395,8 @@ describe("focused learning components", () => {
     expect(feedbackHtml).toContain('data-testid="reflect-view-progress"');
     expect(feedbackHtml).toContain('data-testid="reflect-retry-question"');
     expect(feedbackHtml).toContain('data-testid="reflect-save-question"');
+    expect(recoveryHtml).toContain('data-testid="reflect-recovery"');
+    expect(recoveryHtml).toContain('data-testid="next-question"');
   });
 
   it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {

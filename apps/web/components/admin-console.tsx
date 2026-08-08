@@ -117,6 +117,8 @@ const copy = {
     discard: "丢弃并离开",
     loadFailed: "配置读取失败，为避免覆盖已有设置，编辑已锁定。",
     reload: "重新读取",
+    connectionSucceeded: "连接测试通过",
+    connectionFailed: "连接测试失败，请检查地址、凭据与网络设置。",
   },
   en: {
     title: "System settings",
@@ -173,6 +175,8 @@ const copy = {
     discard: "Discard and leave",
     loadFailed: "Settings failed to load. Editing is locked to avoid overwriting saved configuration.",
     reload: "Reload settings",
+    connectionSucceeded: "Connection test passed",
+    connectionFailed: "Connection test failed. Check the endpoint, credentials, and network settings.",
   },
 } as const;
 
@@ -777,8 +781,8 @@ function IntegrationCard({
     try {
       const result = await api.testIntegration(token, definition.kind);
       onChange(projectIntegrationTestResult(setting, result, new Date().toISOString()));
-      if (result.status === "failed") setError(result.message);
-      else setNotice(result.message);
+      if (result.status === "failed") setError(c.connectionFailed);
+      else setNotice(c.connectionSucceeded);
     } catch (caught) {
       setError(errorMessage(caught, locale));
     } finally {
@@ -800,8 +804,8 @@ function IntegrationCard({
       const result = await api.testIntegration(token, definition.kind);
       const projected = projectIntegrationTestResult(updated, result, new Date().toISOString());
       onChange(projected);
-      if (result.status === "failed") setError(result.message);
-      else setNotice(result.message);
+      if (result.status === "failed") setError(c.connectionFailed);
+      else setNotice(c.connectionSucceeded);
     } catch (caught) {
       setError(errorMessage(caught, locale));
     } finally {
@@ -882,7 +886,7 @@ function IntegrationCard({
             </span>
             {setting.last_test_status && (
               <span className={setting.last_test_status === "ok" ? "healthy" : "failed"}>
-                <PlugZap size={13} /> {setting.last_test_message}
+                <PlugZap size={13} /> {setting.last_test_status === "ok" ? c.connectionSucceeded : c.connectionFailed}
               </span>
             )}
           </div>
@@ -1203,8 +1207,8 @@ export function AdminConsole({
                             : `${c.completeSetup}：${nextDefinition.title}`}
                         </h3>
                         <p>
-                          {nextSetting.last_test_status === "failed" && nextSetting.last_test_message
-                            ? nextSetting.last_test_message
+                          {nextSetting.last_test_status === "failed"
+                            ? c.connectionFailed
                             : nextDefinition.description}
                         </p>
                       </div>

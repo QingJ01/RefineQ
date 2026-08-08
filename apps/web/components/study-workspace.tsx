@@ -151,6 +151,7 @@ export function StudyWorkspace({
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [snapshotConflict, setSnapshotConflict] = useState(false);
   const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
@@ -459,6 +460,8 @@ export function StudyWorkspace({
     if (!auth || !workspace || !question) return;
     const generation = capturePracticeGeneration();
     setPracticeBusy(true);
+    setError("");
+    setSnapshotConflict(false);
     setMasteryBefore(progress?.mastery?.[question.topic_id] ?? null);
     attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     const attemptId = attemptIdRef.current;
@@ -482,7 +485,10 @@ export function StudyWorkspace({
       setEvidence(snapshot.evidence);
       setPlan(snapshot.plan);
     } catch (caught) {
-      if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) {
+        if (caught instanceof ApiError && caught.status === 409) setSnapshotConflict(true);
+        reportError(caught);
+      }
     } finally {
       if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
@@ -755,6 +761,16 @@ export function StudyWorkspace({
     } catch (caught) {
       reportError(caught);
       throw caught;
+    }
+  }
+
+  async function resyncWorkspace() {
+    try {
+      await refreshWorkspaceSnapshot();
+      setSnapshotConflict(false);
+      setError("");
+    } catch {
+      // refreshWorkspaceSnapshot already reports the localized failure.
     }
   }
 
@@ -1144,7 +1160,7 @@ export function StudyWorkspace({
               <button type="button" aria-label={t("routingDismiss")} onClick={dismissWorkspaceRoute}>×</button>
             </div>
           )}
-          {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span><button aria-label={t("routingDismiss")} onClick={() => setError("")}>×</button></div>}
+          {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
           {section === "today" && (
             <LearningSessionCanvas
               key={workspace.id}

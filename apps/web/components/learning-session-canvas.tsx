@@ -458,6 +458,21 @@ export function LearningSessionCanvas({
               </div>
             </article>
           )}
+          {stage === "reflect" && result && !question && (
+            <article className="session-feedback" data-testid="reflect-recovery" role="status">
+              <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
+              <h2>{result.feedback}</h2>
+              <p>{locale === "zh" ? "原题题面暂时无法恢复，你仍可继续下一题或查看已保存的进度。" : "The original prompt could not be restored, but you can continue or review your saved progress."}</p>
+              <div className="session-reflect-actions">
+                <button type="button" className="secondary-action" data-testid="reflect-view-progress" disabled={!onViewProgress} onClick={onViewProgress}>
+                  {locale === "zh" ? "看进步" : "View progress"}
+                </button>
+                <button type="button" className="primary-action" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
+                  {text.next} <ArrowRight size={18} />
+                </button>
+              </div>
+            </article>
+          )}
           <section className="session-saved-questions" aria-labelledby="saved-question-heading">
             <div className="session-saved-heading">
               <h2 id="saved-question-heading">{t("savedQuestions")}</h2>

@@ -333,7 +333,9 @@ class WorkspaceService:
         raw_answer = next(reversed(attempts.values()), None) if attempts else None
         active_raw = pending
         if active_raw is None and raw_answer is not None:
-            active_raw = raw_progress.get("question_history", {}).get(raw_answer.get("question_id"))
+            active_raw = raw_progress.get("question_history", {}).get(
+                raw_answer.get("question_id")
+            ) or raw_answer.get("question_snapshot")
         active_question = (
             self._learning_service._public_question(
                 active_raw,
