@@ -54,7 +54,9 @@ import {
 import { isAbortError } from "@/lib/upload-flow";
 import {
   clearLearningSession,
+  installSessionHandoff,
   loadLearningSession,
+  requestSessionHandoff,
   saveLearningSession,
 } from "@/lib/session";
 import type {
@@ -186,6 +188,8 @@ export function StudyWorkspace({
     );
   }, [auth?.access_token, setModelConfigured]);
 
+  useEffect(() => installSessionHandoff(window.sessionStorage), []);
+
   function runGuardedPracticeAction(action: PracticeNavigationAction): boolean {
     return guardPracticeNavigation(
       hasUnsavedPracticeDraft(answer, Boolean(question), Boolean(result)),
@@ -253,7 +257,8 @@ export function StudyWorkspace({
   useEffect(() => {
     let active = true;
     async function restore() {
-      const saved = loadLearningSession(window.sessionStorage);
+      const saved = loadLearningSession(window.sessionStorage)
+        ?? await requestSessionHandoff(window.sessionStorage);
       if (!saved) {
         if (active) setRestoring(false);
         return;

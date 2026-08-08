@@ -11,7 +11,9 @@ import { validatePlanSettings } from "../lib/plan-settings";
 import { learningSections, parseLearningSection } from "../lib/learning-routes";
 import {
   clearLearningSession,
+  installSessionHandoff,
   loadLearningSession,
+  requestSessionHandoff,
   saveLearningLocale,
   saveLearningSession,
 } from "../lib/session";
@@ -362,6 +364,11 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toMatch(/\.workspace-switcher\s*\{[^}]*min-height: 44px/s);
     expect(styles).toMatch(/\.workspace-switcher > strong\s*\{[^}]*font-size: 12px/s);
     expect(styles).toMatch(/\.session-source-link[^}]*min-height: 44px/s);
+    expect(styles).toMatch(/\.recent-card-actions button,[\s\S]*?min-width: 44px/s);
+    expect(styles).toMatch(/\.material-actions button[\s\S]*?min-height: 44px/s);
+    expect(styles).toContain("@media (hover: none)");
+    expect(styles).toMatch(/\.calendar-grid\s*\{[^}]*grid-template-columns: 1fr/s);
+    expect(styles).toMatch(/\.calendar-day\.empty\s*\{[^}]*display: none/s);
   });
 });
 
@@ -1006,6 +1013,45 @@ describe("persistent personal learning session", () => {
 
     expect(sources.every((source) => source.includes("window.sessionStorage"))).toBe(true);
     expect(sources.every((source) => !source.includes("window.localStorage"))).toBe(true);
+  });
+
+  it("hands a short-lived session to a new same-origin tab", async () => {
+    type Listener = (event: MessageEvent) => void;
+    const peers = new Set<FakeChannel>();
+    class FakeChannel {
+      listeners = new Set<Listener>();
+      constructor() { peers.add(this); }
+      postMessage(message: unknown) {
+        for (const peer of peers) {
+          queueMicrotask(() => peer.listeners.forEach((listener) => listener({ data: message } as MessageEvent)));
+        }
+      }
+      addEventListener(_type: "message", listener: Listener) { this.listeners.add(listener); }
+      removeEventListener(_type: "message", listener: Listener) { this.listeners.delete(listener); }
+      close() { peers.delete(this); }
+    }
+    const storage = () => {
+      const values = new Map<string, string>();
+      return {
+        get length() { return values.size; },
+        clear: () => values.clear(),
+        getItem: (key: string) => values.get(key) ?? null,
+        key: (index: number) => Array.from(values.keys())[index] ?? null,
+        setItem: (key: string, value: string) => { values.set(key, value); },
+        removeItem: (key: string) => { values.delete(key); },
+      } satisfies Storage;
+    };
+    const existingTab = storage();
+    const newTab = storage();
+    saveLearningSession(existingTab, { token: "short-lived-token", workspaceId: "workspace-1", locale: "en" });
+    const createChannel = () => new FakeChannel();
+    const stop = installSessionHandoff(existingTab, createChannel);
+
+    const restored = await requestSessionHandoff(newTab, createChannel, 50);
+
+    expect(restored).toEqual({ token: "short-lived-token", workspaceId: "workspace-1", locale: "en" });
+    expect(loadLearningSession(newTab)).toEqual(restored);
+    stop();
   });
 });
 
