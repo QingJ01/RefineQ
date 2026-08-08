@@ -1,4 +1,4 @@
-export const learningSections = ["today", "path", "materials", "progress"] as const;
+export const learningSections = ["today", "path", "materials", "calendar", "progress"] as const;
 
 export type LearningSection = (typeof learningSections)[number];
 

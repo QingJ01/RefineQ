@@ -271,7 +271,7 @@ export class ApiClient {
     token: string,
     workspaceId: string,
     sessionId: string,
-    input: { status?: "planned" | "completed"; planned_at?: string },
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
   ): Promise<StudySession> {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions/${sessionId}`,

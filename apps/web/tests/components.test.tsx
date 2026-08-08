@@ -13,6 +13,7 @@ import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
 import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
+import { ScheduleCalendar } from "../components/schedule-calendar";
 import { CoachActionCard } from "../components/session-coach";
 import { translator } from "../lib/i18n";
 
@@ -20,6 +21,32 @@ import { translator } from "../lib/i18n";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders the plan as a compact calendar agenda for the sidebar", () => {
+    const html = renderToStaticMarkup(
+      <ScheduleCalendar
+        locale="zh"
+        topicLabels={{ derivatives: "导数应用" }}
+        onUpdateSession={() => undefined}
+        plan={{
+          id: "plan-calendar",
+          goal: "数学考试",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-calendar",
+            topic_id: "derivatives",
+            planned_at: "2026-08-10T08:00:00Z",
+            minutes: 45,
+          }],
+        }}
+      />,
+    );
+
+    expect(html).toContain("RefineQ 学习时间表");
+    expect(html).toContain("导数应用");
+    expect(html).toContain('data-testid="schedule-calendar"');
+  });
+
   it.each([
     ["applied", "coach-action-applied"],
     ["confirmation_required", "coach-action-confirmation_required"],

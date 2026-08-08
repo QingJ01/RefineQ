@@ -72,7 +72,7 @@ describe("administrator routing", () => {
 
 describe("durable learner routing", () => {
   it("uses capability-oriented learner routes and keeps legacy links recoverable", () => {
-    expect(learningSections).toEqual(["today", "path", "materials", "progress"]);
+    expect(learningSections).toEqual(["today", "path", "materials", "calendar", "progress"]);
     expect(parseLearningSection("evidence")).toBe("progress");
     expect(parseLearningSection("coach")).toBe("today");
   });

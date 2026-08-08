@@ -164,6 +164,7 @@ class PlanSessionUpdate(BaseModel):
 
     status: str | None = Field(default=None, pattern=r"^(planned|completed)$")
     planned_at: datetime | None = None
+    minutes: int | None = Field(default=None, ge=5, le=480)
 
 
 class ProgressResponse(BaseModel):
@@ -362,6 +363,8 @@ class LearningService:
                     if payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None:
                         raise LearningConflictError("planned_at must be timezone-aware")
                     session["planned_at"] = payload.planned_at.astimezone(UTC).isoformat()
+                if payload.minutes is not None:
+                    session["minutes"] = payload.minutes
                 updated = deepcopy(session)
                 return data
             raise LearningConflictError("Study session not found")

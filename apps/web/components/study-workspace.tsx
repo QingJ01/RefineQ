@@ -9,6 +9,7 @@ import {
   House,
   Languages,
   LogOut,
+  Route,
   Settings2,
   Sparkles,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import { LearningHome } from "@/components/learning-home";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
+import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -631,7 +633,7 @@ export function StudyWorkspace({
 
   async function updatePlanSession(
     session: StudySession,
-    input: { status?: "planned" | "completed"; planned_at?: string },
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
   ): Promise<boolean> {
     if (!auth || !workspace) return false;
     setBusySessionId(session.id);
@@ -764,8 +766,9 @@ export function StudyWorkspace({
     / Math.max(1, masteryValues.length);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
-    { id: "path", icon: CalendarDays },
+    { id: "path", icon: Route },
     { id: "materials", icon: Archive },
+    { id: "calendar", icon: CalendarDays },
     { id: "progress", icon: ChartNoAxesColumnIncreasing },
   ];
 
@@ -839,7 +842,7 @@ export function StudyWorkspace({
         </div>
       </aside>
       <section className="workspace-stage">
-        {section !== "today" && (
+        {section !== "today" && section !== "calendar" && (
           <header className="workspace-header">
             <div>
               <span className="kicker">{t("workspaceEyebrow")}</span>
@@ -930,6 +933,15 @@ export function StudyWorkspace({
               onSearch={searchMaterials}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
+            />
+          )}
+          {section === "calendar" && (
+            <ScheduleCalendar
+              plan={plan}
+              locale={locale}
+              topicLabels={progress?.topics}
+              busySessionId={busySessionId}
+              onUpdateSession={updatePlanSession}
             />
           )}
           {section === "progress" && (
