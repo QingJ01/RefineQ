@@ -284,7 +284,6 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain('href="#recent-learning"');
     expect(html).toContain('id="recent-learning"');
     expect(html).toContain('data-testid="workspace-rename-math-space"');
     expect(html).toContain('data-testid="workspace-archive-math-space"');

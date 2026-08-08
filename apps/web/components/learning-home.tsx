@@ -6,10 +6,8 @@ import {
   ArchiveRestore,
   Check,
   Clock3,
-  History,
   Languages,
   LogOut,
-  MessageSquarePlus,
   Pencil,
   Settings2,
   Sparkles,
@@ -103,15 +101,17 @@ export function LearningHome({
           <BrandMark className="brand-mark" size={36} />
           <BrandName />
         </div>
-        <a className="home-nav-item active" href="#learning-composer"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></a>
-        <a className="home-nav-item" href="#recent-learning"><History size={19} /><span>{t("recentLearning")}</span></a>
+        <div className="home-sidebar-intro">
+          <span className="kicker">PERSONAL LEARNING AGENT</span>
+          <p>{t("brandTagline")}</p>
+        </div>
         {isAdmin && (
           <button
             data-testid="home-admin"
             className="home-nav-item home-admin-link"
             onClick={onAdmin}
           >
-            <Settings2 size={19} /><span>平台控制台</span>
+            <Settings2 size={19} /><span>{t("administration")}</span>
           </button>
         )}
         <div className="home-sidebar-actions">

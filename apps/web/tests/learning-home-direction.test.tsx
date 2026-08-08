@@ -1,0 +1,41 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { LearningHome } from "../components/learning-home";
+import { translator } from "../lib/i18n";
+
+describe("dialog-first learning home", () => {
+  it("keeps the Agent conversation ahead of workspace management", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("zh")}
+        busy={false}
+        workspaces={[]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="learning-home-hero"');
+    expect(html.indexOf('id="learning-composer"')).toBeLessThan(html.indexOf('id="recent-learning"'));
+    expect(html).not.toContain('data-testid="home-command-header"');
+    expect(html).not.toContain('data-testid="current-learning-space"');
+    expect(html).not.toContain('class="current-space-shortcuts"');
+    expect(html).not.toContain('href="#learning-composer"');
+    expect(html).not.toContain('href="#recent-learning"');
+  });
+
+  it("uses the same desktop sidebar width as the learning workspace", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toMatch(/\.home-shell\s*\{[^}]*grid-template-columns:\s*264px minmax\(0, 1fr\)/s);
+  });
+});

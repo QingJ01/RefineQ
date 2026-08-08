@@ -1648,7 +1648,7 @@ textarea:focus {
   min-height: 100vh;
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 264px minmax(0, 1fr);
 }
 
 .home-sidebar,
@@ -1663,11 +1663,24 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 22px 16px;
+  padding: 22px 14px 16px;
 }
 
 .home-sidebar .sidebar-brand {
-  margin: 0 6px 24px;
+  margin: 0 7px 22px;
+}
+
+.home-sidebar-intro {
+  margin: 0 9px;
+  padding: 14px 4px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-sidebar-intro p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .home-nav-item {
@@ -4554,6 +4567,10 @@ textarea:focus {
 
   .home-sidebar .sidebar-brand {
     margin: 0 auto 0 0;
+  }
+
+  .home-sidebar-intro {
+    display: none;
   }
 
   .home-nav-item {
