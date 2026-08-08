@@ -6,6 +6,11 @@ const messages: Record<Locale, Record<string, string>> = {
   zh: {
     material_bulk_delete_failed: "所选资料未能安全删除，原文件与索引已尽力恢复。",
     material_mutation_busy: "资料正在被整理，请稍后重试上传。",
+    backup_creation_failed: "系统备份未能安全创建，请稍后重试。",
+    backup_listing_failed: "系统备份列表暂时无法读取，请稍后重试。",
+    backup_not_found: "这个备份不存在或已被移除。",
+    backup_invalid: "备份完整性校验失败，请勿用于恢复。",
+    restore_confirmation_required: "恢复校验口令不匹配，请重新确认备份 ID。",
     invalid_credentials: "邮箱或密码错误",
     unauthorized: "登录状态已失效，请重新登录。",
     model_not_configured: "学习 Agent 尚未配置模型，你仍可继续使用本地学习功能。",
@@ -26,6 +31,11 @@ const messages: Record<Locale, Record<string, string>> = {
   en: {
     material_bulk_delete_failed: "The selected materials could not be deleted safely. Files and indexes were restored where possible.",
     material_mutation_busy: "Materials are being organized. Try the upload again shortly.",
+    backup_creation_failed: "The system backup could not be created safely. Try again shortly.",
+    backup_listing_failed: "The backup list is temporarily unavailable. Try again shortly.",
+    backup_not_found: "That backup does not exist or has been removed.",
+    backup_invalid: "Backup integrity validation failed. Do not use it for restore.",
+    restore_confirmation_required: "The restore confirmation does not match this backup ID.",
     invalid_credentials: "Invalid email or password.",
     unauthorized: "Your session has expired. Sign in again.",
     model_not_configured: "The learning Agent has not been configured. Local learning tools remain available.",

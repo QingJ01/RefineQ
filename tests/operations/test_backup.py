@@ -8,8 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from refineq.config import Settings
+from refineq.database.engine import Database
 from refineq.knowledge.index import KnowledgeIndex
+from refineq.operations.admin import AdminOperations
 from refineq.operations.backup import (
+    BackupError,
     BackupValidationError,
     RestoreConflictError,
     create_backup,
@@ -135,3 +139,25 @@ def test_managed_backup_validation_rejects_paths_and_unissued_ids(
 
     with pytest.raises(BackupValidationError):
         validate_managed_backup(backup_root, backup_id)
+
+
+def test_managed_backup_is_removed_when_audit_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(data_root=tmp_path / "runtime", _env_file=None)
+    settings.data_root.mkdir(parents=True)
+    (settings.data_root / "safe.txt").write_text("safe", encoding="utf-8")
+    database = Database(f"sqlite+pysqlite:///{(tmp_path / 'admin.sqlite3').as_posix()}")
+    database.initialize()
+    operations = AdminOperations(database, settings)
+
+    def fail_audit(**_kwargs: object) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(operations, "audit", fail_audit)
+
+    with pytest.raises(BackupError):
+        operations.create_backup(actor_id="admin")
+
+    assert operations.list_backups() == []

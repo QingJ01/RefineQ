@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Literal
 
@@ -17,9 +18,10 @@ from refineq.integrations.models import (
 )
 from refineq.integrations.repository import IntegrationNotConfiguredError
 from refineq.operations.admin import RestoreConfirmationError
-from refineq.operations.backup import BackupError
+from refineq.operations.backup import BackupError, ManagedBackupNotFoundError
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 
 
 class AdminOverview(BaseModel):
@@ -185,9 +187,13 @@ def create_admin_backup(request: Request, admin: AdminUser) -> ManagedBackupResp
             from_attributes=True,
         )
     except BackupError as error:
+        logger.exception("Managed backup creation failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "backup_creation_failed", "message": str(error)},
+            detail={
+                "code": "backup_creation_failed",
+                "message": "Backup could not be created safely.",
+            },
         ) from error
 
 
@@ -197,9 +203,13 @@ def list_admin_backups(request: Request, admin: AdminUser) -> ManagedBackupsResp
     try:
         backups = request.app.state.admin_operations.list_backups()
     except BackupError as error:
+        logger.exception("Managed backup listing failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "backup_listing_failed", "message": str(error)},
+            detail={
+                "code": "backup_listing_failed",
+                "message": "Backups could not be listed safely.",
+            },
         ) from error
     return ManagedBackupsResponse(
         items=[
@@ -231,17 +241,22 @@ def validate_admin_restore(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "restore_confirmation_required", "message": str(error)},
         ) from error
-    except BackupError as error:
-        is_missing = "ID" in str(error) or "does not exist" in str(error)
+    except ManagedBackupNotFoundError as error:
+        logger.info("Managed restore validation requested an unavailable backup")
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-                if is_missing
-                else status.HTTP_422_UNPROCESSABLE_CONTENT
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail={
-                "code": "backup_not_found" if is_missing else "backup_invalid",
-                "message": str(error),
+                "code": "backup_not_found",
+                "message": "The requested backup is unavailable.",
+            },
+        ) from error
+    except BackupError as error:
+        logger.exception("Managed restore validation failed")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "backup_invalid",
+                "message": "Backup integrity validation failed.",
             },
         ) from error
     public = ManagedBackupResponse.model_validate(backup, from_attributes=True)

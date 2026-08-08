@@ -1,10 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { EvidenceLedger } from "../components/evidence-ledger";
 import { AuthPanel } from "../components/auth-panel";
 import { AgentPanel } from "../components/agent-panel";
-import { AdminConsole } from "../components/admin-console";
+import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
 import { LearningHome } from "../components/learning-home";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
@@ -348,6 +348,16 @@ describe("focused learning components", () => {
     expect(html).toContain("Users and quotas");
     expect(html).toContain("Audit activity");
     expect(html).toContain("Material jobs");
+  });
+
+  it("keeps a successful admin mutation successful when audit refresh fails", async () => {
+    const apply = vi.fn();
+
+    await expect(refreshAdminAudit(
+      async () => { throw new Error("audit read failed"); },
+      apply,
+    )).resolves.toBe(false);
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it("presents authentication as a calm RefineQ welcome card", () => {

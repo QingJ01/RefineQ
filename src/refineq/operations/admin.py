@@ -14,8 +14,10 @@ from refineq.database.schema import audit_logs, material_chunks, materials, reco
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService
 from refineq.operations.backup import (
+    BackupError,
     ManagedBackup,
     create_managed_backup,
+    delete_managed_backup,
     list_managed_backups,
     validate_managed_backup,
 )
@@ -212,12 +214,26 @@ class AdminOperations:
 
     def create_backup(self, *, actor_id: str) -> ManagedBackup:
         backup = create_managed_backup(self.settings.data_root, self.backup_root)
-        self.audit(
-            actor_id=actor_id,
-            action="backup.created",
-            target=backup.id,
-            details={"file_count": backup.file_count, "total_bytes": backup.total_bytes},
-        )
+        try:
+            self.audit(
+                actor_id=actor_id,
+                action="backup.created",
+                target=backup.id,
+                details={
+                    "file_count": backup.file_count,
+                    "total_bytes": backup.total_bytes,
+                },
+            )
+        except Exception as error:
+            try:
+                delete_managed_backup(self.backup_root, backup.id)
+            except BackupError as cleanup_error:
+                raise BackupError(
+                    "Backup audit failed and archive cleanup could not be confirmed"
+                ) from cleanup_error
+            raise BackupError(
+                "Backup audit failed; the created archive was removed"
+            ) from error
         return backup
 
     def list_backups(self) -> list[ManagedBackup]:

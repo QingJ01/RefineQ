@@ -223,3 +223,39 @@ def test_admin_operations_are_paginated_guarded_and_audited(tmp_path) -> None:
     assert audit_response.json()["total"] >= 2
     assert audit_response.json()["items"][0]["action"] == "backup.restore_validated"
     assert invalid_id.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload"),
+    [
+        ("broken.json", b"{not-json"),
+        ("broken.sqlite3", b"not-a-sqlite-database"),
+    ],
+)
+def test_admin_backup_failures_do_not_expose_server_paths(
+    tmp_path,
+    filename: str,
+    payload: bytes,
+) -> None:
+    settings = Settings(data_root=tmp_path / "private-runtime", _env_file=None)
+    app = create_app(settings)
+    admin = ensure_admin(
+        app.state.identity,
+        email="safe-errors-admin@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Admin",
+    ).user
+    settings.data_root.mkdir(parents=True, exist_ok=True)
+    (settings.data_root / filename).write_bytes(payload)
+    headers = {"Authorization": f"Bearer {app.state.identity.issue_token(admin)}"}
+
+    with TestClient(app) as client:
+        response = client.post("/admin/backups", headers=headers)
+
+    assert response.status_code == 503
+    assert response.json()["error"] == {
+        "code": "backup_creation_failed",
+        "message": "Backup could not be created safely.",
+    }
+    assert str(settings.data_root) not in response.text
+    assert str(app.state.admin_operations.backup_root) not in response.text

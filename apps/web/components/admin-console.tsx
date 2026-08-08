@@ -27,7 +27,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { localizeApiError } from "@/lib/error-messages";
 import type {
   AdminAuditPage,
   AdminJobsResponse,
@@ -409,9 +410,8 @@ const defaults: PublicIntegrationSettings[] = [
   },
 ];
 
-function errorMessage(caught: unknown): string {
-  if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
-  return caught instanceof Error ? caught.message : "Request failed";
+function errorMessage(caught: unknown, locale: Locale): string {
+  return localizeApiError(caught, locale);
 }
 
 
@@ -447,6 +447,20 @@ const operationsCopy = {
     complete: "已完成",
     failed: "失败",
     idle: "空闲",
+    email: "账户",
+    adminRole: "管理员",
+    learnerRole: "学习者",
+    unknownRole: "成员",
+    materialIndex: "资料索引",
+    embeddingBackfill: "向量补录",
+    files: "个文件",
+    otherActivity: "平台操作",
+    auditActions: {
+      "backup.created": "已创建系统备份",
+      "backup.restore_validated": "已校验恢复候选",
+      "integration.updated": "已更新外部能力配置",
+      "integration.tested": "已测试外部能力连接",
+    },
   },
   en: {
     title: "Operations control plane",
@@ -479,8 +493,50 @@ const operationsCopy = {
     complete: "Completed",
     failed: "Failed",
     idle: "Idle",
+    email: "Account",
+    adminRole: "Administrator",
+    learnerRole: "Learner",
+    unknownRole: "Member",
+    materialIndex: "Material index",
+    embeddingBackfill: "Embedding backfill",
+    files: "files",
+    otherActivity: "Platform operation",
+    auditActions: {
+      "backup.created": "System backup created",
+      "backup.restore_validated": "Restore candidate validated",
+      "integration.updated": "Integration settings updated",
+      "integration.tested": "Integration connection tested",
+    },
   },
 };
+
+
+function roleLabel(role: string, locale: Locale): string {
+  const c = operationsCopy[locale];
+  if (role === "admin") return c.adminRole;
+  if (role === "learner") return c.learnerRole;
+  return c.unknownRole;
+}
+
+
+function auditActionLabel(action: string, locale: Locale): string {
+  const c = operationsCopy[locale];
+  const actions: Record<string, string> = c.auditActions;
+  return actions[action] ?? c.otherActivity;
+}
+
+
+export async function refreshAdminAudit<T>(
+  load: () => Promise<T>,
+  apply: (value: T) => void,
+): Promise<boolean> {
+  try {
+    apply(await load());
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 
 function formatBytes(value: number, locale: Locale): string {
@@ -518,18 +574,18 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
       setAudit(nextAudit);
       setBackups(nextBackups);
     }).catch((caught: unknown) => {
-      if (active) setError(errorMessage(caught));
+      if (active) setError(errorMessage(caught, locale));
     }).finally(() => {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [nonce, token]);
+  }, [locale, nonce, token]);
 
   async function loadUsers(page: number) {
     try {
       setUsers(await api.listAdminUsers(token, page, 20));
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     }
   }
 
@@ -537,7 +593,7 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
     try {
       setAudit(await api.listAdminAudit(token, page, 20));
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     }
   }
 
@@ -552,9 +608,12 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
         total: (current?.total ?? 0) + 1,
       }));
       setNotice(c.created);
-      setAudit(await api.listAdminAudit(token, audit?.page ?? 1, 20));
+      await refreshAdminAudit(
+        () => api.listAdminAudit(token, audit?.page ?? 1, 20),
+        setAudit,
+      );
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -569,9 +628,12 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
       await api.validateAdminRestore(token, selectedBackup.id);
       setSelectedBackup(null);
       setNotice(c.validated);
-      setAudit(await api.listAdminAudit(token, audit?.page ?? 1, 20));
+      await refreshAdminAudit(
+        () => api.listAdminAudit(token, audit?.page ?? 1, 20),
+        setAudit,
+      );
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -599,8 +661,8 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
       <section className="admin-operation-card admin-users-card" data-testid="admin-users">
         <header><Users size={18} /><div><span>01</span><h2>{c.users}</h2></div></header>
         {users?.items.length ? (
-          <div className="admin-operation-table-wrap"><table><thead><tr><th>Email</th><th>{c.materials}</th><th>{c.storage}</th><th>{c.workspaces}</th></tr></thead><tbody>
-            {users.items.map((user) => <tr key={user.id}><td><strong>{user.display_name}</strong><small>{user.email} · {user.role}</small></td><td>{user.usage.materials}/{user.quotas.materials}</td><td>{formatBytes(user.usage.material_bytes, locale)} / {formatBytes(user.quotas.material_bytes, locale)}</td><td>{user.usage.workspaces}/{user.quotas.workspaces}</td></tr>)}
+          <div className="admin-operation-table-wrap"><table><thead><tr><th>{c.email}</th><th>{c.materials}</th><th>{c.storage}</th><th>{c.workspaces}</th></tr></thead><tbody>
+            {users.items.map((user) => <tr key={user.id}><td><strong>{user.display_name}</strong><small>{user.email} · {roleLabel(user.role, locale)}</small></td><td>{user.usage.materials}/{user.quotas.materials}</td><td>{formatBytes(user.usage.material_bytes, locale)} / {formatBytes(user.quotas.material_bytes, locale)}</td><td>{user.usage.workspaces}/{user.quotas.workspaces}</td></tr>)}
           </tbody></table></div>
         ) : !loading && <p className="admin-operation-empty">{c.emptyUsers}</p>}
         {users && users.pages > 1 && <footer className="admin-operation-pagination"><span>{users.page}/{users.pages}</span><button disabled={users.page <= 1} onClick={() => void loadUsers(users.page - 1)}>{c.previous}</button><button disabled={users.page >= users.pages} onClick={() => void loadUsers(users.page + 1)}>{c.next}</button></footer>}
@@ -609,19 +671,19 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
       <section className="admin-operation-card" data-testid="admin-jobs">
         <header><ListChecks size={18} /><div><span>02</span><h2>{c.jobs}</h2></div></header>
         <div className="admin-job-grid">
-          {jobs?.items.map((job) => <article key={job.id}><span className={`admin-job-status ${job.status}`}>{job.status === "idle" ? c.idle : c.pending}</span><strong>{job.id === "material_index" ? "Material index" : "Embedding backfill"}</strong><dl><div><dt>{c.pending}</dt><dd>{job.pending}</dd></div><div><dt>{c.complete}</dt><dd>{job.completed}</dd></div><div><dt>{c.failed}</dt><dd>{job.failed}</dd></div></dl></article>)}
+          {jobs?.items.map((job) => <article key={job.id}><span className={`admin-job-status ${job.status}`}>{job.status === "idle" ? c.idle : c.pending}</span><strong>{job.id === "material_index" ? c.materialIndex : c.embeddingBackfill}</strong><dl><div><dt>{c.pending}</dt><dd>{job.pending}</dd></div><div><dt>{c.complete}</dt><dd>{job.completed}</dd></div><div><dt>{c.failed}</dt><dd>{job.failed}</dd></div></dl></article>)}
         </div>
       </section>
 
       <section className="admin-operation-card" data-testid="admin-activity">
         <header><Activity size={18} /><div><span>03</span><h2>{c.activity}</h2></div></header>
-        {audit?.items.length ? <ol className="admin-audit-list">{audit.items.map((entry) => <li key={entry.id}><i /><div><strong>{entry.action}</strong><span>{entry.actor_email} · {entry.target}</span></div><time dateTime={entry.created_at}>{dateFormat.format(new Date(entry.created_at))}</time></li>)}</ol> : !loading && <p className="admin-operation-empty">{c.emptyAudit}</p>}
+        {audit?.items.length ? <ol className="admin-audit-list">{audit.items.map((entry) => <li key={entry.id}><i /><div><strong>{auditActionLabel(entry.action, locale)}</strong><span>{entry.actor_email} · {entry.target}</span></div><time dateTime={entry.created_at}>{dateFormat.format(new Date(entry.created_at))}</time></li>)}</ol> : !loading && <p className="admin-operation-empty">{c.emptyAudit}</p>}
         {audit && audit.pages > 1 && <footer className="admin-operation-pagination"><span>{audit.page}/{audit.pages}</span><button disabled={audit.page <= 1} onClick={() => void loadAudit(audit.page - 1)}>{c.previous}</button><button disabled={audit.page >= audit.pages} onClick={() => void loadAudit(audit.page + 1)}>{c.next}</button></footer>}
       </section>
 
       <section className="admin-operation-card admin-backup-card" data-testid="admin-backups">
         <header><ArchiveRestore size={18} /><div><span>04</span><h2>{c.backups}</h2></div><button type="button" className="primary-action" data-testid="admin-create-backup" disabled={busy !== null} onClick={() => void createBackup()}>{busy === "create" ? c.creating : c.createBackup}</button></header>
-        {backups?.items.length ? <ul className="admin-backup-list">{backups.items.map((backup) => <li key={backup.id}><div><strong>{backup.id}</strong><span>{dateFormat.format(new Date(backup.created_at))} · {backup.file_count} files · {formatBytes(backup.total_bytes, locale)}</span></div><button type="button" className="secondary-action" onClick={() => setSelectedBackup(backup)}>{c.validate}</button></li>)}</ul> : !loading && <p className="admin-operation-empty">{c.emptyBackups}</p>}
+        {backups?.items.length ? <ul className="admin-backup-list">{backups.items.map((backup) => <li key={backup.id}><div><strong>{backup.id}</strong><span>{dateFormat.format(new Date(backup.created_at))} · {backup.file_count} {c.files} · {formatBytes(backup.total_bytes, locale)}</span></div><button type="button" className="secondary-action" onClick={() => setSelectedBackup(backup)}>{c.validate}</button></li>)}</ul> : !loading && <p className="admin-operation-empty">{c.emptyBackups}</p>}
       </section>
 
       <ConfirmDialog
@@ -702,7 +764,7 @@ function IntegrationCard({
       setNotice(c.saved);
       onChange(updated);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -718,7 +780,7 @@ function IntegrationCard({
       if (result.status === "failed") setError(result.message);
       else setNotice(result.message);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -741,7 +803,7 @@ function IntegrationCard({
       if (result.status === "failed") setError(result.message);
       else setNotice(result.message);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, locale));
     } finally {
       setBusy(null);
     }
@@ -968,11 +1030,11 @@ export function AdminConsole({
         setIntegrations(nextIntegrations);
       })
       .catch((caught: unknown) => {
-        if (active) setLoadError(errorMessage(caught));
+        if (active) setLoadError(errorMessage(caught, locale));
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [activeSection, token, loadNonce]);
+  }, [activeSection, locale, token, loadNonce]);
 
   function updateIntegration(updated: PublicIntegrationSettings) {
     setIntegrations((current) => current.map((item) => (

@@ -38,6 +38,10 @@ class BackupValidationError(BackupError):
     """Raised when source data or an archive fails integrity checks."""
 
 
+class ManagedBackupNotFoundError(BackupValidationError):
+    """Raised when a managed backup identifier is invalid or unavailable."""
+
+
 class RestoreConflictError(BackupError):
     """Raised when restore would overwrite runtime data."""
 
@@ -354,10 +358,10 @@ def restore_backup(archive: Path, destination_root: Path) -> RestoreResult:
 def _managed_archive(backup_root: Path, backup_id: str) -> Path:
     root = backup_root.expanduser().resolve()
     if not _MANAGED_BACKUP_ID.fullmatch(backup_id):
-        raise BackupValidationError("Invalid managed backup ID")
+        raise ManagedBackupNotFoundError("Invalid managed backup ID")
     archive = (root / f"{backup_id}.zip").resolve()
     if archive.parent != root or not archive.is_file():
-        raise BackupValidationError("Managed backup does not exist")
+        raise ManagedBackupNotFoundError("Managed backup does not exist")
     return archive
 
 
@@ -416,6 +420,16 @@ def list_managed_backups(backup_root: Path) -> list[ManagedBackup]:
         if path.is_file() and path.suffix == ".zip" and _MANAGED_BACKUP_ID.fullmatch(path.stem)
     ]
     return sorted(backups, key=lambda item: (item.created_at, item.id), reverse=True)
+
+
+def delete_managed_backup(backup_root: Path, backup_id: str) -> None:
+    """Delete one server-issued backup, primarily for failed-operation compensation."""
+
+    archive = _managed_archive(backup_root, backup_id)
+    try:
+        archive.unlink()
+    except OSError as error:
+        raise BackupError("Managed backup cleanup failed") from error
 
 
 def validate_managed_backup(backup_root: Path, backup_id: str) -> ManagedBackup:

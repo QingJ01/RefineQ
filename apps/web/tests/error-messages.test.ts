@@ -26,6 +26,10 @@ describe("localized API errors", () => {
       new ApiError(409, "material_mutation_busy", "Material mutation is busy"),
       "zh",
     )).toBe("资料正在被整理，请稍后重试上传。");
+    expect(localizeApiError(
+      new ApiError(503, "backup_creation_failed", "Backup could not be created safely"),
+      "zh",
+    )).toBe("系统备份未能安全创建，请稍后重试。");
   });
 
   it("uses a safe localized fallback for unknown failures", () => {
