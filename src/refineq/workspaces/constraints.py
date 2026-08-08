@@ -35,6 +35,20 @@ _NUMBER = (
     r"\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|"
     r"[零一二两三四五六七八九十]{1,3}"
 )
+_MONTH_NAMES = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +93,50 @@ def _relative_exam(intent: str, now: datetime) -> datetime | None:
         unit = chinese.group("unit")
         days = count * (7 if unit in {"周", "星期"} else 30 if unit == "个月" else 1)
         return now + timedelta(days=days)
+
+    shorthand = re.search(r"(?P<unit>下{1,2}周|下{1,2}个?月|next\s+(?:week|month))", intent, re.I)
+    if shorthand:
+        unit = shorthand.group("unit").casefold()
+        repeats = 2 if unit.startswith("下下") else 1
+        span = 30 if ("月" in unit or "month" in unit) else 7
+        return now + timedelta(days=span * repeats)
+    return None
+
+
+def _at_year(now: datetime, month: int, day: int, year: int) -> datetime | None:
+    try:
+        return datetime(year, month, day, tzinfo=now.tzinfo)
+    except ValueError:
+        return None
+
+
+def _absolute_exam(intent: str, now: datetime) -> datetime | None:
+    """Resolve a calendar date to the next occurrence at or after today."""
+
+    candidates: list[tuple[int, int]] = []
+    for matched in re.finditer(r"(?P<month>\d{1,2})\s*月\s*(?P<day>\d{1,2})\s*[日号]", intent):
+        candidates.append((int(matched.group("month")), int(matched.group("day"))))
+    for matched in re.finditer(r"\b(?P<month>\d{1,2})\s*[/-]\s*(?P<day>\d{1,2})\b", intent):
+        candidates.append((int(matched.group("month")), int(matched.group("day"))))
+    for matched in re.finditer(
+        r"\b(?P<name>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?P<day>\d{1,2})\b",
+        intent,
+        flags=re.IGNORECASE,
+    ):
+        month = _MONTH_NAMES[matched.group("name").casefold()]
+        candidates.append((month, int(matched.group("day"))))
+
+    for month, day in candidates:
+        if not 1 <= month <= 12:
+            continue
+        resolved = _at_year(now, month, day, now.year)
+        if resolved is None:
+            continue
+        if resolved.date() < now.date():
+            resolved = _at_year(now, month, day, now.year + 1)
+            if resolved is None:
+                continue
+        return resolved
     return None
 
 
@@ -97,9 +155,13 @@ def _daily_minutes(intent: str) -> int | None:
 
 
 def infer_intent_constraints(intent: str, *, now: datetime) -> IntentConstraints:
-    """Extract only unambiguous relative deadlines and per-day minute budgets."""
+    """Extract unambiguous deadlines and per-day minute budgets.
+
+    Relative deadlines win over calendar dates because "30 天后" is explicit about
+    intent, while a bare "10 月 25 日" could also be a topic reference.
+    """
 
     return IntentConstraints(
-        exam_at=_relative_exam(intent, now),
+        exam_at=_relative_exam(intent, now) or _absolute_exam(intent, now),
         daily_minutes=_daily_minutes(intent),
     )
