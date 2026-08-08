@@ -10,9 +10,11 @@ from threading import get_ident
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.database.schema import material_chunks, materials
 from refineq.knowledge.extract import MaterialExtractionLimitError
 
 
@@ -177,8 +179,143 @@ def test_workspace_materials_can_be_listed_downloaded_and_deleted(tmp_path: Path
             f"/workspaces/{workspace_id}/materials/{material['id']}/download",
             headers=headers,
         )
-        assert missing.status_code == 404
-        assert missing.json()["error"]["code"] == "material_not_found"
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "material_not_found"
+
+
+def test_workspace_material_metadata_filters_sort_and_bulk_delete_are_owner_scoped(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        alice = _register(client, "material-organize-alice@example.com")
+        bob = _register(client, "material-organize-bob@example.com")
+        headers = _headers(alice)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Organize calculus source material"},
+        ).json()["workspace"]["id"]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files=[
+                ("files", ("zeta.txt", b"Limits notes", "text/plain")),
+                ("files", ("alpha.txt", b"Derivative notes", "text/plain")),
+            ],
+        ).json()
+        by_filename = {item["filename"]: item for item in uploaded}
+        zeta = by_filename["zeta.txt"]
+        alpha = by_filename["alpha.txt"]
+        zeta_key = app.state.knowledge.get_material_storage_key(
+            owner_id=client.get("/auth/me", headers=headers).json()["id"],
+            project_id=workspace_id,
+            material_id=zeta["id"],
+        )
+
+        updated = client.patch(
+            f"/workspaces/{workspace_id}/materials/{zeta['id']}",
+            headers=headers,
+            json={
+                "title": "  Calculus handbook  ",
+                "tags": [" Exam ", "calculus", "exam"],
+            },
+        )
+        client.patch(
+            f"/workspaces/{workspace_id}/materials/{alpha['id']}",
+            headers=headers,
+            json={"title": "Derivative primer", "tags": ["calculus"]},
+        )
+        filtered = client.get(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            params={"status": "indexed", "tag": "CALCULUS", "sort": "title"},
+        )
+        forbidden = client.patch(
+            f"/workspaces/{workspace_id}/materials/{zeta['id']}",
+            headers=_headers(bob),
+            json={"title": "Stolen"},
+        )
+        deleted = client.request(
+            "DELETE",
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            json={"material_ids": [zeta["id"]]},
+        )
+
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Calculus handbook"
+    assert updated.json()["tags"] == ["Exam", "calculus"]
+    assert [item["title"] for item in filtered.json()] == [
+        "Calculus handbook",
+        "Derivative primer",
+    ]
+    assert forbidden.status_code == 404
+    assert forbidden.json()["error"]["code"] == "workspace_not_found"
+    assert deleted.status_code == 204
+    with pytest.raises(FileNotFoundError):
+        app.state.object_storage.get(zeta_key)
+    with app.state.database.session() as session:
+        assert session.scalar(
+            select(func.count()).select_from(materials).where(
+                materials.c.project_id == workspace_id,
+                materials.c.material_id == zeta["id"],
+            )
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(material_chunks).where(
+                material_chunks.c.project_id == workspace_id,
+                material_chunks.c.material_id == zeta["id"],
+            )
+        ) == 0
+
+
+def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        token = _register(client, "bulk-delete-rollback@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study calculus"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"Durable notes", "text/plain")},
+        ).json()[0]
+        owner_id = client.get("/auth/me", headers=headers).json()["id"]
+        storage_key = app.state.knowledge.get_material_storage_key(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id=material["id"],
+        )
+
+        def fail_delete(**kwargs):
+            del kwargs
+            raise RuntimeError("index unavailable")
+
+        monkeypatch.setattr(app.state.knowledge, "delete_materials", fail_delete, raising=False)
+        failed = client.request(
+            "DELETE",
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            json={"material_ids": [material["id"]]},
+        )
+
+    assert failed.status_code == 503
+    assert app.state.object_storage.get(storage_key) == b"Durable notes"
+    assert app.state.knowledge.get_material(
+        owner_id=owner_id,
+        project_id=workspace_id,
+        material_id=material["id"],
+    ).id == material["id"]
 
 
 def test_workspace_material_delete_is_owner_scoped(tmp_path: Path) -> None:

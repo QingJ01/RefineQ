@@ -238,12 +238,19 @@ export interface MaterialRecord {
   id: string;
   project_id?: string;
   filename: string;
+  title?: string;
+  tags?: string[];
   content_type: string;
   size: number;
   status: string;
   chunk_count: number;
   content_sha256: string;
   indexed_at: string;
+}
+
+export interface MaterialUpdateInput {
+  title?: string;
+  tags?: string[];
 }
 
 export interface SearchSource {

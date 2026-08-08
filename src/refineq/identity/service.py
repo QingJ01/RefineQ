@@ -137,6 +137,39 @@ class IdentityService:
         )
         return int(value or 0)
 
+    def _increment_session_version(self, session, user_id: str) -> None:
+        key = self._session_version_key(user_id)
+        dialect_insert = postgresql_insert if self.database.is_postgresql else sqlite_insert
+        statement = dialect_insert(system_settings).values(
+            key=key,
+            value="1",
+            updated_at=utc_now(),
+        )
+        session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[system_settings.c.key],
+                set_={
+                    "value": cast(
+                        cast(system_settings.c.value, Integer) + 1,
+                        String,
+                    ),
+                    "updated_at": utc_now(),
+                },
+            )
+        )
+
+    def _locked_user(self, session, user_id: str):
+        if self.database.is_postgresql:
+            return session.execute(
+                select(users).where(users.c.id == user_id).with_for_update()
+            ).one_or_none()
+        session.execute(
+            update(users)
+            .where(users.c.id == user_id)
+            .values(updated_at=users.c.updated_at)
+        )
+        return session.execute(select(users).where(users.c.id == user_id)).one_or_none()
+
     @staticmethod
     def _validate_password(password: str, *, minimum: int) -> bytes:
         password_bytes = password.encode("utf-8")
@@ -188,7 +221,7 @@ class IdentityService:
 
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
-        valid = row is not None and bcrypt.checkpw(
+        valid = row is not None and row.deletion_id is None and bcrypt.checkpw(
             password_bytes,
             row.password_hash.encode("ascii"),
         )
@@ -214,7 +247,7 @@ class IdentityService:
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
             session_version = self._session_version(session, row.id) if row is not None else 0
-        if row is None or not bcrypt.checkpw(
+        if row is None or row.deletion_id is not None or not bcrypt.checkpw(
             password_bytes,
             row.password_hash.encode("ascii"),
         ):
@@ -235,7 +268,7 @@ class IdentityService:
             raise InvalidCredentialsError("Invalid current password") from error
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
-        if row is None or not bcrypt.checkpw(
+        if row is None or row.deletion_id is not None or not bcrypt.checkpw(
             password_bytes,
             row.password_hash.encode("ascii"),
         ):
@@ -289,28 +322,10 @@ class IdentityService:
             )
 
     def revoke_sessions(self, user_id: str) -> None:
-        key = self._session_version_key(user_id)
         with self._lock, self.database.session() as session:
             if session.scalar(select(users.c.id).where(users.c.id == user_id)) is None:
                 raise InvalidTokenError("Invalid access token")
-            dialect_insert = postgresql_insert if self.database.is_postgresql else sqlite_insert
-            statement = dialect_insert(system_settings).values(
-                key=key,
-                value="1",
-                updated_at=utc_now(),
-            )
-            session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[system_settings.c.key],
-                    set_={
-                        "value": cast(
-                            cast(system_settings.c.value, Integer) + 1,
-                            String,
-                        ),
-                        "updated_at": utc_now(),
-                    },
-                )
-            )
+            self._increment_session_version(session, user_id)
 
     def export_account(self, user: User) -> AccountExportResponse:
         with self.database.session() as session:
@@ -345,6 +360,8 @@ class IdentityService:
                     "project_id": row.project_id,
                     "material_id": row.material_id,
                     "filename": row.filename,
+                    "title": row.title or row.filename,
+                    "tags": list(row.tags or []),
                     "content_type": row.content_type,
                     "size": row.size,
                     "status": row.status,
@@ -391,7 +408,7 @@ class IdentityService:
             raise InvalidCredentialsError("Invalid current password") from error
         with self._lock, self.database.session() as session:
             row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
-            if row is None or not bcrypt.checkpw(
+            if row is None or row.deletion_id is not None or not bcrypt.checkpw(
                 password_bytes,
                 row.password_hash.encode("ascii"),
             ):
@@ -405,9 +422,77 @@ class IdentityService:
                     "Transfer platform integration ownership before deleting this account"
                 )
 
-    def delete_account(self, user_id: str, *, current_password: str) -> None:
-        self.preflight_account_deletion(user_id, current_password=current_password)
+    def begin_account_deletion(
+        self,
+        user_id: str,
+        *,
+        current_password: str,
+        deletion_id: str,
+    ) -> None:
+        """Fence new writes and revoke tokens before object cleanup begins."""
+
+        try:
+            password_bytes = self._validate_password(current_password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid current password") from error
         with self._lock, self.database.session() as session:
+            row = self._locked_user(session, user_id)
+            if row is None or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            ):
+                raise InvalidCredentialsError("Invalid current password")
+            if row.deletion_id is not None:
+                raise AccountDeletionError("Account deletion is already in progress")
+            if session.scalar(
+                select(integration_settings.c.kind).where(
+                    integration_settings.c.updated_by == user_id
+                ).limit(1)
+            ) is not None:
+                raise AccountDeletionError(
+                    "Transfer platform integration ownership before deleting this account"
+                )
+            session.execute(
+                update(users)
+                .where(users.c.id == user_id, users.c.deletion_id.is_(None))
+                .values(deletion_id=deletion_id, updated_at=utc_now())
+            )
+
+    def cancel_account_deletion(self, user_id: str, *, deletion_id: str) -> None:
+        with self._lock, self.database.session() as session:
+            session.execute(
+                update(users)
+                .where(users.c.id == user_id, users.c.deletion_id == deletion_id)
+                .values(deletion_id=None, updated_at=utc_now())
+            )
+
+    def account_deletion_state(self, user_id: str) -> tuple[bool, str | None]:
+        with self.database.session() as session:
+            row = session.execute(
+                select(users.c.deletion_id).where(users.c.id == user_id)
+            ).one_or_none()
+        return (False, None) if row is None else (True, row.deletion_id)
+
+    def delete_account(
+        self,
+        user_id: str,
+        *,
+        current_password: str,
+        deletion_id: str | None = None,
+    ) -> None:
+        try:
+            password_bytes = self._validate_password(current_password, minimum=1)
+        except ValueError as error:
+            raise InvalidCredentialsError("Invalid current password") from error
+        with self._lock, self.database.session() as session:
+            row = self._locked_user(session, user_id)
+            if row is None or not bcrypt.checkpw(
+                password_bytes,
+                row.password_hash.encode("ascii"),
+            ):
+                raise InvalidCredentialsError("Invalid current password")
+            if row.deletion_id != deletion_id:
+                raise AccountDeletionError("Account deletion transaction is no longer current")
             # Repeat the ownership check inside the deletion transaction to close
             # the gap between preflight and the final database mutation.
             if session.scalar(
@@ -595,13 +680,13 @@ class IdentityService:
     def issue_token(self, user: User, *, now: datetime | None = None) -> str:
         with self.database.session() as session:
             row = session.execute(
-                select(users.c.password_hash).where(
+                select(users.c.password_hash, users.c.deletion_id).where(
                     users.c.id == user.id,
                     users.c.email == user.email,
                 )
             ).one_or_none()
             session_version = self._session_version(session, user.id)
-        if row is None:
+        if row is None or row.deletion_id is not None:
             raise InvalidTokenError("Invalid access token")
         return self._encode_token(
             user,
@@ -670,7 +755,7 @@ class IdentityService:
             current_session_version = (
                 self._session_version(session, str(subject)) if row is not None else 0
             )
-        if row is None or not secrets.compare_digest(
+        if row is None or row.deletion_id is not None or not secrets.compare_digest(
             credential,
             sha256(row.password_hash.encode("utf-8")).hexdigest(),
         ) or session_version != current_session_version:

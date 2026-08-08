@@ -37,6 +37,7 @@ from refineq.api.routers.settings import router as settings_router
 from refineq.api.routers.workspaces import router as workspaces_router
 from refineq.config import Settings
 from refineq.database.engine import Database
+from refineq.identity.deletion import AccountDeletionCoordinator
 from refineq.identity.service import IdentityService
 from refineq.integrations.model_settings import PlatformModelSettingsRepository
 from refineq.integrations.object_storage import ConfiguredObjectStorage
@@ -101,7 +102,7 @@ def create_app(
         body_total_timeout_seconds=app.state.settings.material_upload_body_total_timeout_seconds,
         admission=app.state.upload_admission,
     )
-    app.state.store = SqlRecordStore(app.state.database)
+    app.state.store = SqlRecordStore(app.state.database, enforce_owner_state=True)
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
@@ -118,6 +119,13 @@ def create_app(
         app.state.integrations,
         data_root=app.state.settings.data_root,
     )
+    app.state.identity = IdentityService(app.state.database)
+    app.state.account_deletions = AccountDeletionCoordinator(
+        data_root=app.state.settings.data_root,
+        identity=app.state.identity,
+        object_storage=app.state.object_storage,
+    )
+    app.state.account_deletions.recover_pending()
     app.state.ocr = OcrService(
         app.state.integrations,
         max_pages=app.state.settings.material_ocr_max_pages,
@@ -130,6 +138,7 @@ def create_app(
     app.state.knowledge = KnowledgeIndex(
         app.state.database,
         embedder=app.state.embedding_service,
+        enforce_owner_state=True,
     )
     app.state.model_settings = PlatformModelSettingsRepository(
         app.state.integrations,
@@ -182,7 +191,6 @@ def create_app(
         transport=model_transport or OpenAICompatibleTransport(),
         max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
-    app.state.identity = IdentityService(app.state.database)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
     app.add_exception_handler(InvalidIdentifierError, invalid_identifier_exception_handler)

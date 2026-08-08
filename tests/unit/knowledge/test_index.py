@@ -178,3 +178,77 @@ def test_quota_failure_preserves_the_existing_index(tmp_path: Path) -> None:
         result.material_id
         for result in index.search(owner_id="owner", project_id="project", query="limits")
     ] == ["material-1"]
+
+
+def test_material_metadata_can_be_updated_filtered_and_sorted(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="project",
+        material_id="material-b",
+        filename="zeta.txt",
+        text="Limits notes.",
+        size=20,
+    )
+    index.add_document(
+        owner_id="owner",
+        project_id="project",
+        material_id="material-a",
+        filename="alpha.txt",
+        text="Derivative notes.",
+        size=10,
+    )
+
+    updated = index.update_material_metadata(
+        owner_id="owner",
+        project_id="project",
+        material_id="material-b",
+        title="Calculus handbook",
+        tags=["Exam", "calculus"],
+    )
+    index.update_material_metadata(
+        owner_id="owner",
+        project_id="project",
+        material_id="material-a",
+        title="Derivative primer",
+        tags=["calculus"],
+    )
+
+    assert updated.title == "Calculus handbook"
+    assert updated.tags == ["Exam", "calculus"]
+    assert [
+        material.id
+        for material in index.list_materials(
+            owner_id="owner",
+            project_id="project",
+            status="indexed",
+            tag="CALCULUS",
+            sort="title",
+        )
+    ] == ["material-b", "material-a"]
+
+
+def test_bulk_material_delete_is_atomic_and_owner_scoped(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    for owner_id in ("alice", "bob"):
+        index.add_document(
+            owner_id=owner_id,
+            project_id="project",
+            material_id="shared-id",
+            filename=f"{owner_id}.txt",
+            text=f"{owner_id} private notes.",
+            storage_key=f"objects/{owner_id}",
+        )
+
+    deleted = index.delete_materials(
+        owner_id="alice",
+        project_id="project",
+        material_ids=["shared-id"],
+    )
+
+    assert [record.id for record, _ in deleted] == ["shared-id"]
+    assert index.list_materials(owner_id="alice", project_id="project") == []
+    assert [
+        material.filename
+        for material in index.list_materials(owner_id="bob", project_id="project")
+    ] == ["bob.txt"]

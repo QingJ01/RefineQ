@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import shutil
 from datetime import timedelta
-from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
@@ -143,10 +139,11 @@ def delete_account(
             },
         )
 
-    identity = request.app.state.identity
-    object_storage = request.app.state.object_storage
     try:
-        identity.preflight_account_deletion(user.id, current_password=current_password)
+        pending = request.app.state.account_deletions.prepare(
+            user.id,
+            current_password=current_password,
+        )
     except InvalidCredentialsError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -157,69 +154,6 @@ def delete_account(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "account_deletion_blocked", "message": str(error)},
         ) from error
-
-    staging_directory: Path | None = None
-    staged_objects: list[tuple[dict[str, str], Path]] = []
-    attempted_removals: list[tuple[dict[str, str], Path]] = []
-    deletion_error: Exception | None = None
-    rollback_failed = False
-    try:
-        entries = identity.account_storage_objects(user.id)
-        if entries:
-            recovery_root = (
-                request.app.state.settings.data_root
-                / "recovery"
-                / "account-deletions"
-            )
-            recovery_root.mkdir(parents=True, exist_ok=True)
-            staging_directory = recovery_root / uuid4().hex
-            staging_directory.mkdir()
-            for index, entry in enumerate(entries):
-                staged_path = staging_directory / f"{index:06d}.bin"
-                staged_path.write_bytes(object_storage.get(entry["key"]))
-                staged_objects.append((entry, staged_path))
-            (staging_directory / "manifest.json").write_text(
-                json.dumps(entries, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-
-        for entry, staged_path in staged_objects:
-            attempted_removals.append((entry, staged_path))
-            object_storage.delete(entry["key"])
-        identity.delete_account(user.id, current_password=current_password)
-    except Exception as error:
-        deletion_error = error
-        for entry, staged_path in attempted_removals:
-            try:
-                object_storage.put(
-                    owner_id=user.id,
-                    workspace_id=entry["workspace_id"],
-                    material_id=entry["material_id"],
-                    filename=entry["filename"],
-                    payload=staged_path.read_bytes(),
-                )
-            except Exception:
-                rollback_failed = True
-        if staging_directory is not None and not rollback_failed:
-            shutil.rmtree(staging_directory, ignore_errors=True)
-    else:
-        if staging_directory is not None:
-            shutil.rmtree(staging_directory, ignore_errors=True)
-
-    if deletion_error is None:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    if not rollback_failed and isinstance(deletion_error, InvalidCredentialsError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "invalid_credentials", "message": str(deletion_error)},
-        ) from deletion_error
-    if not rollback_failed and isinstance(deletion_error, AccountDeletionError):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "account_deletion_blocked", "message": str(deletion_error)},
-        ) from deletion_error
-    try:
-        raise deletion_error
     except Exception as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -228,6 +162,30 @@ def delete_account(
                 "message": "Account deletion could not be completed safely",
             },
         ) from error
+    try:
+        request.app.state.account_deletions.complete(
+            pending,
+            current_password=current_password,
+        )
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": str(error)},
+        ) from error
+    except AccountDeletionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "account_deletion_blocked", "message": str(error)},
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "account_deletion_failed",
+                "message": "Account deletion could not be completed safely",
+            },
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

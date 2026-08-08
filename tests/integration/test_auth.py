@@ -695,6 +695,109 @@ def test_account_deletion_preflight_blocks_before_removing_objects(
     assert delete_calls == []
 
 
+def test_pending_account_deletion_is_recovered_after_process_interruption(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_root=tmp_path / "data", _env_file=None)
+    app = create_app(settings)
+    storage_key = ""
+
+    with TestClient(app) as client:
+        registered = _register(client, "delete-recovery@example.com")
+        headers = {"Authorization": f"Bearer {registered['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study durable deletion"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"Recover me", "text/plain")},
+        ).json()[0]
+        storage_key = app.state.knowledge.get_material_storage_key(
+            owner_id=registered["user"]["id"],
+            project_id=workspace_id,
+            material_id=material["id"],
+        )
+
+        app.state.account_deletions.prepare(
+            registered["user"]["id"],
+            current_password="correct-horse-battery-staple",
+        )
+        app.state.object_storage.delete(storage_key)
+
+    recovered_app = create_app(settings)
+    with TestClient(recovered_app) as recovered_client:
+        login = recovered_client.post(
+            "/auth/login",
+            json={
+                "email": "delete-recovery@example.com",
+                "password": "correct-horse-battery-staple",
+            },
+        )
+
+    assert login.status_code == 200
+    assert recovered_app.state.object_storage.get(storage_key) == b"Recover me"
+    recovery_root = settings.data_root / "recovery" / "account-deletions"
+    assert not recovery_root.exists() or list(recovery_root.iterdir()) == []
+
+
+def test_account_deletion_fence_rejects_a_late_material_write(tmp_path: Path) -> None:
+    from refineq.database.owner_state import OwnerWriteBlockedError
+    from refineq.knowledge.index import MaterialDocument
+
+    app = _app(tmp_path)
+    user = app.state.identity.register(
+        email="delete-write-race@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    stored = app.state.object_storage.put(
+        owner_id=user.id,
+        workspace_id="workspace-race",
+        material_id="material-race",
+        filename="race.txt",
+        payload=b"late material",
+    )
+    deletion_id = "deletion_race"
+
+    app.state.identity.begin_account_deletion(
+        user.id,
+        current_password="correct-horse-battery-staple",
+        deletion_id=deletion_id,
+    )
+    with pytest.raises(OwnerWriteBlockedError):
+        app.state.knowledge.add_documents_with_quota(
+            owner_id=user.id,
+            documents=[
+                MaterialDocument(
+                    project_id="workspace-race",
+                    material_id="material-race",
+                    filename="race.txt",
+                    text="late material",
+                    size=13,
+                    storage_key=stored.key,
+                )
+            ],
+            max_count=10,
+            max_bytes=1_000,
+        )
+    stored.rollback()
+    app.state.identity.delete_account(
+        user.id,
+        current_password="correct-horse-battery-staple",
+        deletion_id=deletion_id,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        app.state.object_storage.get(stored.key)
+    assert app.state.knowledge.list_materials(
+        owner_id=user.id,
+        project_id="workspace-race",
+    ) == []
+
+
 def test_account_deletion_removes_identity_and_owner_records(tmp_path: Path) -> None:
     app = _app(tmp_path)
 

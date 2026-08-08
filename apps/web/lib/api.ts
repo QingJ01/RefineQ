@@ -15,6 +15,7 @@ import type {
   IntegrationTestResult,
   IntegrationUpdateInput,
   MaterialRecord,
+  MaterialUpdateInput,
   PasswordResetAccepted,
   PlanUpdateInput,
   PracticeRequest,
@@ -412,6 +413,39 @@ export class ApiClient {
     return this.request(
       `/workspaces/${workspaceId}/materials/${materialId}`,
       { method: "DELETE" },
+      token,
+    );
+  }
+
+  updateWorkspaceMaterial(
+    token: string,
+    workspaceId: string,
+    materialId: string,
+    input: MaterialUpdateInput,
+  ): Promise<MaterialRecord> {
+    return this.request(
+      `/workspaces/${workspaceId}/materials/${materialId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  }
+
+  bulkDeleteWorkspaceMaterials(
+    token: string,
+    workspaceId: string,
+    materialIds: string[],
+  ): Promise<void> {
+    return this.request(
+      `/workspaces/${workspaceId}/materials`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ material_ids: materialIds }),
+      },
       token,
     );
   }

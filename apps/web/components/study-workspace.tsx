@@ -53,6 +53,7 @@ import type {
   LearningWorkspace,
   Locale,
   MaterialRecord,
+  MaterialUpdateInput,
   PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
@@ -570,6 +571,35 @@ export function StudyWorkspace({
     }
   }
 
+  async function updateMaterial(material: MaterialRecord, input: MaterialUpdateInput) {
+    if (!auth || !workspace) return;
+    try {
+      const updated = await api.updateWorkspaceMaterial(
+        auth.access_token,
+        workspace.id,
+        material.id,
+        input,
+      );
+      setMaterials((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
+  }
+
+  async function bulkDeleteMaterials(selected: MaterialRecord[]) {
+    if (!auth || !workspace || selected.length === 0) return;
+    try {
+      const ids = selected.map((material) => material.id);
+      await api.bulkDeleteWorkspaceMaterials(auth.access_token, workspace.id, ids);
+      const removed = new Set(ids);
+      setMaterials((current) => current.filter((item) => !removed.has(item.id)));
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
+  }
+
   async function askSessionCoach(message: string) {
     if (!auth || !workspace) throw new Error(t("error"));
     const reply = await api.chatWorkspace(
@@ -983,6 +1013,8 @@ export function StudyWorkspace({
               onSearch={searchMaterials}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
+              onUpdate={updateMaterial}
+              onBulkDelete={bulkDeleteMaterials}
             />
           )}
           {section === "progress" && (

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from dataclasses import replace
 from functools import partial
 from hashlib import sha256
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Literal
 from urllib.parse import quote
+from uuid import uuid4
 
 from anyio import to_thread
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from refineq.api.dependencies import CurrentUser
 from refineq.integrations.ocr import OcrError
@@ -35,6 +40,59 @@ workspace_router = APIRouter(
     tags=["materials"],
 )
 _policy = MaterialPolicy()
+
+
+class MaterialUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=500)
+    tags: list[str] | None = Field(default=None, max_length=12)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("title must not be blank")
+        return normalized
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in value:
+            tag = raw_tag.strip()
+            if not tag or len(tag) > 32:
+                raise ValueError("tags must contain 1 to 32 characters")
+            key = tag.casefold()
+            if key not in seen:
+                normalized.append(tag)
+                seen.add(key)
+        return normalized
+
+    @model_validator(mode="after")
+    def require_change(self) -> MaterialUpdateRequest:
+        if self.title is None and self.tags is None:
+            raise ValueError("At least one metadata field is required")
+        return self
+
+
+class MaterialBulkDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    material_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("material_ids")
+    @classmethod
+    def unique_material_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("material_ids must be unique")
+        return value
 
 
 def _require_project(request: Request, owner_id: str, project_id: str) -> None:
@@ -289,11 +347,17 @@ def list_materials(
     project_id: str,
     request: Request,
     user: CurrentUser,
+    status_filter: str | None = Query(default=None, alias="status", max_length=32),
+    tag: str | None = Query(default=None, min_length=1, max_length=32),
+    sort: Literal["newest", "oldest", "title", "size_desc"] = "newest",
 ) -> list[MaterialRecord]:
     _require_project(request, user.id, project_id)
     return request.app.state.knowledge.list_materials(
         owner_id=user.id,
         project_id=project_id,
+        status=status_filter,
+        tag=tag,
+        sort=sort,
     )
 
 
@@ -302,8 +366,166 @@ def list_workspace_materials(
     workspace_id: str,
     request: Request,
     user: CurrentUser,
+    status_filter: str | None = Query(default=None, alias="status", max_length=32),
+    tag: str | None = Query(default=None, min_length=1, max_length=32),
+    sort: Literal["newest", "oldest", "title", "size_desc"] = "newest",
 ) -> list[MaterialRecord]:
-    return list_materials(workspace_id, request, user)
+    return list_materials(workspace_id, request, user, status_filter, tag, sort)
+
+
+def _update_material(
+    project_id: str,
+    material_id: str,
+    payload: MaterialUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialRecord:
+    _require_project(request, user.id, project_id)
+    try:
+        return request.app.state.knowledge.update_material_metadata(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+            title=payload.title,
+            tags=payload.tags,
+        )
+    except MaterialNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from error
+
+
+@router.patch("/{material_id}", response_model=MaterialRecord)
+def update_material(
+    project_id: str,
+    material_id: str,
+    payload: MaterialUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialRecord:
+    return _update_material(project_id, material_id, payload, request, user)
+
+
+@workspace_router.patch("/{material_id}", response_model=MaterialRecord)
+def update_workspace_material(
+    workspace_id: str,
+    material_id: str,
+    payload: MaterialUpdateRequest,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialRecord:
+    return _update_material(workspace_id, material_id, payload, request, user)
+
+
+def _bulk_delete_materials(
+    project_id: str,
+    payload: MaterialBulkDeleteRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    _require_project(request, user.id, project_id)
+    knowledge = request.app.state.knowledge
+    object_storage = request.app.state.object_storage
+    staging_directory: Path | None = None
+    staged: list[tuple[MaterialRecord, str, Path]] = []
+    attempted: list[tuple[MaterialRecord, str, Path]] = []
+    rollback_failed = False
+    deletion_error: Exception | None = None
+    try:
+        recovery_root = request.app.state.settings.data_root / "recovery" / "material-deletions"
+        recovery_root.mkdir(parents=True, exist_ok=True)
+        staging_directory = recovery_root / uuid4().hex
+        staging_directory.mkdir()
+        for index, material_id in enumerate(payload.material_ids):
+            record = knowledge.get_material(
+                owner_id=user.id,
+                project_id=project_id,
+                material_id=material_id,
+            )
+            storage_key = knowledge.get_material_storage_key(
+                owner_id=user.id,
+                project_id=project_id,
+                material_id=material_id,
+            )
+            staged_path = staging_directory / f"{index:06d}.bin"
+            staged_path.write_bytes(object_storage.get(storage_key))
+            staged.append((record, storage_key, staged_path))
+        (staging_directory / "manifest.json").write_text(
+            json.dumps(
+                [
+                    {"material": record.model_dump(mode="json"), "storage_key": storage_key}
+                    for record, storage_key, _ in staged
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        for entry in staged:
+            attempted.append(entry)
+            object_storage.delete(entry[1])
+        knowledge.delete_materials(
+            owner_id=user.id,
+            project_id=project_id,
+            material_ids=payload.material_ids,
+        )
+    except Exception as error:
+        deletion_error = error
+        for record, _, staged_path in attempted:
+            try:
+                object_storage.put(
+                    owner_id=user.id,
+                    workspace_id=project_id,
+                    material_id=record.id,
+                    filename=record.filename,
+                    payload=staged_path.read_bytes(),
+                )
+            except Exception:
+                rollback_failed = True
+        if staging_directory is not None and not rollback_failed:
+            shutil.rmtree(staging_directory, ignore_errors=True)
+    else:
+        if staging_directory is not None:
+            shutil.rmtree(staging_directory, ignore_errors=True)
+
+    if deletion_error is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if not rollback_failed and isinstance(
+        deletion_error,
+        (MaterialNotFoundError, FileNotFoundError),
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from deletion_error
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "material_bulk_delete_failed",
+            "message": "Selected materials could not be deleted safely",
+        },
+    ) from deletion_error
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+def bulk_delete_materials(
+    project_id: str,
+    payload: MaterialBulkDeleteRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _bulk_delete_materials(project_id, payload, request, user)
+
+
+@workspace_router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+def bulk_delete_workspace_materials(
+    workspace_id: str,
+    payload: MaterialBulkDeleteRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _bulk_delete_materials(workspace_id, payload, request, user)
 
 
 @workspace_router.get("/search", response_model=list[SearchResult])

@@ -917,6 +917,8 @@ describe("focused learning components", () => {
         materials={[{
           id: "material-1",
           filename: "limits.txt",
+          title: "Limits handbook",
+          tags: ["exam", "calculus"],
           content_type: "text/plain",
           size: 12,
           status: "indexed",
@@ -928,12 +930,22 @@ describe("focused learning components", () => {
         onSearch={async () => []}
         onDownload={() => undefined}
         onDelete={() => undefined}
+        onUpdate={async () => undefined}
+        onBulkDelete={async () => undefined}
       />,
     );
 
-    expect(html).toContain("limits.txt");
+    expect(html).toContain("Limits handbook");
+    expect(html).toContain("exam");
     expect(html).toContain('class="upload-surface"');
     expect(html).toContain('data-testid="material-search"');
+    expect(html).toContain('data-testid="material-filter-status"');
+    expect(html).toContain('data-testid="material-filter-tag"');
+    expect(html).toContain('data-testid="material-sort"');
+    expect(html).toContain('data-testid="material-select-all"');
+    expect(html).toContain('data-testid="material-select-material-1"');
+    expect(html).toContain('data-testid="material-edit-material-1"');
+    expect(html).toContain('data-testid="material-bulk-delete"');
     expect(html).toContain('data-testid="material-download-material-1"');
     expect(html).toContain('data-testid="material-delete-material-1"');
     expect(html).toContain('data-testid="material-metadata-material-1"');

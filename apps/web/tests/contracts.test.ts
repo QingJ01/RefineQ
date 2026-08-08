@@ -906,6 +906,58 @@ describe("recoverable material and Agent interactions", () => {
     expect(validateUploadFile({ name: "large.pdf", size: 30 * 1024 * 1024 })).toBe("file_too_large");
   });
 
+  it("uses metadata and bulk organization API contracts", async () => {
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({
+        path: String(input),
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({
+          id: "material-1",
+          project_id: "workspace-1",
+          filename: "limits.txt",
+          title: "Limits handbook",
+          tags: ["exam"],
+          content_type: "text/plain",
+          size: 12,
+          status: "indexed",
+          chunk_count: 1,
+          content_sha256: "abc",
+          indexed_at: "2026-08-08T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(null, { status: 204 });
+    });
+
+    await client.updateWorkspaceMaterial(
+      "token",
+      "workspace-1",
+      "material-1",
+      { title: "Limits handbook", tags: ["exam"] },
+    );
+    await client.bulkDeleteWorkspaceMaterials(
+      "token",
+      "workspace-1",
+      ["material-1", "material-2"],
+    );
+
+    expect(requests).toEqual([
+      {
+        path: "/api/workspaces/workspace-1/materials/material-1",
+        method: "PATCH",
+        body: { title: "Limits handbook", tags: ["exam"] },
+      },
+      {
+        path: "/api/workspaces/workspace-1/materials",
+        method: "DELETE",
+        body: { material_ids: ["material-1", "material-2"] },
+      },
+    ]);
+  });
+
   it("ships cancellation, retry, history, and source controls", () => {
     const materialSource = readFileSync(
       fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
@@ -946,6 +998,10 @@ describe("recoverable material and Agent interactions", () => {
       fileURLToPath(new URL("../components/material-dropzone.tsx", import.meta.url)),
       "utf8",
     );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
     const agentSource = readFileSync(
       fileURLToPath(new URL("../components/agent-panel.tsx", import.meta.url)),
       "utf8",
@@ -959,6 +1015,10 @@ describe("recoverable material and Agent interactions", () => {
     expect(materialSource).toContain('data-testid="clear-material-search"');
     expect(materialSource).toContain('data-testid="clear-upload-queue"');
     expect(materialSource).toContain("SourceDrawer");
+    expect(materialSource).toContain('data-testid="material-filter-status"');
+    expect(materialSource).toContain('data-testid="material-bulk-delete"');
+    expect(workspaceSource).toContain("updateWorkspaceMaterial");
+    expect(workspaceSource).toContain("bulkDeleteWorkspaceMaterials");
     expect(agentSource).toContain('data-testid="agent-suggestion"');
     expect(agentSource).toContain("scrollIntoView");
     expect(agentSource).toContain("onOpenSettings");

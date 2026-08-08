@@ -1,20 +1,28 @@
 "use client";
 
 import {
+  Check,
   Download,
   FileStack,
+  Pencil,
   RotateCcw,
   Search,
+  Tags,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
-import { DragEvent, FormEvent, useRef, useState } from "react";
+import { DragEvent, FormEvent, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
 import type { Translator } from "@/lib/i18n";
-import type { Locale, MaterialRecord, SearchSource } from "@/lib/types";
+import type {
+  Locale,
+  MaterialRecord,
+  MaterialUpdateInput,
+  SearchSource,
+} from "@/lib/types";
 import {
   clearSelectedFiles,
   type UploadValidationError,
@@ -32,6 +40,53 @@ interface UploadItem {
   controller?: AbortController;
 }
 
+const organizationCopy = {
+  zh: {
+    library: "资料库",
+    allStatuses: "全部状态",
+    allTags: "全部标签",
+    newest: "最近添加",
+    oldest: "最早添加",
+    title: "按标题",
+    largest: "按大小",
+    selectAll: "选择当前列表",
+    selected: (count: number) => `已选择 ${count} 项`,
+    edit: "编辑资料信息",
+    editTitle: "资料标题",
+    editTags: "标签（用逗号分隔）",
+    save: "保存",
+    cancel: "取消",
+    bulkDelete: "批量删除",
+    bulkTitle: (count: number) => `删除 ${count} 份资料？`,
+    bulkDescription: "将同时删除原文件与检索索引；失败时会自动回滚。",
+    noMatch: "当前筛选条件下没有资料。",
+    originalFile: "原文件",
+    status: "处理状态",
+  },
+  en: {
+    library: "Material library",
+    allStatuses: "All statuses",
+    allTags: "All tags",
+    newest: "Newest first",
+    oldest: "Oldest first",
+    title: "Title A–Z",
+    largest: "Largest first",
+    selectAll: "Select visible material",
+    selected: (count: number) => `${count} selected`,
+    edit: "Edit material details",
+    editTitle: "Material title",
+    editTags: "Tags (comma separated)",
+    save: "Save",
+    cancel: "Cancel",
+    bulkDelete: "Delete selected",
+    bulkTitle: (count: number) => `Delete ${count} materials?`,
+    bulkDescription: "Original files and search indexes are removed together and restored if deletion fails.",
+    noMatch: "No material matches these filters.",
+    originalFile: "Original file",
+    status: "Processing status",
+  },
+} as const;
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -45,6 +100,8 @@ export function MaterialDropzone({
   onSearch,
   onDownload,
   onDelete,
+  onUpdate,
+  onBulkDelete,
   materials,
 }: {
   t: Translator;
@@ -53,8 +110,11 @@ export function MaterialDropzone({
   onSearch?: (query: string) => Promise<SearchSource[]>;
   onDownload?: (material: MaterialRecord) => void | Promise<void>;
   onDelete?: (material: MaterialRecord) => void | Promise<void>;
+  onUpdate?: (material: MaterialRecord, input: MaterialUpdateInput) => void | Promise<void>;
+  onBulkDelete?: (materials: MaterialRecord[]) => void | Promise<void>;
   materials: MaterialRecord[];
 }) {
+  const copy = organizationCopy[locale];
   const inputRef = useRef<HTMLInputElement>(null);
   const [queue, setQueue] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -65,6 +125,43 @@ export function MaterialDropzone({
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<MaterialRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState("all");
+  const [sortOrder, setSortOrder] = useState("newest");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [editTarget, setEditTarget] = useState<MaterialRecord | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [savingMetadata, setSavingMetadata] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const tags = useMemo(
+    () => Array.from(new Set(materials.flatMap((material) => material.tags ?? [])))
+      .sort((left, right) => left.localeCompare(right)),
+    [materials],
+  );
+  const statuses = useMemo(
+    () => Array.from(new Set(materials.map((material) => material.status))).sort(),
+    [materials],
+  );
+  const visibleMaterials = useMemo(() => {
+    const filtered = materials.filter((material) => (
+      (statusFilter === "all" || material.status === statusFilter)
+      && (tagFilter === "all" || (material.tags ?? []).includes(tagFilter))
+    ));
+    return filtered.toSorted((left, right) => {
+      if (sortOrder === "oldest") {
+        return new Date(left.indexed_at).getTime() - new Date(right.indexed_at).getTime();
+      }
+      if (sortOrder === "title") {
+        return (left.title ?? left.filename).localeCompare(right.title ?? right.filename);
+      }
+      if (sortOrder === "size_desc") return right.size - left.size;
+      return new Date(right.indexed_at).getTime() - new Date(left.indexed_at).getTime();
+    });
+  }, [materials, sortOrder, statusFilter, tagFilter]);
+  const selectedMaterials = materials.filter((material) => selectedIds.has(material.id));
+  const allVisibleSelected = visibleMaterials.length > 0
+    && visibleMaterials.every((material) => selectedIds.has(material.id));
 
   function patchQueue(id: string, patch: Partial<UploadItem>) {
     setQueue((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -165,7 +262,63 @@ export function MaterialDropzone({
     setDeleting(true);
     try {
       await onDelete?.(deleteTarget);
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(deleteTarget.id);
+        return next;
+      });
       setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function toggleSelection(materialId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(materialId)) next.delete(materialId);
+      else next.add(materialId);
+      return next;
+    });
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) visibleMaterials.forEach((material) => next.delete(material.id));
+      else visibleMaterials.forEach((material) => next.add(material.id));
+      return next;
+    });
+  }
+
+  function beginEdit(material: MaterialRecord) {
+    setEditTarget(material);
+    setEditTitle(material.title ?? material.filename);
+    setEditTags((material.tags ?? []).join(", "));
+  }
+
+  async function saveMetadata(event: FormEvent) {
+    event.preventDefault();
+    if (!editTarget || !editTitle.trim()) return;
+    const normalizedTags = Array.from(new Set(
+      editTags.split(",").map((tag) => tag.trim()).filter(Boolean),
+    ));
+    setSavingMetadata(true);
+    try {
+      await onUpdate?.(editTarget, { title: editTitle.trim(), tags: normalizedTags });
+      setEditTarget(null);
+    } finally {
+      setSavingMetadata(false);
+    }
+  }
+
+  async function confirmBulkDelete() {
+    if (selectedMaterials.length === 0) return;
+    setDeleting(true);
+    try {
+      await onBulkDelete?.(selectedMaterials);
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
     } finally {
       setDeleting(false);
     }
@@ -235,16 +388,111 @@ export function MaterialDropzone({
         </ol>
       )}
 
-      {materials.length === 0 ? <div className="empty-note material-empty">{t("noMaterials")}</div> : (
-        <ul className="material-list">
-          {materials.map((material) => (
-            <li key={material.id}>
+      {materials.length > 0 && (
+        <div className="material-organizer" aria-label={copy.library}>
+          <div className="material-organizer-title">
+            <span><Tags size={16} /></span>
+            <strong>{copy.library}</strong>
+            <small>{materials.length}</small>
+          </div>
+          <div className="material-filter-grid">
+            <select
+              data-testid="material-filter-status"
+              aria-label={copy.status}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="all">{copy.allStatuses}</option>
+              {statuses.map((item) => <option value={item} key={item}>{item}</option>)}
+            </select>
+            <select
+              data-testid="material-filter-tag"
+              aria-label={copy.allTags}
+              value={tagFilter}
+              onChange={(event) => setTagFilter(event.target.value)}
+            >
+              <option value="all">{copy.allTags}</option>
+              {tags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}
+            </select>
+            <select
+              data-testid="material-sort"
+              aria-label={copy.newest}
+              value={sortOrder}
+              onChange={(event) => setSortOrder(event.target.value)}
+            >
+              <option value="newest">{copy.newest}</option>
+              <option value="oldest">{copy.oldest}</option>
+              <option value="title">{copy.title}</option>
+              <option value="size_desc">{copy.largest}</option>
+            </select>
+          </div>
+          <div className="material-selection-bar">
+            <label>
+              <input
+                data-testid="material-select-all"
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleVisibleSelection}
+              />
+              <span>{copy.selectAll}</span>
+            </label>
+            <span>{copy.selected(selectedMaterials.length)}</span>
+            <button
+              type="button"
+              data-testid="material-bulk-delete"
+              disabled={selectedMaterials.length === 0 || deleting}
+              onClick={() => setBulkDeleteOpen(true)}
+            ><Trash2 size={14} /> {copy.bulkDelete}</button>
+          </div>
+        </div>
+      )}
+
+      {materials.length === 0 ? <div className="empty-note material-empty">{t("noMaterials")}</div> : visibleMaterials.length === 0 ? (
+        <div className="empty-note material-empty">{copy.noMatch}</div>
+      ) : (
+        <ul className="material-list material-library-list">
+          {visibleMaterials.map((material) => (
+            <li key={material.id} className={selectedIds.has(material.id) ? "selected" : undefined}>
+              <label className="material-select-control">
+                <input
+                  type="checkbox"
+                  data-testid={`material-select-${material.id}`}
+                  aria-label={`${copy.selectAll}: ${material.title ?? material.filename}`}
+                  checked={selectedIds.has(material.id)}
+                  onChange={() => toggleSelection(material.id)}
+                />
+              </label>
               <div className="material-record-copy">
-                <span>{material.filename}</span>
+                <div className="material-title-row">
+                  <span>{material.title ?? material.filename}</span>
+                  <small data-state={material.status}><Check size={11} /> {material.status}</small>
+                </div>
+                {(material.tags ?? []).length > 0 && (
+                  <div className="material-tags">
+                    {(material.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}
+                  </div>
+                )}
                 <em>{material.chunk_count} {t("chunks")} · {t("uploaded")}</em>
+                {editTarget?.id === material.id && (
+                  <form className="material-edit-form" onSubmit={saveMetadata}>
+                    <label>
+                      <span>{copy.editTitle}</span>
+                      <input value={editTitle} maxLength={500} onChange={(event) => setEditTitle(event.target.value)} />
+                    </label>
+                    <label>
+                      <span>{copy.editTags}</span>
+                      <input value={editTags} onChange={(event) => setEditTags(event.target.value)} />
+                    </label>
+                    <div>
+                      <button type="button" onClick={() => setEditTarget(null)}>{copy.cancel}</button>
+                      <button type="submit" disabled={!editTitle.trim() || savingMetadata}>{copy.save}</button>
+                    </div>
+                  </form>
+                )}
                 <details data-testid={`material-metadata-${material.id}`} className="material-metadata">
                   <summary>{t("materialDetails")}</summary>
                   <dl>
+                    <div><dt>{copy.originalFile}</dt><dd>{material.filename}</dd></div>
                     <div><dt>{t("fileSize")}</dt><dd>{formatBytes(material.size)}</dd></div>
                     <div><dt>{t("fileType")}</dt><dd>{material.content_type}</dd></div>
                     <div><dt>{t("indexedAt")}</dt><dd>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(material.indexed_at))}</dd></div>
@@ -252,6 +500,7 @@ export function MaterialDropzone({
                 </details>
               </div>
               <div className="material-actions">
+                <button type="button" data-testid={`material-edit-${material.id}`} aria-label={`${copy.edit} ${material.title ?? material.filename}`} onClick={() => beginEdit(material)}><Pencil size={15} /></button>
                 <button type="button" data-testid={`material-download-${material.id}`} aria-label={`${t("download")} ${material.filename}`} onClick={() => void onDownload?.(material)}><Download size={15} /></button>
                 <button
                   type="button"
@@ -275,6 +524,17 @@ export function MaterialDropzone({
         busy={deleting}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        title={copy.bulkTitle(selectedMaterials.length)}
+        description={copy.bulkDescription}
+        confirmLabel={copy.bulkDelete}
+        cancelLabel={copy.cancel}
+        tone="danger"
+        busy={deleting}
+        onConfirm={confirmBulkDelete}
+        onCancel={() => setBulkDeleteOpen(false)}
       />
       {selectedSources.length > 0 && (
         <SourceDrawer
