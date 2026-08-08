@@ -76,6 +76,23 @@ def diagnose(
         _raise_api_error(error)
 
 
+@workspace_router.post("/diagnostic", response_model=ProgressResponse)
+def diagnose_workspace(
+    workspace_id: str,
+    payload: DiagnosticRequest,
+    request: Request,
+    user: CurrentUser,
+) -> ProgressResponse:
+    try:
+        return request.app.state.workspace_learning_service.diagnose(
+            user.id,
+            workspace_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
 @router.post("/plan", response_model=StudyPlan)
 def create_plan(project_id: str, request: Request, user: CurrentUser) -> StudyPlan:
     try:

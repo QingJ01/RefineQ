@@ -7,6 +7,7 @@ import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
 import { LearningHome } from "../components/learning-home";
+import { InitialDiagnostic } from "../components/initial-diagnostic";
 import { LearningReport } from "../components/learning-report";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
@@ -27,6 +28,26 @@ import type { SearchSource } from "../lib/types";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders an accessible initial self-assessment for every topic", () => {
+    const html = renderToStaticMarkup(
+      <InitialDiagnostic
+        locale="en"
+        topics={{ limits: "Function limits", derivatives: "Derivatives" }}
+        busy={false}
+        onSubmit={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="initial-diagnostic"');
+    expect(html).toContain("Function limits");
+    expect(html).toContain("Derivatives");
+    expect(html).toContain('name="diagnostic-limits"');
+    expect(html).toContain('name="diagnostic-derivatives"');
+    expect(html).toContain('type="radio"');
+    expect(html).toContain('data-testid="submit-initial-diagnostic"');
+    expect(html).toContain("disabled");
+  });
+
   it("renders a complete account and security center with an explicit danger zone", () => {
     const html = renderToStaticMarkup(
       <AccountCenter

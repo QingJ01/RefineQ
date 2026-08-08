@@ -89,6 +89,11 @@ export interface Progress {
   plan_id: string | null;
 }
 
+export interface DiagnosticResultInput {
+  topic_id: string;
+  is_correct: boolean;
+}
+
 export interface PracticeQuestion {
   id: string;
   topic_id: string;

@@ -288,6 +288,49 @@ def test_plan_sessions_control_practice_mode_and_complete_only_on_evidence(
     assert statuses[sessions["practice"]["id"]] == "completed"
 
 
+def test_workspace_initial_diagnostic_is_reachable_and_owner_scoped(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        alice = _register(client, "diagnostic-alice@example.com")
+        bob = _register(client, "diagnostic-bob@example.com")
+        alice_headers = _authorization(alice["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=alice_headers,
+            json={"intent": "Learn calculus limits"},
+        ).json()["workspace"]["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=alice_headers,
+        ).json()
+        topic_ids = list(snapshot["progress"]["topics"])
+
+        diagnosed = client.post(
+            f"/workspaces/{workspace_id}/learning/diagnostic",
+            headers=alice_headers,
+            json={
+                "diagnostic_id": "initial-ui",
+                "results": [
+                    {"topic_id": topic_id, "is_correct": index % 2 == 0}
+                    for index, topic_id in enumerate(topic_ids)
+                ],
+            },
+        )
+        forbidden = client.post(
+            f"/workspaces/{workspace_id}/learning/diagnostic",
+            headers=_authorization(bob["token"]),
+            json={
+                "diagnostic_id": "stolen",
+                "results": [{"topic_id": topic_ids[0], "is_correct": True}],
+            },
+        )
+
+    assert diagnosed.status_code == 200
+    assert diagnosed.json()["diagnostic_count"] == 1
+    assert forbidden.status_code == 404
+
+
 def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
     tmp_path: Path,
 ) -> None:

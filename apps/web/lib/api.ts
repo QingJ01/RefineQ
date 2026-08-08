@@ -250,6 +250,21 @@ export class ApiClient {
     return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
   }
 
+  submitWorkspaceDiagnostic(
+    token: string,
+    workspaceId: string,
+    results: Array<{ topic_id: string; is_correct: boolean }>,
+  ): Promise<Progress> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/diagnostic`,
+      {
+        method: "POST",
+        body: JSON.stringify({ diagnostic_id: "initial", results }),
+      },
+      token,
+    );
+  }
+
   getWorkspaceQuestion(
     token: string,
     workspaceId: string,

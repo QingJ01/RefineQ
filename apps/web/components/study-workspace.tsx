@@ -21,6 +21,7 @@ import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EvidenceLedger } from "@/components/evidence-ledger";
+import { InitialDiagnostic } from "@/components/initial-diagnostic";
 import { LearningHome } from "@/components/learning-home";
 import { LearningReport } from "@/components/learning-report";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
@@ -66,6 +67,7 @@ import type {
   ExecutableActionProposal,
   AuthResponse,
   DueReviewInsight,
+  DiagnosticResultInput,
   LearningMode,
   LearningWorkspace,
   MaterialRecord,
@@ -549,6 +551,26 @@ export function StudyWorkspace({
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
       return false;
+    } finally {
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+    }
+  }
+
+  async function submitInitialDiagnostic(results: DiagnosticResultInput[]) {
+    if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
+    setPracticeBusy(true);
+    setError("");
+    try {
+      await api.submitWorkspaceDiagnostic(auth.access_token, workspace.id, results);
+      if (!isPracticeGenerationCurrent(generation)) return;
+      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      if (!isPracticeGenerationCurrent(generation)) return;
+      setProgress(snapshot.progress);
+      setEvidence(snapshot.evidence);
+      setPlan(snapshot.plan);
+    } catch (caught) {
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
       if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
@@ -1304,6 +1326,14 @@ export function StudyWorkspace({
             </div>
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
+          {section === "today" && progress?.diagnostic_count === 0 && (
+            <InitialDiagnostic
+              locale={locale}
+              topics={progress.topics}
+              busy={practiceBusy}
+              onSubmit={submitInitialDiagnostic}
+            />
+          )}
           {section === "today" && (
             <LearningSessionCanvas
               locale={locale}
