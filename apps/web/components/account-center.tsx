@@ -49,7 +49,7 @@ const copy = {
     changePassword: "更新密码",
     passwordChanged: "密码已更新，请重新登录",
     data: "数据与会话",
-    dataHint: "下载可移植的 JSON 副本，或让所有设备退出登录。",
+    dataHint: "下载账户、学习状态与资料元数据的 JSON 副本（不含资料原文件），或让所有设备退出登录。",
     export: "导出我的数据",
     exporting: "正在整理导出",
     logoutAll: "退出所有设备",
@@ -84,7 +84,7 @@ const copy = {
     changePassword: "Update password",
     passwordChanged: "Password updated. Sign in again",
     data: "Data & sessions",
-    dataHint: "Download a portable JSON copy or sign every device out at once.",
+    dataHint: "Download account, learning-state, and material metadata as JSON (original files are not included), or sign every device out at once.",
     export: "Export my data",
     exporting: "Preparing export",
     logoutAll: "Sign out everywhere",
@@ -370,7 +370,7 @@ export function AccountRoute() {
         anchor.href = url;
         anchor.download = `refineq-account-${new Date().toISOString().slice(0, 10)}.json`;
         anchor.click();
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
       }}
       onLogoutAll={async () => {
         await localized(api.revokeSessions(token));

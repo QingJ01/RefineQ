@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier, Event
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,8 +15,13 @@ from sqlalchemy import func, select
 from refineq.api.app import create_app
 from refineq.api.routers.projects import ProjectCreateRequest, create_project
 from refineq.config import Settings
-from refineq.database.schema import records
-from refineq.identity.service import IdentityService, InvalidTokenError, TokenExpiredError
+from refineq.database.schema import records, system_settings
+from refineq.identity.service import (
+    AccountDeletionError,
+    IdentityService,
+    InvalidTokenError,
+    TokenExpiredError,
+)
 from refineq.storage.json_store import RecordNotFoundError
 
 
@@ -472,6 +478,92 @@ def test_logout_all_revokes_every_existing_token(tmp_path: Path) -> None:
     assert fresh_login.status_code == 200
 
 
+def test_login_token_is_bound_to_the_password_snapshot_that_authenticated_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    identity = IdentityService(tmp_path / "data")
+    identity.register(
+        email="login-race@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    entered = Event()
+    release = Event()
+    original_encode = identity._encode_token
+
+    def delayed_encode(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original_encode(*args, **kwargs)
+
+    monkeypatch.setattr(identity, "_encode_token", delayed_encode)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        login_future = executor.submit(
+            identity.authenticate_with_token,
+            email="login-race@example.com",
+            password="correct-horse-battery-staple",
+        )
+        assert entered.wait(timeout=5)
+        user = identity.authenticate(
+            email="login-race@example.com",
+            password="correct-horse-battery-staple",
+        )
+        identity.change_password(
+            user.id,
+            current_password="correct-horse-battery-staple",
+            new_password="a-brand-new-secure-password",
+        )
+        release.set()
+        _, stale_token = login_future.result(timeout=5)
+
+    with pytest.raises(InvalidTokenError):
+        identity.verify_token(stale_token)
+
+
+def test_logout_all_increment_is_atomic_across_service_instances(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app(tmp_path)
+    user = app.state.identity.register(
+        email="session-version-race@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    first = IdentityService(app.state.database)
+    second = IdentityService(app.state.database)
+    barrier = Barrier(2)
+
+    def synchronize(service: IdentityService):
+        original = service._session_version
+
+        def read_together(session, user_id):
+            value = original(session, user_id)
+            barrier.wait(timeout=5)
+            return value
+
+        monkeypatch.setattr(service, "_session_version", read_together)
+
+    synchronize(first)
+    synchronize(second)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(first.revoke_sessions, user.id),
+            executor.submit(second.revoke_sessions, user.id),
+        ]
+        for future in futures:
+            future.result(timeout=5)
+
+    with app.state.database.session() as session:
+        version = session.scalar(
+            select(system_settings.c.value).where(
+                system_settings.c.key == f"user_session_version:{user.id}"
+            )
+        )
+    assert version == "2"
+
+
 def test_account_export_contains_only_the_authenticated_owner_data(tmp_path: Path) -> None:
     app = _app(tmp_path)
 
@@ -509,22 +601,42 @@ def test_account_deletion_is_fail_safe_when_object_cleanup_fails(
     monkeypatch,
 ) -> None:
     app = _app(tmp_path)
-    monkeypatch.setattr(
-        app.state.identity,
-        "account_storage_keys",
-        lambda owner_id: [f"materials/{owner_id}/unavailable.pdf"],
-        raising=False,
-    )
-
-    def fail_delete(storage_key: str) -> None:
-        raise RuntimeError(f"cannot delete {storage_key}")
-
-    monkeypatch.setattr(app.state.object_storage, "delete", fail_delete)
-
     with TestClient(app, raise_server_exceptions=False) as client:
         registered = _register(client, "delete-fails@example.com")
+        owner_id = registered["user"]["id"]
         token = registered["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
+        entries = []
+        for index in range(2):
+            stored = app.state.object_storage.put(
+                owner_id=owner_id,
+                workspace_id="workspace-delete-test",
+                material_id=f"material-delete-{index}",
+                filename=f"material-{index}.txt",
+                payload=f"payload-{index}".encode(),
+            )
+            entries.append({
+                "key": stored.key,
+                "workspace_id": "workspace-delete-test",
+                "material_id": f"material-delete-{index}",
+                "filename": f"material-{index}.txt",
+            })
+        monkeypatch.setattr(
+            app.state.identity,
+            "account_storage_objects",
+            lambda requested_owner: entries if requested_owner == owner_id else [],
+            raising=False,
+        )
+        original_delete = app.state.object_storage.delete
+        deleted_keys: list[str] = []
+
+        def fail_after_first(storage_key: str) -> None:
+            if deleted_keys:
+                raise RuntimeError(f"cannot delete {storage_key}")
+            original_delete(storage_key)
+            deleted_keys.append(storage_key)
+
+        monkeypatch.setattr(app.state.object_storage, "delete", fail_after_first)
         failed = client.request(
             "DELETE",
             "/auth/account",
@@ -539,6 +651,48 @@ def test_account_deletion_is_fail_safe_when_object_cleanup_fails(
     assert failed.status_code == 503
     assert failed.json()["error"]["code"] == "account_deletion_failed"
     assert still_authenticated.status_code == 200
+    assert app.state.object_storage.get(entries[0]["key"]) == b"payload-0"
+    assert app.state.object_storage.get(entries[1]["key"]) == b"payload-1"
+
+
+def test_account_deletion_preflight_blocks_before_removing_objects(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app(tmp_path)
+    delete_calls: list[str] = []
+
+    def blocked(*args, **kwargs):
+        del args, kwargs
+        raise AccountDeletionError("Transfer platform integration ownership first")
+
+    monkeypatch.setattr(
+        app.state.identity,
+        "preflight_account_deletion",
+        blocked,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app.state.object_storage,
+        "delete",
+        lambda key: delete_calls.append(key),
+    )
+
+    with TestClient(app) as client:
+        registered = _register(client, "delete-blocked@example.com")
+        response = client.request(
+            "DELETE",
+            "/auth/account",
+            headers={"Authorization": f"Bearer {registered['access_token']}"},
+            json={
+                "current_password": "correct-horse-battery-staple",
+                "confirmation": "delete-blocked@example.com",
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "account_deletion_blocked"
+    assert delete_calls == []
 
 
 def test_account_deletion_removes_identity_and_owner_records(tmp_path: Path) -> None:

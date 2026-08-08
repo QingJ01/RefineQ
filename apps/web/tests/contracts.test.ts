@@ -275,6 +275,15 @@ describe("authentication and API errors", () => {
     expect(workspaceSource).toContain('href="/account"');
   });
 
+  it("delays releasing the account export until the browser can start the download", () => {
+    const accountSource = readFileSync(
+      fileURLToPath(new URL("../components/account-center.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(accountSource).toContain("setTimeout(() => URL.revokeObjectURL(url)");
+  });
+
   it("sends platform integration changes only to administrator endpoints", async () => {
     let requestedPath = "";
     let requestedInit: RequestInit | undefined;
