@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -15,12 +16,14 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any
+from uuid import uuid4
 
 BACKUP_FORMAT = "refineq-backup"
 BACKUP_VERSION = 1
 _MANIFEST_NAME = "manifest.json"
 _PAYLOAD_PREFIX = "data/"
 _MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+_MANAGED_BACKUP_ID = re.compile(r"\Abackup_[0-9]{8}T[0-9]{12}Z_[0-9a-f]{8}\Z")
 
 
 class BackupError(RuntimeError):
@@ -49,6 +52,15 @@ class BackupResult:
 @dataclass(frozen=True, slots=True)
 class RestoreResult:
     destination: Path
+    file_count: int
+    total_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedBackup:
+    id: str
+    created_at: datetime
+    size: int
     file_count: int
     total_bytes: int
 
@@ -337,3 +349,82 @@ def restore_backup(archive: Path, destination_root: Path) -> RestoreResult:
         file_count=len(entries),
         total_bytes=sum(int(entry["size"]) for entry in entries.values()),
     )
+
+
+def _managed_archive(backup_root: Path, backup_id: str) -> Path:
+    root = backup_root.expanduser().resolve()
+    if not _MANAGED_BACKUP_ID.fullmatch(backup_id):
+        raise BackupValidationError("Invalid managed backup ID")
+    archive = (root / f"{backup_id}.zip").resolve()
+    if archive.parent != root or not archive.is_file():
+        raise BackupValidationError("Managed backup does not exist")
+    return archive
+
+
+def _managed_info(archive: Path) -> ManagedBackup:
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            infos = bundle.infolist()
+            names = [info.filename for info in infos]
+            if len(names) != len(set(names)):
+                raise BackupValidationError("Backup contains duplicate members")
+            for info in infos:
+                _validate_member(info)
+            manifest = _read_manifest(bundle)
+            entries = _manifest_entries(manifest)
+            payload_names = {
+                info.filename.removeprefix(_PAYLOAD_PREFIX)
+                for info in infos
+                if info.filename != _MANIFEST_NAME
+            }
+            if payload_names != set(entries):
+                raise BackupValidationError("Backup payload does not match its manifest")
+            created_at = datetime.fromisoformat(str(manifest["created_at"]))
+            if created_at.tzinfo is None or created_at.utcoffset() is None:
+                raise ValueError("created_at must be timezone-aware")
+    except (KeyError, TypeError, ValueError, zipfile.BadZipFile) as error:
+        raise BackupValidationError("Invalid managed backup") from error
+    return ManagedBackup(
+        id=archive.stem,
+        created_at=created_at.astimezone(UTC),
+        size=archive.stat().st_size,
+        file_count=len(entries),
+        total_bytes=sum(int(entry["size"]) for entry in entries.values()),
+    )
+
+
+def create_managed_backup(data_root: Path, backup_root: Path) -> ManagedBackup:
+    """Create a backup in the server-owned backup directory and return its opaque ID."""
+
+    root = backup_root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    backup_id = f"backup_{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}_{uuid4().hex[:8]}"
+    archive = root / f"{backup_id}.zip"
+    create_backup(data_root, archive)
+    return _managed_info(archive)
+
+
+def list_managed_backups(backup_root: Path) -> list[ManagedBackup]:
+    """List only archives issued by the managed backup service."""
+
+    root = backup_root.expanduser().resolve()
+    if not root.exists():
+        return []
+    backups = [
+        _managed_info(path)
+        for path in root.iterdir()
+        if path.is_file() and path.suffix == ".zip" and _MANAGED_BACKUP_ID.fullmatch(path.stem)
+    ]
+    return sorted(backups, key=lambda item: (item.created_at, item.id), reverse=True)
+
+
+def validate_managed_backup(backup_root: Path, backup_id: str) -> ManagedBackup:
+    """Fully extract and validate one server-issued backup without changing runtime data."""
+
+    archive = _managed_archive(backup_root, backup_id)
+    info = _managed_info(archive)
+    with tempfile.TemporaryDirectory(prefix=".refineq-validate-", dir=archive.parent) as root:
+        result = restore_backup(archive, Path(root) / "data")
+    if result.file_count != info.file_count or result.total_bytes != info.total_bytes:
+        raise BackupValidationError("Managed backup validation totals do not match")
+    return info

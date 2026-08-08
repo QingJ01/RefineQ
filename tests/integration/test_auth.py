@@ -793,6 +793,101 @@ def test_live_account_deletion_is_not_recovered_by_another_app_instance(
     assert active_app.state.object_storage.get(stored.key) == b"active deletion"
 
 
+def test_account_and_material_deletions_share_one_cross_process_lease(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    user = app.state.identity.register(
+        email="shared-delete-lease@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    stored = app.state.object_storage.put(
+        owner_id=user.id,
+        workspace_id="workspace-shared",
+        material_id="material-shared",
+        filename="shared.txt",
+        payload=b"shared lease",
+    )
+    app.state.knowledge.add_document(
+        owner_id=user.id,
+        project_id="workspace-shared",
+        material_id="material-shared",
+        filename="shared.txt",
+        text="shared lease",
+        size=12,
+        storage_key=stored.key,
+    )
+    pending = app.state.account_deletions.prepare(
+        user.id,
+        current_password="correct-horse-battery-staple",
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="material object mutation"):
+            app.state.material_deletions.prepare(
+                owner_id=user.id,
+                project_id="workspace-shared",
+                material_ids=["material-shared"],
+            )
+    finally:
+        app.state.account_deletions.rollback(pending)
+        app.state.database.close()
+
+
+def test_recovery_removes_pre_manifest_crash_directories(tmp_path: Path) -> None:
+    settings = Settings(data_root=tmp_path / "data", _env_file=None)
+    account_orphan = settings.data_root / "recovery" / "account-deletions" / "orphan"
+    material_orphan = settings.data_root / "recovery" / "material-deletions" / "orphan"
+    account_orphan.mkdir(parents=True)
+    material_orphan.mkdir(parents=True)
+    (material_orphan / "000000.bin").write_bytes(b"not yet destructive")
+
+    app = create_app(settings)
+    try:
+        assert not account_orphan.exists()
+        assert not material_orphan.exists()
+    finally:
+        app.state.account_deletions.close()
+        app.state.material_deletions.close()
+        app.state.database.close()
+
+
+def test_initial_account_manifest_failure_releases_the_shared_lease(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app(tmp_path)
+    user = app.state.identity.register(
+        email="manifest-failure@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    original = app.state.account_deletions._write_manifest
+
+    def fail_manifest(*args, **kwargs):
+        del args, kwargs
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        app.state.account_deletions,
+        "_write_manifest",
+        fail_manifest,
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        app.state.account_deletions.prepare(
+            user.id,
+            current_password="correct-horse-battery-staple",
+        )
+
+    monkeypatch.setattr(app.state.account_deletions, "_write_manifest", original)
+    pending = app.state.account_deletions.prepare(
+        user.id,
+        current_password="correct-horse-battery-staple",
+    )
+    app.state.account_deletions.rollback(pending)
+    app.state.database.close()
+
+
 def test_account_deletion_fence_rejects_a_late_material_write(tmp_path: Path) -> None:
     from refineq.database.owner_state import OwnerWriteBlockedError
     from refineq.knowledge.index import MaterialDocument

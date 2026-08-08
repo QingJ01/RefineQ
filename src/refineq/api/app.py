@@ -49,6 +49,7 @@ from refineq.knowledge.embeddings import PlatformEmbeddingService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.service import LearningService
+from refineq.operations.admin import AdminOperations
 from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
@@ -84,6 +85,7 @@ def create_app(
     app.state.settings = settings or Settings()
     app.state.database = database or Database(app.state.settings.resolved_database_url)
     app.state.database.initialize()
+    app.state.admin_operations = AdminOperations(app.state.database, app.state.settings)
     app.state.rate_limiter = SlidingWindowRateLimiter()
     app.state.upload_admission = UploadAdmissionController(
         max_global=app.state.settings.material_upload_max_concurrent_global,

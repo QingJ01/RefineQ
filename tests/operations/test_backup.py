@@ -13,7 +13,10 @@ from refineq.operations.backup import (
     BackupValidationError,
     RestoreConflictError,
     create_backup,
+    create_managed_backup,
+    list_managed_backups,
     restore_backup,
+    validate_managed_backup,
 )
 from refineq.storage.json_store import AtomicJsonStore
 from refineq.storage.projects import ProjectRepository
@@ -101,3 +104,34 @@ def test_restore_rejects_archive_path_traversal(tmp_path: Path) -> None:
         restore_backup(archive, tmp_path / "destination")
 
     assert not (tmp_path / "escape.txt").exists()
+
+
+def test_managed_backups_use_opaque_ids_and_support_full_restore_validation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "runtime"
+    backup_root = tmp_path / "managed-backups"
+    _seed_runtime(source)
+
+    created = create_managed_backup(source, backup_root)
+    listed = list_managed_backups(backup_root)
+    validated = validate_managed_backup(backup_root, created.id)
+
+    assert created.id.startswith("backup_")
+    assert "/" not in created.id and "\\" not in created.id
+    assert listed == [created]
+    assert validated.id == created.id
+    assert validated.file_count == created.file_count
+    assert validated.total_bytes == created.total_bytes
+
+
+@pytest.mark.parametrize("backup_id", ["../outside", "..\\outside", "backup_invalid.zip"])
+def test_managed_backup_validation_rejects_paths_and_unissued_ids(
+    tmp_path: Path,
+    backup_id: str,
+) -> None:
+    backup_root = tmp_path / "managed-backups"
+    backup_root.mkdir()
+
+    with pytest.raises(BackupValidationError):
+        validate_managed_backup(backup_root, backup_id)

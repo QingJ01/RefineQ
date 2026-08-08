@@ -35,7 +35,9 @@ class AccountDeletionCoordinator:
         identity: IdentityService,
         object_storage: ObjectStorage,
     ) -> None:
-        self.root = data_root.resolve() / "recovery" / "account-deletions"
+        recovery_root = data_root.resolve() / "recovery"
+        self.root = recovery_root / "account-deletions"
+        self.lease_path = recovery_root / ".material-object-mutations.lock"
         self.identity = identity
         self.object_storage = object_storage
         self._leases: dict[str, RecoveryLease] = {}
@@ -73,21 +75,21 @@ class AccountDeletionCoordinator:
         )
         deletion_id = uuid4().hex
         durable_mkdir(self.root)
-        lease = RecoveryLease.acquire(self.root / ".coordinator.lock")
+        lease = RecoveryLease.acquire(self.lease_path)
         if lease is None:
-            raise RuntimeError("Another account deletion is already active")
+            raise RuntimeError("Another material object mutation is already active")
         directory = self.root / deletion_id
-        durable_mkdir(directory)
         self._leases[deletion_id] = lease
         entries: list[dict[str, str]] = []
-        self._write_manifest(
-            directory,
-            deletion_id=deletion_id,
-            user_id=user_id,
-            entries=entries,
-        )
         began = False
         try:
+            durable_mkdir(directory)
+            self._write_manifest(
+                directory,
+                deletion_id=deletion_id,
+                user_id=user_id,
+                entries=entries,
+            )
             self.identity.begin_account_deletion(
                 user_id,
                 current_password=current_password,
@@ -112,7 +114,8 @@ class AccountDeletionCoordinator:
             try:
                 if began:
                     self.identity.cancel_account_deletion(user_id, deletion_id=deletion_id)
-                durable_remove_tree(directory)
+                if directory.exists():
+                    durable_remove_tree(directory)
             finally:
                 self._release(deletion_id)
             raise
@@ -204,11 +207,14 @@ class AccountDeletionCoordinator:
 
         if not self.root.exists():
             return
-        lease = RecoveryLease.acquire(self.root / ".coordinator.lock")
+        lease = RecoveryLease.acquire(self.lease_path)
         if lease is None:
             return
         try:
             for directory in sorted(path for path in self.root.iterdir() if path.is_dir()):
+                if not (directory / "manifest.json").is_file():
+                    durable_remove_tree(directory)
+                    continue
                 pending = self._load(directory)
                 exists, current_deletion_id = self.identity.account_deletion_state(
                     pending.user_id

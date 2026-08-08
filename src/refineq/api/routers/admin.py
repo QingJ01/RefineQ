@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict
+from datetime import datetime
+from typing import Any, Literal
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from refineq.api.dependencies import AdminUser
 from refineq.integrations.models import (
@@ -13,6 +16,8 @@ from refineq.integrations.models import (
     PublicIntegrationSettings,
 )
 from refineq.integrations.repository import IntegrationNotConfiguredError
+from refineq.operations.admin import RestoreConfirmationError
+from refineq.operations.backup import BackupError
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -26,6 +31,104 @@ class AdminOverview(BaseModel):
     integrations_configured: int
 
 
+class QuotaValues(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    materials: int
+    material_bytes: int
+    workspaces: int
+
+
+class AdminUserSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    email: str
+    display_name: str
+    role: Literal["learner", "admin"]
+    created_at: datetime
+    usage: QuotaValues
+    quotas: QuotaValues
+
+
+class AdminUsersPage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    items: list[AdminUserSummary]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class AdminJobSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: Literal["material_index", "embedding_backfill"]
+    status: Literal["idle", "pending"]
+    pending: int
+    completed: int
+    failed: int
+    total: int
+    last_activity_at: datetime | None
+
+
+class AdminJobsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    items: list[AdminJobSummary]
+    observed_at: datetime
+
+
+class AuditEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: int
+    actor_id: str
+    actor_email: str
+    action: str
+    target: str
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    items: list[AuditEntry]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class ManagedBackupResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    created_at: datetime
+    size: int
+    file_count: int
+    total_bytes: int
+
+
+class ManagedBackupsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    items: list[ManagedBackupResponse]
+    total: int
+
+
+class RestoreValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: str = Field(min_length=1, max_length=200)
+
+
+class RestoreValidationResponse(ManagedBackupResponse):
+    status: Literal["validated"] = "validated"
+
+
 @router.get("/overview", response_model=AdminOverview)
 def overview(request: Request, admin: AdminUser) -> AdminOverview:
     del admin
@@ -35,6 +138,115 @@ def overview(request: Request, admin: AdminUser) -> AdminOverview:
         pgvector=database.is_postgresql,
         users=request.app.state.identity.count_users(),
         integrations_configured=request.app.state.integrations.count_configured(),
+    )
+
+
+@router.get("/users", response_model=AdminUsersPage)
+def list_users(
+    request: Request,
+    admin: AdminUser,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> AdminUsersPage:
+    del admin
+    return AdminUsersPage.model_validate(
+        request.app.state.admin_operations.list_users(page=page, page_size=page_size)
+    )
+
+
+@router.get("/jobs", response_model=AdminJobsResponse)
+def list_jobs(request: Request, admin: AdminUser) -> AdminJobsResponse:
+    del admin
+    return AdminJobsResponse.model_validate(request.app.state.admin_operations.jobs())
+
+
+@router.get("/audit", response_model=AuditPage)
+def list_audit(
+    request: Request,
+    admin: AdminUser,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> AuditPage:
+    del admin
+    return AuditPage.model_validate(
+        request.app.state.admin_operations.list_audit(page=page, page_size=page_size)
+    )
+
+
+@router.post(
+    "/backups",
+    response_model=ManagedBackupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_admin_backup(request: Request, admin: AdminUser) -> ManagedBackupResponse:
+    try:
+        return ManagedBackupResponse.model_validate(
+            request.app.state.admin_operations.create_backup(actor_id=admin.id),
+            from_attributes=True,
+        )
+    except BackupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "backup_creation_failed", "message": str(error)},
+        ) from error
+
+
+@router.get("/backups", response_model=ManagedBackupsResponse)
+def list_admin_backups(request: Request, admin: AdminUser) -> ManagedBackupsResponse:
+    del admin
+    try:
+        backups = request.app.state.admin_operations.list_backups()
+    except BackupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "backup_listing_failed", "message": str(error)},
+        ) from error
+    return ManagedBackupsResponse(
+        items=[
+            ManagedBackupResponse.model_validate(item, from_attributes=True)
+            for item in backups
+        ],
+        total=len(backups),
+    )
+
+
+@router.post(
+    "/backups/{backup_id}/restore-validation",
+    response_model=RestoreValidationResponse,
+)
+def validate_admin_restore(
+    backup_id: str,
+    payload: RestoreValidationRequest,
+    request: Request,
+    admin: AdminUser,
+) -> RestoreValidationResponse:
+    try:
+        backup = request.app.state.admin_operations.validate_restore(
+            backup_id,
+            confirmation=payload.confirmation,
+            actor_id=admin.id,
+        )
+    except RestoreConfirmationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "restore_confirmation_required", "message": str(error)},
+        ) from error
+    except BackupError as error:
+        is_missing = "ID" in str(error) or "does not exist" in str(error)
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+                if is_missing
+                else status.HTTP_422_UNPROCESSABLE_CONTENT
+            ),
+            detail={
+                "code": "backup_not_found" if is_missing else "backup_invalid",
+                "message": str(error),
+            },
+        ) from error
+    public = ManagedBackupResponse.model_validate(backup, from_attributes=True)
+    return RestoreValidationResponse.model_validate(
+        {"status": "validated", **public.model_dump()}
     )
 
 

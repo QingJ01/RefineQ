@@ -560,41 +560,12 @@ def _delete_material(
     request: Request,
     user: CurrentUser,
 ) -> Response:
-    _require_project(request, user.id, project_id)
-    try:
-        record = request.app.state.knowledge.get_material(
-            owner_id=user.id,
-            project_id=project_id,
-            material_id=material_id,
-        )
-        storage_key = request.app.state.knowledge.get_material_storage_key(
-            owner_id=user.id,
-            project_id=project_id,
-            material_id=material_id,
-        )
-        payload = request.app.state.object_storage.get(storage_key)
-        request.app.state.object_storage.delete(storage_key)
-        try:
-            request.app.state.knowledge.delete_material(
-                owner_id=user.id,
-                project_id=project_id,
-                material_id=material_id,
-            )
-        except Exception:
-            request.app.state.object_storage.put(
-                owner_id=user.id,
-                workspace_id=project_id,
-                material_id=material_id,
-                filename=record.filename,
-                payload=payload,
-            )
-            raise
-    except (MaterialNotFoundError, FileNotFoundError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "material_not_found", "message": "Material not found"},
-        ) from error
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return _bulk_delete_materials(
+        project_id,
+        MaterialBulkDeleteRequest(material_ids=[material_id]),
+        request,
+        user,
+    )
 
 
 @router.delete("/{material_id}", status_code=status.HTTP_204_NO_CONTENT)

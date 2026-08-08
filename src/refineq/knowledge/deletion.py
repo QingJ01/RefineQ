@@ -36,7 +36,9 @@ class MaterialDeletionCoordinator:
         knowledge: KnowledgeIndex,
         object_storage: ObjectStorage,
     ) -> None:
-        self.root = data_root.resolve() / "recovery" / "material-deletions"
+        recovery_root = data_root.resolve() / "recovery"
+        self.root = recovery_root / "material-deletions"
+        self.lease_path = recovery_root / ".material-object-mutations.lock"
         self.knowledge = knowledge
         self.object_storage = object_storage
         self._leases: dict[str, RecoveryLease] = {}
@@ -65,14 +67,14 @@ class MaterialDeletionCoordinator:
     ) -> PendingMaterialDeletion:
         deletion_id = uuid4().hex
         durable_mkdir(self.root)
-        lease = RecoveryLease.acquire(self.root / ".coordinator.lock")
+        lease = RecoveryLease.acquire(self.lease_path)
         if lease is None:
-            raise RuntimeError("Another material deletion is already active")
+            raise RuntimeError("Another material object mutation is already active")
         directory = self.root / deletion_id
-        durable_mkdir(directory)
         self._leases[deletion_id] = lease
         entries: list[dict[str, object]] = []
         try:
+            durable_mkdir(directory)
             for index, material_id in enumerate(material_ids):
                 record = self.knowledge.get_material(
                     owner_id=owner_id,
@@ -107,7 +109,8 @@ class MaterialDeletionCoordinator:
             return pending
         except Exception:
             try:
-                durable_remove_tree(directory)
+                if directory.exists():
+                    durable_remove_tree(directory)
             finally:
                 self._release(deletion_id)
             raise
@@ -181,11 +184,14 @@ class MaterialDeletionCoordinator:
     def recover_pending(self) -> None:
         if not self.root.exists():
             return
-        lease = RecoveryLease.acquire(self.root / ".coordinator.lock")
+        lease = RecoveryLease.acquire(self.lease_path)
         if lease is None:
             return
         try:
             for directory in sorted(path for path in self.root.iterdir() if path.is_dir()):
+                if not (directory / "manifest.json").is_file():
+                    durable_remove_tree(directory)
+                    continue
                 pending = self._load(directory)
                 present = []
                 for entry in pending.entries:
