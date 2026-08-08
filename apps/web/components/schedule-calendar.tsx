@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { Locale, StudyPlan, StudySession } from "@/lib/types";
@@ -29,7 +29,7 @@ export function ScheduleCalendar({
   onUpdateSession: (
     session: StudySession,
     input: { planned_at?: string; minutes?: number; status?: "planned" | "completed" },
-  ) => void | Promise<void>;
+  ) => void | boolean | Promise<void | boolean>;
 }) {
   const zh = locale === "zh";
   const initial = plan?.sessions[0] ? new Date(plan.sessions[0].planned_at) : new Date();
@@ -64,11 +64,18 @@ export function ScheduleCalendar({
     setMinutes(session.minutes);
   }
 
+  function showToday() {
+    const today = new Date();
+    setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+    setSelectedDate(dateKey(today));
+  }
+
   async function save(session: StudySession) {
-    await onUpdateSession(session, {
+    const saved = await onUpdateSession(session, {
       planned_at: new Date(plannedAt).toISOString(),
       minutes,
     });
+    if (saved === false) return;
     setSelectedDate(dateKey(new Date(plannedAt)));
     setEditingId(null);
   }
@@ -78,11 +85,16 @@ export function ScheduleCalendar({
   return (
     <section className="schedule-page" data-testid="schedule-calendar">
       <header className="calendar-toolbar">
-        <div><span className="kicker">PERSONAL SCHEDULE</span><h2>{zh ? "学习日历" : "Study Calendar"}</h2></div>
-        <div className="calendar-navigation">
-          <button type="button" aria-label={zh ? "上个月" : "Previous month"} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft size={18} /></button>
-          <strong>{monthTitle}</strong>
-          <button type="button" aria-label={zh ? "下个月" : "Next month"} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={18} /></button>
+        <div className="calendar-product-title">
+          <span className="calendar-product-icon"><CalendarDays size={24} /></span>
+          <div><span>{zh ? "RefineQ 学习时间表" : "RefineQ Study Schedule"}</span><h2>{monthTitle}</h2></div>
+        </div>
+        <div className="calendar-toolbar-actions">
+          <button type="button" className="calendar-today-button" onClick={showToday}>{zh ? "今天" : "Today"}</button>
+          <div className="calendar-navigation">
+            <button type="button" aria-label={zh ? "上个月" : "Previous month"} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft size={18} /></button>
+            <button type="button" aria-label={zh ? "下个月" : "Next month"} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={18} /></button>
+          </div>
         </div>
       </header>
       <div className="calendar-layout">

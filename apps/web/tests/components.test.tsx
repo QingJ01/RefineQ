@@ -42,7 +42,7 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain("学习日历");
+    expect(html).toContain("RefineQ 学习时间表");
     expect(html).toContain("导数应用");
     expect(html).toContain('data-testid="schedule-calendar"');
   });

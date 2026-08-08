@@ -9,6 +9,7 @@ import {
   House,
   Languages,
   LogOut,
+  Route,
   Settings2,
   Sparkles,
 } from "lucide-react";
@@ -765,7 +766,7 @@ export function StudyWorkspace({
     / Math.max(1, masteryValues.length);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
-    { id: "path", icon: CalendarDays },
+    { id: "path", icon: Route },
     { id: "materials", icon: Archive },
     { id: "calendar", icon: CalendarDays },
     { id: "progress", icon: ChartNoAxesColumnIncreasing },
@@ -841,7 +842,7 @@ export function StudyWorkspace({
         </div>
       </aside>
       <section className="workspace-stage">
-        {section !== "today" && (
+        {section !== "today" && section !== "calendar" && (
           <header className="workspace-header">
             <div>
               <span className="kicker">{t("workspaceEyebrow")}</span>
