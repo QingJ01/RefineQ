@@ -27,6 +27,7 @@ from refineq.api.routers.admin import router as admin_router
 from refineq.api.routers.agent import router as agent_router
 from refineq.api.routers.agent import workspace_router as workspace_agent_router
 from refineq.api.routers.auth import router as auth_router
+from refineq.api.routers.calendar import router as calendar_router
 from refineq.api.routers.health import router as health_router
 from refineq.api.routers.learning import router as learning_router
 from refineq.api.routers.learning import workspace_router as workspace_learning_router
@@ -35,6 +36,7 @@ from refineq.api.routers.materials import workspace_router as workspace_material
 from refineq.api.routers.projects import router as projects_router
 from refineq.api.routers.settings import router as settings_router
 from refineq.api.routers.workspaces import router as workspaces_router
+from refineq.calendar.service import CalendarService
 from refineq.config import Settings
 from refineq.database.engine import Database
 from refineq.identity.deletion import AccountDeletionCoordinator
@@ -115,6 +117,10 @@ def create_app(
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
+    app.state.calendar_service = CalendarService(
+        workspaces=app.state.workspaces,
+        learning=app.state.learning,
+    )
     app.state.integrations = IntegrationRepository(
         app.state.database,
         encryption_key=app.state.settings.model_encryption_key,
@@ -233,6 +239,7 @@ def create_app(
     app.include_router(workspace_agent_router)
     app.include_router(settings_router)
     app.include_router(workspaces_router)
+    app.include_router(calendar_router)
     app.include_router(admin_router)
     app.router.add_event_handler("shutdown", app.state.account_deletions.close)
     app.router.add_event_handler("shutdown", app.state.material_deletions.close)
