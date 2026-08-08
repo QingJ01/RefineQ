@@ -176,6 +176,7 @@ export interface AgentMessage {
   role: "user" | "assistant";
   content: string;
   citations: string[];
+  sources?: SearchSource[];
 }
 
 export interface AgentSessionSummary {

@@ -139,6 +139,7 @@ export function LearningSessionCanvas({
   learningMode,
   savedQuestions,
   agentToken,
+  modelConfigured,
   isAdmin = false,
   onOpenAgentSettings,
   onLearningModeChange,
@@ -163,6 +164,7 @@ export function LearningSessionCanvas({
   learningMode: LearningMode;
   savedQuestions: SavedPracticeQuestion[];
   agentToken?: string;
+  modelConfigured?: boolean;
   isAdmin?: boolean;
   onOpenAgentSettings?: () => void;
   onLearningModeChange: (mode: LearningMode) => void;
@@ -207,6 +209,7 @@ export function LearningSessionCanvas({
   function openFullCoach() {
     if (!agentRef.current) return;
     agentRef.current.open = true;
+    agentRef.current.focus({ preventScroll: true });
     agentRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -341,6 +344,16 @@ export function LearningSessionCanvas({
                 {groundingLabel}
               </span>
               <h2>{result.feedback}</h2>
+              {taskSources.length > 0 && (
+                <button
+                  type="button"
+                  className="session-source-link"
+                  data-testid="feedback-sources"
+                  onClick={() => setSelectedSources(taskSources)}
+                >
+                  <ExternalLink size={15} /> {text.sourceLabel} · {taskSources[0].filename}
+                </button>
+              )}
               <div className="feedback-columns">
                 <section>
                   <h3>{text.strength}</h3>
@@ -390,6 +403,7 @@ export function LearningSessionCanvas({
           <SessionCoach
             locale={locale}
             onAsk={onAskCoach}
+            modelConfigured={modelConfigured ?? true}
             isAdmin={isAdmin}
             onConfigure={onOpenAgentSettings}
             onOpenFullCoach={agentToken ? openFullCoach : undefined}
@@ -401,13 +415,14 @@ export function LearningSessionCanvas({
         </aside>
       </div>
       {agentToken && (
-        <details ref={agentRef} className="workspace-agent-disclosure" data-testid="workspace-agent">
+        <details ref={agentRef} className="workspace-agent-disclosure" data-testid="workspace-agent" tabIndex={-1}>
           <summary>{locale === "zh" ? "完整对话、历史与资料引用" : "Full conversation, history, and sources"}</summary>
           <AgentPanel
             token={agentToken}
             workspaceId={workspace.id}
             t={t}
             locale={locale}
+            modelConfigured={modelConfigured}
             isAdmin={isAdmin}
             onOpenSettings={onOpenAgentSettings}
           />

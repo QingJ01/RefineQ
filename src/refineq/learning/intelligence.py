@@ -268,6 +268,14 @@ class LearningIntelligenceService:
             )
         except ValueError:
             sources = []
+        if not sources:
+            return fallback_question(
+                topic_id=topic_id,
+                topic_name=topic_name,
+                difficulty_level=difficulty_level,
+                sources=[],
+                learning_mode=learning_mode,
+            )
         try:
             settings = self._settings.load(owner_id)
         except ModelNotConfiguredError:

@@ -159,7 +159,7 @@ describe("focused learning components", () => {
 
     const materialHtml = renderGrounding("material", [source]);
     const generalHtml = renderGrounding("general", []);
-    const feedbackHtml = renderGrounding("general", [], true);
+    const feedbackHtml = renderGrounding("material", [source], true);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
     expect(materialHtml).toContain("材料依据");
@@ -167,7 +167,9 @@ describe("focused learning components", () => {
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
-    expect(feedbackHtml).toContain("通用生成");
+    expect(feedbackHtml).toContain("材料依据");
+    expect(feedbackHtml).toContain('data-testid="feedback-sources"');
+    expect(feedbackHtml).toContain("用户访谈原文.md");
   });
 
   it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {
@@ -797,6 +799,7 @@ describe("focused learning components", () => {
         learningMode="case"
         savedQuestions={[]}
         agentToken="token"
+        modelConfigured={false}
         isAdmin
         onOpenAgentSettings={() => undefined}
         onLearningModeChange={() => undefined}
@@ -812,7 +815,10 @@ describe("focused learning components", () => {
 
     expect(html).toContain('data-testid="open-full-coach"');
     expect(html).toContain('data-testid="workspace-agent"');
+    expect(html).toContain('tabindex="-1"');
     expect(html).toContain('data-testid="agent-history"');
     expect(html).toContain('data-testid="agent-new-conversation"');
+    expect(html).toContain("The learning Agent has not been configured");
+    expect(html).toContain('data-testid="coach-configure-model"');
   });
 });

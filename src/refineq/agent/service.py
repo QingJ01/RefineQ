@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from openai import DefaultHttpxClient, OpenAI
@@ -107,10 +107,10 @@ class OpenAICompatibleTransport:
         return ModelReply(text=text, citations=citations)
 
 
-def _bounded_history(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+def _bounded_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep the newest messages inside both count and character budgets."""
 
-    selected: list[dict[str, str]] = []
+    selected: list[dict[str, Any]] = []
     remaining = MAX_HISTORY_CHARACTERS
     for item in reversed(messages[-MAX_SESSION_MESSAGES:]):
         content = str(item.get("content", ""))
@@ -120,7 +120,13 @@ def _bounded_history(messages: list[dict[str, str]]) -> list[dict[str, str]]:
             if selected or remaining <= 0:
                 break
             content = content[-remaining:]
-        selected.append({"role": str(item.get("role", "user")), "content": content})
+        selected.append(
+            {
+                **item,
+                "role": str(item.get("role", "user")),
+                "content": content,
+            }
+        )
         remaining -= len(content)
         if remaining <= 0:
             break
@@ -176,6 +182,7 @@ class AgentMessage(BaseModel):
     role: str
     content: str
     citations: list[str] = Field(default_factory=list)
+    sources: list[SearchResult] = Field(default_factory=list)
 
 
 class AgentSessionSummary(BaseModel):
@@ -355,16 +362,22 @@ class AgentService:
             stored_turn = turns.get(payload.turn_id) if isinstance(turns, dict) else None
             if isinstance(stored_turn, dict) and isinstance(stored_turn.get("message"), str):
                 stored_citations = stored_turn.get("citations", [])
-                citations = [
-                    citation
-                    for citation in stored_citations
-                    if isinstance(citation, str) and citation in available
+                citations = [citation for citation in stored_citations if isinstance(citation, str)]
+                stored_sources = [
+                    SearchResult.model_validate(source)
+                    for source in stored_turn.get("sources", [])
                 ]
+                response_sources = [
+                    source for source in stored_sources if source.citation_id in citations
+                ]
+                if not response_sources:
+                    citations = [citation for citation in citations if citation in available]
+                    response_sources = [available[citation] for citation in citations]
                 return AgentChatResponse(
                     session_id=session_id,
                     message=_sanitize_reply(stored_turn["message"], set(available)),
                     citations=citations,
-                    sources=[available[citation] for citation in citations],
+                    sources=response_sources,
                 )
 
         history = _bounded_history(
@@ -384,6 +397,7 @@ class AgentService:
         citations = [
             citation for citation in dict.fromkeys(reply.citations) if citation in available
         ]
+        response_sources = [available[citation] for citation in citations]
         reply_text = _sanitize_reply(reply.text, set(available))
 
         def append_messages(data):
@@ -398,6 +412,9 @@ class AgentService:
                         "role": "assistant",
                         "content": reply_text,
                         "citations": citations,
+                        "sources": [
+                            source.model_dump(mode="json") for source in response_sources
+                        ],
                     },
                 ]
             )
@@ -410,6 +427,9 @@ class AgentService:
                 turns[payload.turn_id] = {
                     "message": reply_text,
                     "citations": citations,
+                    "sources": [
+                        source.model_dump(mode="json") for source in response_sources
+                    ],
                 }
                 while len(turns) > MAX_SESSION_TURNS:
                     turns.pop(next(iter(turns)))
@@ -447,5 +467,5 @@ class AgentService:
             session_id=session_id,
             message=reply_text,
             citations=citations,
-            sources=[available[citation] for citation in citations],
+            sources=response_sources,
         )

@@ -46,6 +46,7 @@ export function AgentPanel({
   workspaceId,
   t,
   locale = "en",
+  modelConfigured: configuredFromWorkspace,
   isAdmin = false,
   onOpenSettings,
 }: {
@@ -53,6 +54,7 @@ export function AgentPanel({
   workspaceId: string;
   t: Translator;
   locale?: Locale;
+  modelConfigured?: boolean;
   isAdmin?: boolean;
   onOpenSettings?: () => void;
 }) {
@@ -62,7 +64,8 @@ export function AgentPanel({
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
+  const [detectedModelConfigured, setDetectedModelConfigured] = useState<boolean | null>(null);
+  const modelConfigured = configuredFromWorkspace ?? detectedModelConfigured;
   const [error, setError] = useState("");
   const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
@@ -84,10 +87,13 @@ export function AgentPanel({
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.getModelSettings(token), api.listWorkspaceAgentSessions(token, workspaceId)])
+    const settingsRequest = configuredFromWorkspace === undefined
+      ? api.getModelSettings(token)
+      : Promise.resolve(null);
+    Promise.all([settingsRequest, api.listWorkspaceAgentSessions(token, workspaceId)])
       .then(([settings, history]) => {
         if (!active) return;
-        setModelConfigured(settings.configured);
+        if (settings) setDetectedModelConfigured(settings.configured);
         setSessions(history);
       }).catch((caught: unknown) => {
         if (active) setError(errorMessage(caught, t, locale));
@@ -96,7 +102,7 @@ export function AgentPanel({
       active = false;
       requestController.current?.abort();
     };
-  }, [token, workspaceId, t, locale]);
+  }, [token, workspaceId, t, locale, configuredFromWorkspace]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -155,7 +161,7 @@ export function AgentPanel({
         setFailedTurn(turn);
         setError(errorMessage(caught, t, locale));
         if (caught instanceof ApiError && caught.code === "model_not_configured") {
-          setModelConfigured(false);
+          setDetectedModelConfigured(false);
         }
       }
     } finally {

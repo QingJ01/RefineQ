@@ -944,3 +944,17 @@ describe("learning view models", () => {
 it("keeps Chinese and English locale keys in parity", () => {
   expect(Object.keys(messages.zh).sort()).toEqual(Object.keys(messages.en).sort());
 });
+
+
+it("routes workspace restoration failures through the safe localized mapper", () => {
+  const workspaceSource = readFileSync(
+    fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+    "utf8",
+  );
+  const restoreStart = workspaceSource.indexOf("async function restore()");
+  const routeNoticeStart = workspaceSource.indexOf("if (!route) return;");
+  const restoreSource = workspaceSource.slice(restoreStart, routeNoticeStart);
+
+  expect(restoreSource).toContain("localizeApiError(caught, saved.locale ?? \"zh\")");
+  expect(restoreSource).not.toContain("caught.message");
+});

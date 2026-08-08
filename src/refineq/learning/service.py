@@ -741,7 +741,6 @@ class LearningService:
                 "sources": [
                     source.model_dump(mode="json")
                     for source in self._question_sources(question)
-                    if source.citation_id in grade.citations
                 ],
                 "grounding": self._question_grounding(question).value,
                 "grading_mode": grade.mode,

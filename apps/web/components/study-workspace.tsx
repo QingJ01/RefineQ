@@ -71,6 +71,7 @@ export function StudyWorkspace({
   const t = useMemo(() => translator(locale), [locale]);
   const [restoring, setRestoring] = useState(true);
   const [auth, setAuth] = useState<AuthResponse | null>(null);
+  const [modelConfigured, setModelConfigured] = useState<boolean>();
   const [workspaces, setWorkspaces] = useState<LearningWorkspace[]>([]);
   const [workspace, setWorkspace] = useState<LearningWorkspace | null>(null);
   const [plan, setPlan] = useState<StudyPlan | null>(null);
@@ -146,7 +147,10 @@ export function StudyWorkspace({
           setLocale(saved.locale);
           document.documentElement.lang = saved.locale === "zh" ? "zh-CN" : "en";
         }
-        const user = await api.getProfile(saved.token);
+        const [user, settings] = await Promise.all([
+          api.getProfile(saved.token),
+          api.getModelSettings(saved.token),
+        ]);
         const restoredAuth: AuthResponse = {
           access_token: saved.token,
           token_type: "bearer",
@@ -155,6 +159,7 @@ export function StudyWorkspace({
         const recent = await api.listWorkspaces(saved.token);
         if (!active) return;
         setAuth(restoredAuth);
+        setModelConfigured(settings.configured);
         setWorkspaces(recent);
         const selectedId = initialWorkspaceId;
         const resolution = resolveRequestedWorkspace(selectedId, recent);
@@ -205,7 +210,7 @@ export function StudyWorkspace({
         } else if (caught instanceof ApiError && caught.status === 404 && initialWorkspaceId) {
           redirectUnavailableWorkspace();
         } else {
-          setError(caught instanceof Error ? caught.message : "Unable to restore the learning session");
+          setError(localizeApiError(caught, saved.locale ?? "zh"));
         }
       } finally {
         if (active) setRestoring(false);
@@ -234,8 +239,12 @@ export function StudyWorkspace({
       locale,
     });
     try {
-      const recent = await api.listWorkspaces(response.access_token);
+      const [recent, settings] = await Promise.all([
+        api.listWorkspaces(response.access_token),
+        api.getModelSettings(response.access_token),
+      ]);
       setWorkspaces(recent);
+      setModelConfigured(settings.configured);
       const selected = recent.find((item) => item.id === initialWorkspaceId);
       if (initialWorkspaceId && !selected) {
         redirectUnavailableWorkspace();
@@ -602,6 +611,7 @@ export function StudyWorkspace({
   function logout() {
     clearLearningSession(window.sessionStorage);
     setAuth(null);
+    setModelConfigured(undefined);
     setWorkspace(null);
     setWorkspaces([]);
     router.replace("/");
@@ -793,6 +803,7 @@ export function StudyWorkspace({
               learningMode={learningMode}
               savedQuestions={savedQuestions}
               agentToken={auth.access_token}
+              modelConfigured={modelConfigured}
               isAdmin={auth.user.role === "admin"}
               onOpenAgentSettings={() => router.push("/admin/integrations/chat")}
               onLearningModeChange={changeLearningMode}

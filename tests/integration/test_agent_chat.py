@@ -567,11 +567,18 @@ def test_workspace_agent_sessions_can_be_listed_restored_and_deleted(tmp_path: P
             headers=headers,
             json={"intent": "复习高数导数"},
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=user["user_id"],
+            project_id=workspace_id,
+            material_id="material-1",
+            filename="derivatives.txt",
+            text="A derivative describes the local rate of change of a function.",
+        )
         _configure_model(app)
         first = client.post(
             f"/workspaces/{workspace_id}/agent/chat",
             headers=headers,
-            json={"session_id": "older-session", "message": "First question"},
+            json={"session_id": "older-session", "message": "What is a derivative?"},
         )
         second = client.post(
             f"/workspaces/{workspace_id}/agent/chat",
@@ -580,6 +587,7 @@ def test_workspace_agent_sessions_can_be_listed_restored_and_deleted(tmp_path: P
         )
         assert first.status_code == 200
         assert second.status_code == 200
+        assert first.json()["citations"] == ["material-1#0"]
 
         sessions = client.get(
             f"/workspaces/{workspace_id}/agent/sessions",
@@ -602,7 +610,11 @@ def test_workspace_agent_sessions_can_be_listed_restored_and_deleted(tmp_path: P
             "user",
             "assistant",
         ]
-        assert restored.json()["messages"][0]["content"] == "First question"
+        assert restored.json()["messages"][0]["content"] == "What is a derivative?"
+        assistant_message = restored.json()["messages"][1]
+        assert assistant_message["citations"] == ["material-1#0"]
+        assert assistant_message["sources"][0]["citation_id"] == "material-1#0"
+        assert assistant_message["sources"][0]["filename"] == "derivatives.txt"
 
         deleted = client.delete(
             f"/workspaces/{workspace_id}/agent/sessions/older-session",

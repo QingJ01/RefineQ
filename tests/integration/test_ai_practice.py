@@ -36,7 +36,22 @@ class FakeLearningModel:
                 "gaps": ["可以补充形式化定义"],
                 "misconceptions": [],
                 "feedback": "回答正确，下一步练习形式化定义。",
-                "citations": ["material-1#0"],
+                "citations": [],
+            }
+        )
+
+
+class MaterialClaimingLearningModel:
+    def complete(self, *, settings, messages, response_model):
+        del settings, messages
+        assert response_model.__name__ == "QuestionModelOutput"
+        return response_model.model_validate(
+            {
+                "prompt": "请根据上传材料中的访谈原文分析用户需求。",
+                "expected_answer": "区分表面诉求和真实行为。",
+                "rubric": [{"criterion": "识别真实需求", "max_points": 100}],
+                "explanation": "检查案例分析能力。",
+                "citations": [],
             }
         )
 
@@ -132,6 +147,7 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         assert grade["gaps"] == ["可以补充形式化定义"]
         assert grade["grading_mode"] == "ai"
         assert grade["grounding"] == "material"
+        assert grade["citations"] == []
         assert grade["sources"][0]["citation_id"] == "material-1#0"
         assert "expected_answer" not in answer.text
 
@@ -317,3 +333,55 @@ def test_workspace_case_task_without_matching_material_is_explicitly_general(
     assert question["grounding"] == "general"
     assert question["sources"] == []
     assert "基于材料" not in question["prompt"]
+
+
+def test_configured_model_cannot_claim_uploaded_material_when_retrieval_is_empty(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=MaterialClaimingLearningModel(),
+    )
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "no-source-ai@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "No Source AI Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "练习用户需求分析"},
+        ).json()["workspace"]["id"]
+        admin = ensure_admin(
+            app.state.identity,
+            email="platform-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
+        response = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "no-source-ai-1", "mode": "case"},
+        )
+
+    assert response.status_code == 200
+    question = response.json()
+    assert question["grounding"] == "general"
+    assert question["sources"] == []
+    assert question["mode"] == "fallback"
+    assert "上传材料" not in question["prompt"]
+    assert "访谈原文" not in question["prompt"]

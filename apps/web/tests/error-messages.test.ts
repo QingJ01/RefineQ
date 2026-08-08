@@ -18,6 +18,10 @@ describe("localized API errors", () => {
       new ApiError(413, "material_quota", "Quota exceeded"),
       "en",
     )).toBe("The material limit for this learning space has been reached.");
+    expect(localizeApiError(
+      new ApiError(409, "workspace_quota", "Learning workspace quota reached"),
+      "zh",
+    )).toBe("学习空间数量已达到上限。");
   });
 
   it("uses a safe localized fallback for unknown failures", () => {
