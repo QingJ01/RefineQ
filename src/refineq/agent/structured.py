@@ -52,6 +52,14 @@ class StructuredModelTransport(Protocol):
 
 
 class OpenAICompatibleStructuredTransport:
+    def __init__(self, *, timeout: float = 30.0, max_retries: int = 2) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        self._timeout = timeout
+        self._max_retries = max_retries
+
     def complete(
         self,
         *,
@@ -67,8 +75,8 @@ class OpenAICompatibleStructuredTransport:
         client = OpenAI(
             api_key=settings.api_key.get_secret_value(),
             base_url=str(settings.base_url),
-            timeout=30.0,
-            max_retries=2,
+            timeout=self._timeout,
+            max_retries=self._max_retries,
             http_client=DefaultHttpxClient(follow_redirects=False),
         )
         response = client.chat.completions.create(

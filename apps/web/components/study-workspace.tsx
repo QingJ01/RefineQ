@@ -8,6 +8,7 @@ import {
   House,
   Languages,
   LogOut,
+  Route,
   Settings2,
   Sparkles,
   UserRound,
@@ -24,6 +25,7 @@ import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanSettings } from "@/components/plan-settings";
 import { PlanTimeline } from "@/components/plan-timeline";
+import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
 import { ProgressTopicDetail } from "@/components/progress-topic-detail";
 import { ReviewQueue } from "@/components/review-queue";
@@ -33,6 +35,11 @@ import { useLearningAuth } from "@/hooks/use-learning-auth";
 import { usePracticeState } from "@/hooks/use-practice-state";
 import { useWorkspaceState } from "@/hooks/use-workspace-state";
 import { api, ApiError } from "@/lib/api";
+import {
+  executeCoachAction,
+  pendingCoachTurn,
+  type PendingCoachTurn,
+} from "@/lib/coach-actions";
 import { localizeApiError } from "@/lib/error-messages";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import { loadModelCapability } from "@/lib/model-capability";
@@ -45,6 +52,7 @@ import {
 import type {
   AttemptFeedbackInput,
   AttemptInsight,
+  ExecutableActionProposal,
   AuthResponse,
   DueReviewInsight,
   LearningMode,
@@ -141,11 +149,19 @@ export function StudyWorkspace({
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
+  const appliedActionIdsRef = useRef(new Set<string>());
+  const activeCoachWorkspaceIdRef = useRef<string | null>(null);
 
   const applySnapshot = useCallback((snapshot: WorkspaceSnapshot) => {
+    if (activeCoachWorkspaceIdRef.current !== snapshot.workspace.id) {
+      pendingTurnIdRef.current = null;
+      appliedActionIdsRef.current.clear();
+      resetAgent();
+    }
+    activeCoachWorkspaceIdRef.current = snapshot.workspace.id;
     applyWorkspaceSnapshot(snapshot);
     hydratePractice(snapshot);
-    resetAgent();
   }, [applyWorkspaceSnapshot, hydratePractice, resetAgent]);
 
   useEffect(() => {
@@ -378,18 +394,21 @@ export function StudyWorkspace({
     }
   }
 
-  async function getQuestion(request: PracticeRequest = {}) {
-    if (!auth || !workspace) return;
+  async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
+    if (!auth || !workspace) return false;
     const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
-    questionRequestIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
+    const requestId = request.requestId
+      ?? questionRequestIdRef.current
+      ?? crypto.randomUUID().replaceAll("-", "");
+    if (!request.requestId) questionRequestIdRef.current = requestId;
     try {
       await loadNextQuestion(
         () => api.createWorkspaceQuestion(auth.access_token, workspace.id, {
-          requestId: questionRequestIdRef.current ?? undefined,
           learningMode,
           ...request,
+          requestId,
         }),
         (nextQuestion) => {
           if (!isPracticeGenerationCurrent(generation)) return;
@@ -405,8 +424,10 @@ export function StudyWorkspace({
           attemptIdRef.current = null;
         },
       );
+      return isPracticeGenerationCurrent(generation);
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      return false;
     } finally {
       if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
@@ -444,8 +465,8 @@ export function StudyWorkspace({
     }
   }
 
-  async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean) {
-    if (!auth || !workspace) return;
+  async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean): Promise<boolean> {
+    if (!auth || !workspace) return false;
     const generation = capturePracticeGeneration();
     setPracticeBusy(true);
     setError("");
@@ -456,15 +477,17 @@ export function StudyWorkspace({
         target.id,
         saved,
       );
-      if (!isPracticeGenerationCurrent(generation)) return;
+      if (!isPracticeGenerationCurrent(generation)) return false;
       setQuestion((current) => current?.id === updated.id
         ? { ...current, saved: updated.saved }
         : current);
       setSavedQuestions((current) => updated.saved
         ? [updated, ...current.filter((item) => item.id !== updated.id)]
         : current.filter((item) => item.id !== updated.id));
+      return true;
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      return false;
     } finally {
       if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
@@ -643,6 +666,12 @@ export function StudyWorkspace({
   }
 
   async function askSessionCoach(message: string) {
+    const pendingTurn = pendingCoachTurn(
+      pendingTurnIdRef.current,
+      message,
+      () => crypto.randomUUID(),
+    );
+    pendingTurnIdRef.current = pendingTurn;
     return askCoach(message, {
       token: auth?.access_token,
       workspaceId: workspace?.id,
@@ -651,6 +680,63 @@ export function StudyWorkspace({
       result,
       answer,
       errorMessage: t("error"),
+      turnId: pendingTurn.id,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    });
+  }
+
+  async function refreshWorkspaceSnapshot() {
+    if (!auth || !workspace) throw new Error(t("error"));
+    try {
+      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      applySnapshot(snapshot);
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
+  }
+
+  async function applyCoachAction(
+    proposal: ExecutableActionProposal,
+    options: { confirmed?: boolean; historical?: boolean } = {},
+  ) {
+    const storedDraft = question
+      ? window.sessionStorage.getItem(`refineq.practice-draft:${workspace?.id}:${question.id}`)
+      : null;
+    return executeCoachAction(proposal, {
+      appliedActionIds: appliedActionIdsRef.current,
+      hasDraft: Boolean((storedDraft ?? answer).trim()),
+      confirmed: options.confirmed,
+      historical: options.historical,
+      applyAdjust: (action) => getQuestion({
+        requestId: action.action_id,
+        topicId: action.topic_id,
+        difficulty: action.difficulty,
+        learningMode: action.learning_mode,
+        replace: action.destructive,
+      }),
+      applyPlanUpdate: async (action) => {
+        const target = plan?.sessions.find((session) => session.id === action.session_id);
+        if (!target) {
+          reportError(new Error(locale === "zh" ? "找不到要调整的计划场次。" : "The plan session is no longer available."));
+          return false;
+        }
+        return updatePlanSession(target, {
+          status: action.status ?? undefined,
+          planned_at: action.planned_at ?? undefined,
+        });
+      },
+      applySaveQuestion: async (action) => {
+        const target = question?.id === action.question_id
+          ? question
+          : savedQuestions.find((item) => item.id === action.question_id);
+        if (!target) {
+          reportError(new Error(locale === "zh" ? "找不到要收藏的题目。" : "The question is no longer available."));
+          return false;
+        }
+        return toggleSavedQuestion(target, action.saved);
+      },
+      refreshSnapshot: refreshWorkspaceSnapshot,
     });
   }
 
@@ -710,9 +796,9 @@ export function StudyWorkspace({
 
   async function updatePlanSession(
     session: StudySession,
-    input: { status?: "planned" | "completed"; planned_at?: string },
-  ) {
-    if (!auth || !workspace) return;
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
+  ): Promise<boolean> {
+    if (!auth || !workspace) return false;
     setBusySessionId(session.id);
     setError("");
     try {
@@ -726,8 +812,10 @@ export function StudyWorkspace({
         ...current,
         sessions: current.sessions.map((item) => item.id === updated.id ? updated : item),
       } : current);
+      return true;
     } catch (caught) {
       reportError(caught);
+      return false;
     } finally {
       setBusySessionId(null);
     }
@@ -874,8 +962,9 @@ export function StudyWorkspace({
   const selectedTopic = insights?.topics.find((item) => item.topic_id === selectedTopicId);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
-    { id: "path", icon: CalendarDays },
+    { id: "path", icon: Route },
     { id: "materials", icon: Archive },
+    { id: "calendar", icon: CalendarDays },
     { id: "progress", icon: ChartNoAxesColumnIncreasing },
   ];
 
@@ -965,7 +1054,7 @@ export function StudyWorkspace({
             ))}
           </nav>
         </header>
-        {section !== "today" && (
+        {section !== "today" && section !== "calendar" && (
           <header className="workspace-header">
             <div>
               <span className="kicker">{t("workspaceEyebrow")}</span>
@@ -1024,12 +1113,14 @@ export function StudyWorkspace({
                   );
                 }
               }}
-              onStartTask={() => getQuestion({ learningMode })}
+              onStartTask={() => { void getQuestion({ learningMode }); }}
               onSubmit={submitAnswer}
-              onNextTask={() => getQuestion({ learningMode, replace: true })}
-              onToggleSaved={toggleSavedQuestion}
+              onNextTask={() => { void getQuestion({ learningMode, replace: true }); }}
+              onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
               onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
               onAskCoach={askSessionCoach}
+              onApplyCoachAction={applyCoachAction}
+              onCoachTurnHandled={() => { pendingTurnIdRef.current = null; }}
             />
           )}
           {section === "path" && (
@@ -1053,7 +1144,7 @@ export function StudyWorkspace({
                 plan={plan}
                 locale={locale}
                 t={t}
-                onUpdateSession={updatePlanSession}
+                onUpdateSession={(session, input) => { void updatePlanSession(session, input); }}
                 onStartSession={(session) => practiceTopic(session.topic_id)}
                 busySessionId={busySessionId}
                 topicLabels={progress?.topics}
@@ -1072,6 +1163,15 @@ export function StudyWorkspace({
               onDelete={deleteMaterial}
               onUpdate={updateMaterial}
               onBulkDelete={bulkDeleteMaterials}
+            />
+          )}
+          {section === "calendar" && (
+            <ScheduleCalendar
+              plan={plan}
+              locale={locale}
+              topicLabels={progress?.topics}
+              busySessionId={busySessionId}
+              onUpdateSession={updatePlanSession}
             />
           )}
           {section === "progress" && (

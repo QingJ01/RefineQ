@@ -1,18 +1,33 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowUp, LoaderCircle, MessageCircleMore, Settings2, Sparkles } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  CircleAlert,
+  LoaderCircle,
+  MessageCircleMore,
+  Settings2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { ApiError } from "@/lib/api";
-import type { AgentReply, Locale } from "@/lib/types";
+import type { CoachActionOutcome } from "@/lib/coach-actions";
+import type {
+  AgentReply,
+  CoachActionProposal,
+  ExecutableActionProposal,
+  Locale,
+} from "@/lib/types";
 
 
 const copy = {
   zh: {
     title: "RefineQ 教练 · 当前步骤",
     intro: "我会结合当前目标、资料和你的回答，帮助你完成这一步。",
-    suggestions: ["解释这个框架", "给我一个反例", "我想先动手"],
+    suggestions: ["解释这个框架", "给我一个反例", "这题太难，换一道"],
     placeholder: "向教练提问…",
     send: "发送",
     error: "暂时无法连接教练，你仍可以继续当前学习任务。",
@@ -20,11 +35,18 @@ const copy = {
     modelUnknown: "暂时无法确认学习 Agent 状态。本地练习、资料和进度仍可继续使用。",
     configure: "前往配置",
     fullCoach: "完整对话与历史",
+    applied: "已执行",
+    confirm: "这个动作会清空当前题的未提交内容，是否继续？",
+    confirmAction: "继续执行",
+    cancel: "先不执行",
+    failed: "动作执行失败，你可以用同一请求安全重试。",
+    retry: "重试",
+    synced: "已同步当前学习状态，没有重复执行旧动作。",
   },
   en: {
     title: "RefineQ coach · Current step",
     intro: "I use your goal, sources, and answers to help with this step.",
-    suggestions: ["Explain this framework", "Give me a counterexample", "Let me try first"],
+    suggestions: ["Explain this framework", "Give me a counterexample", "This is too hard—replace it"],
     placeholder: "Ask your coach…",
     send: "Send",
     error: "The coach is temporarily unavailable. You can continue the current task.",
@@ -32,8 +54,121 @@ const copy = {
     modelUnknown: "The learning Agent status is unavailable. Local practice, material, and progress remain available.",
     configure: "Open settings",
     fullCoach: "Full conversation and history",
+    applied: "Applied",
+    confirm: "This action will clear the unsubmitted draft for the current question. Continue?",
+    confirmAction: "Continue",
+    cancel: "Keep current question",
+    failed: "The action failed. You can safely retry the same request.",
+    retry: "Retry",
+    synced: "Current learning state was synced without repeating the old action.",
   },
 } as const;
+
+export type CoachActionCardState =
+  | { status: "applied" | "confirmation_required" | "failed" | "executing" | "synced"; proposal: ExecutableActionProposal }
+  | { status: "rejected"; proposal: Extract<CoachActionProposal, { type: "rejected" }> };
+
+function proposalSummary(proposal: ExecutableActionProposal, locale: Locale) {
+  if (proposal.type === "adjust_practice") {
+    return locale === "zh"
+      ? `换题：「${proposal.topic_name}」· 难度 ${proposal.difficulty}`
+      : `Replace question: ${proposal.topic_name} · Difficulty ${proposal.difficulty}`;
+  }
+  if (proposal.type === "update_plan_session") {
+    if (proposal.status === "completed") {
+      return locale === "zh" ? `已完成：${proposal.session_label}` : `Completed: ${proposal.session_label}`;
+    }
+    return locale === "zh" ? `调整计划：${proposal.session_label}` : `Update plan: ${proposal.session_label}`;
+  }
+  return proposal.saved
+    ? (locale === "zh" ? "收藏当前题目" : "Save current question")
+    : (locale === "zh" ? "取消收藏当前题目" : "Unsave current question");
+}
+
+function rejectedSummary(
+  proposal: Extract<CoachActionProposal, { type: "rejected" }>,
+  locale: Locale,
+) {
+  if (locale === "en") return proposal.summary;
+  const summaries: Record<string, string> = {
+    no_topics: "当前学习空间还没有可练习的主题。",
+    unknown_topic: "当前学习空间没有匹配的主题。",
+    difficulty_at_bound: "当前难度已经到达可调整的边界。",
+    no_pending_question: "当前没有可收藏的待答题目。",
+    no_study_plan: "当前学习空间还没有学习计划。",
+    no_matching_session: "没有找到匹配的学习场次。",
+    ambiguous_session: "有多个学习场次符合描述，请说得更具体一些。",
+    date_before_today: "不能把学习场次移到今天之前。",
+    date_after_exam: "不能把学习场次移到考试日期之后。",
+    invalid_timezone: "无法识别浏览器时区，请刷新后重试。",
+    invalid_plan: "当前学习计划包含无效场次。",
+    invalid_exam_date: "当前考试日期无效，暂时不能改期。",
+  };
+  return summaries[proposal.reason_code] ?? proposal.summary;
+}
+
+export function CoachActionCard({
+  locale,
+  state,
+  onConfirm,
+  onCancel,
+  onRetry,
+}: {
+  locale: Locale;
+  state: CoachActionCardState;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onRetry: () => void;
+}) {
+  const text = copy[locale];
+  if (state.status === "rejected") {
+    return (
+      <div className="coach-action-card is-rejected" data-testid="coach-action-rejected" role="status">
+        <CircleAlert size={15} />
+        <div>
+          <strong>{rejectedSummary(state.proposal, locale)}</strong>
+          {state.proposal.candidates.length > 0 && <p>{state.proposal.candidates.join(" · ")}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  const summary = proposalSummary(state.proposal, locale);
+  return (
+    <div
+      className={`coach-action-card is-${state.status}`}
+      data-testid={`coach-action-${state.status}`}
+      role="status"
+    >
+      {state.status === "applied" || state.status === "synced"
+        ? <Check size={15} />
+        : state.status === "executing"
+          ? <LoaderCircle className="spin" size={15} />
+          : state.status === "failed"
+            ? <CircleAlert size={15} />
+            : <Sparkles size={15} />}
+      <div>
+        <strong>{state.status === "applied" ? `${text.applied} · ${summary}` : summary}</strong>
+        {state.status === "confirmation_required" && <p>{text.confirm}</p>}
+        {state.status === "failed" && <p>{text.failed}</p>}
+        {state.status === "synced" && <p>{text.synced}</p>}
+        {state.status === "confirmation_required" && (
+          <div className="coach-action-buttons">
+            <button type="button" data-testid="coach-action-confirm" onClick={onConfirm}>{text.confirmAction}</button>
+            <button type="button" data-testid="coach-action-cancel" className="is-secondary" onClick={onCancel}>
+              <X size={12} /> {text.cancel}
+            </button>
+          </div>
+        )}
+        {state.status === "failed" && (
+          <div className="coach-action-buttons">
+            <button type="button" data-testid="coach-action-retry" onClick={onRetry}>{text.retry}</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function SessionCoach({
   locale,
@@ -43,6 +178,8 @@ export function SessionCoach({
   onConfigure,
   onOpenFullCoach,
   onModelUnavailable,
+  onApplyAction,
+  onTurnHandled,
 }: {
   locale: Locale;
   onAsk: (message: string) => Promise<AgentReply>;
@@ -51,28 +188,74 @@ export function SessionCoach({
   onConfigure?: () => void;
   onOpenFullCoach?: () => void;
   onModelUnavailable?: () => void;
+  onApplyAction?: (
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean; historical?: boolean },
+  ) => Promise<CoachActionOutcome>;
+  onTurnHandled?: () => void;
 }) {
   const text = copy[locale];
   const [message, setMessage] = useState("");
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [actionState, setActionState] = useState<CoachActionCardState | null>(null);
+  const actionBusy = actionState?.status === "executing";
+
+  async function applyAction(
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean; historical?: boolean },
+  ) {
+    setActionState({ status: "executing", proposal });
+    if (!onApplyAction) {
+      setActionState({ status: "failed", proposal });
+      return;
+    }
+    try {
+      const outcome = await onApplyAction(proposal, options);
+      setActionState({
+        status: outcome.status === "confirmation_required"
+          ? "confirmation_required"
+          : outcome.status === "synced"
+            ? "synced"
+            : outcome.status === "applied"
+              ? "applied"
+              : "failed",
+        proposal,
+      });
+    } catch {
+      setActionState({ status: "failed", proposal });
+    }
+  }
 
   async function ask(value: string) {
     const normalized = value.trim();
-    if (!normalized || busy) return;
+    if (!normalized || busy || actionBusy) return;
     setBusy(true);
     setError("");
+    let chatSucceeded = false;
     try {
       const response = await onAsk(normalized);
+      chatSucceeded = true;
       setReply(response.message);
       setMessage("");
-    } catch (caught) {
-      if (caught instanceof ApiError && caught.code === "model_not_configured") {
-        onModelUnavailable?.();
+      const proposal = response.action_proposal;
+      if (!proposal) {
+        setActionState(null);
+      } else if (proposal.type === "rejected") {
+        setActionState({ status: "rejected", proposal });
+      } else {
+        await applyAction(proposal);
       }
-      setError(text.error);
+    } catch (caught) {
+      if (!chatSucceeded) {
+        if (caught instanceof ApiError && caught.code === "model_not_configured") {
+          onModelUnavailable?.();
+        }
+        setError(text.error);
+      }
     } finally {
+      if (chatSucceeded) onTurnHandled?.();
       setBusy(false);
     }
   }
@@ -124,13 +307,30 @@ export function SessionCoach({
           )}
         </div>
       )}
+      {actionState && (
+        <CoachActionCard
+          locale={locale}
+          state={actionState}
+          onConfirm={() => {
+            if (actionState.status !== "rejected") {
+              void applyAction(actionState.proposal, { confirmed: true });
+            }
+          }}
+          onCancel={() => setActionState(null)}
+          onRetry={() => {
+            if (actionState.status !== "rejected") {
+              void applyAction(actionState.proposal, { confirmed: true });
+            }
+          }}
+        />
+      )}
       <div className="coach-suggestions" aria-label={locale === "zh" ? "教练快捷问题" : "Coach suggestions"}>
         {text.suggestions.map((suggestion) => (
           <button
             key={suggestion}
             type="button"
             data-testid="session-coach-suggestion"
-            disabled={busy || modelConfigured !== true}
+            disabled={busy || actionBusy || modelConfigured !== true}
             onClick={() => void ask(suggestion)}
           >
             {suggestion}
@@ -146,9 +346,13 @@ export function SessionCoach({
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder={text.placeholder}
-          disabled={busy || modelConfigured !== true}
+          disabled={busy || actionBusy || modelConfigured !== true}
         />
-        <button type="submit" aria-label={text.send} disabled={busy || !message.trim() || modelConfigured !== true}>
+        <button
+          type="submit"
+          aria-label={text.send}
+          disabled={busy || actionBusy || !message.trim() || modelConfigured !== true}
+        >
           {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={17} />}
         </button>
       </form>

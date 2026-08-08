@@ -192,7 +192,7 @@ describe("administrator routing", () => {
 
 describe("durable learner routing", () => {
   it("uses capability-oriented learner routes and keeps legacy links recoverable", () => {
-    expect(learningSections).toEqual(["today", "path", "materials", "progress"]);
+    expect(learningSections).toEqual(["today", "path", "materials", "calendar", "progress"]);
     expect(parseLearningSection("evidence")).toBe("progress");
     expect(parseLearningSection("coach")).toBe("today");
   });
@@ -619,6 +619,7 @@ describe("authentication and API errors", () => {
         stage: "practice",
         question: "Build a prototype",
         draft: "My first step",
+        timezone: "Asia/Shanghai",
       },
     );
 
@@ -627,7 +628,37 @@ describe("authentication and API errors", () => {
       stage: "practice",
       question: "Build a prototype",
       draft: "My first step",
+      timezone: "Asia/Shanghai",
     });
+  });
+
+  it("returns discriminated coach action proposals from Agent chat", async () => {
+    const proposal = {
+      type: "adjust_practice" as const,
+      action_id: "action-1",
+      topic_id: "limits",
+      topic_name: "Limits",
+      difficulty: 2,
+      learning_mode: "concept" as const,
+      destructive: true,
+    };
+    const client = new ApiClient("/api", async () => new Response(JSON.stringify({
+      session_id: "coach-1",
+      message: "We can try an easier question.",
+      citations: [],
+      sources: [],
+      action_proposal: proposal,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    const response = await client.chatWorkspace(
+      "token",
+      "workspace-1",
+      "Give me an easier question",
+      "coach-1",
+      "turn-1",
+    );
+
+    expect(response.action_proposal).toEqual(proposal);
   });
 });
 

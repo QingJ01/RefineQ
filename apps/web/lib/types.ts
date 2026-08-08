@@ -216,7 +216,48 @@ export interface AgentSessionContext {
   question?: string;
   draft?: string;
   feedback?: string;
+  timezone?: string;
 }
+
+export interface AdjustPracticeProposal {
+  type: "adjust_practice";
+  action_id: string;
+  topic_id: string;
+  topic_name: string;
+  difficulty: number;
+  learning_mode: LearningMode;
+  destructive: boolean;
+}
+
+export interface UpdatePlanSessionProposal {
+  type: "update_plan_session";
+  action_id: string;
+  session_id: string;
+  session_label: string;
+  status: "planned" | "completed" | null;
+  planned_at: string | null;
+}
+
+export interface SaveQuestionProposal {
+  type: "save_question";
+  action_id: string;
+  question_id: string;
+  saved: boolean;
+}
+
+export interface RejectedActionProposal {
+  type: "rejected";
+  reason_code: string;
+  summary: string;
+  candidates: string[];
+}
+
+export type ExecutableActionProposal =
+  | AdjustPracticeProposal
+  | UpdatePlanSessionProposal
+  | SaveQuestionProposal;
+
+export type CoachActionProposal = ExecutableActionProposal | RejectedActionProposal;
 
 export type EvidenceKind =
   | "attempt"
@@ -267,6 +308,7 @@ export interface AgentReply {
   message: string;
   citations: string[];
   sources: SearchSource[];
+  action_proposal?: CoachActionProposal | null;
 }
 
 export interface AgentMessage {

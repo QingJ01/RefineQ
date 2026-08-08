@@ -14,6 +14,8 @@ type CoachContext = {
   result: AnswerResult | null;
   answer: string;
   errorMessage: string;
+  turnId?: string;
+  timezone?: string;
 };
 
 
@@ -29,7 +31,7 @@ export function useAgentState() {
       context.workspaceId,
       message,
       coachSessionId,
-      crypto.randomUUID(),
+      context.turnId ?? crypto.randomUUID(),
       undefined,
       {
         learning_mode: context.learningMode,
@@ -37,6 +39,7 @@ export function useAgentState() {
         question: context.question?.prompt,
         draft: context.answer || undefined,
         feedback: context.result?.feedback,
+        timezone: context.timezone,
       },
     );
     if (agentGenerationRef.current === generation) {

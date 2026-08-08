@@ -952,6 +952,80 @@
   line-height: 1.65;
 }
 
+.coach-action-card {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.coach-action-card > svg {
+  margin-top: 1px;
+}
+
+.coach-action-card strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.coach-action-card p {
+  margin: 3px 0 0;
+}
+
+.coach-action-card.is-applied,
+.coach-action-card.is-synced {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.coach-action-card.is-confirmation_required {
+  border-color: color-mix(in srgb, var(--warning) 28%, var(--border));
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.coach-action-card.is-failed,
+.coach-action-card.is-rejected {
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--border));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.coach-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.coach-action-buttons button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.coach-action-buttons button.is-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--muted-strong);
+}
+
 .coach-suggestions {
   display: flex;
   flex-wrap: wrap;
@@ -6661,6 +6735,47 @@ textarea:focus {
     transition: none !important;
   }
 }
+.workspace-content-calendar { width: 100%; max-width: 1680px; padding: 18px 28px 34px; }
+.schedule-page { min-height: calc(100dvh - 52px); display: grid; grid-template-rows: auto 1fr; gap: 14px; }
+.calendar-toolbar { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 4px; }
+.calendar-product-title { display: flex; align-items: center; gap: 12px; }
+.calendar-product-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: linear-gradient(145deg, #ff6259, #ff3b30); color: #fff; box-shadow: 0 7px 18px rgba(255,59,48,.2); }
+.calendar-product-title > div { display: grid; gap: 2px; }
+.calendar-product-title > div > span { color: var(--muted); font-size: 11px; }
+.calendar-toolbar h2 { margin: 0; font-size: 25px; letter-spacing: -.02em; }
+.calendar-toolbar-actions { display: flex; align-items: center; gap: 10px; }
+.calendar-today-button { min-height: 34px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(255,255,255,.82); color: var(--accent); font-weight: 650; }
+.calendar-navigation { display: flex; align-items: center; gap: 12px; }
+.calendar-navigation button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(255,255,255,.82); color: var(--accent); }
+.calendar-layout { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; overflow: hidden; border: 1px solid #dfe2e8; border-radius: 14px; background: #fff; box-shadow: 0 18px 50px rgba(29,35,48,.07); }
+.month-calendar { min-width: 0; padding: 0; }
+.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-weekdays { background: #f7f7f9; border-bottom: 1px solid var(--border); }
+.calendar-weekdays span { padding: 10px 12px; color: var(--muted); font-size: 11px; text-align: right; }
+.calendar-grid { border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+.calendar-day { min-height: 116px; display: block; overflow: hidden; padding: 8px; border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0; background: #fff; color: var(--text); text-align: right; }
+.calendar-day:hover { background: #f8fbff; }
+.calendar-day.selected { background: #eef5ff; box-shadow: inset 0 0 0 2px rgba(10,132,255,.45); }
+.calendar-day.empty { background: #fafafa; }
+.calendar-day > span { display: inline-grid; width: 25px; height: 25px; place-items: center; border-radius: 50%; font-size: 12px; }
+.calendar-day > div { display: grid; gap: 3px; margin-top: 5px; text-align: left; }
+.calendar-event { overflow: hidden; padding: 3px 5px; border-radius: 4px; background: #0a84ff; color: white; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event.color-1 { background: #ff9f0a; }
+.calendar-event.color-2 { background: #30b95d; }
+.calendar-event.color-3 { background: #af52de; }
+.day-agenda { border-left: 1px solid var(--border); padding: 22px 18px; background: #f7f7f9; }
+.day-agenda h3 { margin: 5px 0 18px; }
+.day-agenda > p { color: var(--muted); font-size: 12px; }
+.day-agenda ol { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.agenda-event { width: 100%; display: grid; grid-template-columns: 5px 1fr; gap: 10px; padding: 10px; border: 0; border-radius: 10px; background: #fff; color: var(--text); text-align: left; }
+.agenda-event > i { border-radius: 999px; background: #0a84ff; }
+.agenda-event > span { display: grid; gap: 4px; }
+.agenda-event small { color: var(--muted); }
+.calendar-editor { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: #fff; box-shadow: 0 4px 18px rgba(28,35,52,.08); }
+.calendar-editor label { display: grid; gap: 5px; color: var(--muted-strong); font-size: 11px; }
+.calendar-editor input { min-width: 0; }
+.calendar-editor > div { display: flex; gap: 8px; }
+@media (max-width: 980px) { .workspace-content-calendar { padding: 16px; } .calendar-layout { grid-template-columns: 1fr; } .day-agenda { border-top: 1px solid var(--border); border-left: 0; } .calendar-day { min-height: 82px; } }
 
 /* Keep the selected session canvas full-width after legacy shell rules. */
 .workspace-content.workspace-content-today {

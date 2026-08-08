@@ -19,11 +19,13 @@ import { useMemo, useRef, useState } from "react";
 import { AgentPanel } from "@/components/agent-panel";
 import { SessionCoach } from "@/components/session-coach";
 import { SourceDrawer } from "@/components/source-drawer";
+import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type { Translator } from "@/lib/i18n";
 import { buildSessionSteps, sessionStage } from "@/lib/learning-session";
 import type {
   AgentReply,
   AnswerResult,
+  ExecutableActionProposal,
   LearningMode,
   LearningWorkspace,
   Locale,
@@ -151,6 +153,8 @@ export function LearningSessionCanvas({
   onToggleSaved,
   onOpenLibrary,
   onAskCoach,
+  onApplyCoachAction,
+  onCoachTurnHandled,
 }: {
   locale: Locale;
   t: Translator;
@@ -177,6 +181,11 @@ export function LearningSessionCanvas({
   onToggleSaved: (question: PracticeQuestion, saved: boolean) => void | Promise<void>;
   onOpenLibrary: () => void;
   onAskCoach: (message: string) => Promise<AgentReply>;
+  onApplyCoachAction?: (
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean; historical?: boolean },
+  ) => Promise<CoachActionOutcome>;
+  onCoachTurnHandled?: () => void;
 }) {
   const text = interfaceCopy[locale];
   const steps = buildSessionSteps(learningMode, locale);
@@ -416,6 +425,8 @@ export function LearningSessionCanvas({
             isAdmin={isAdmin}
             onConfigure={onOpenAgentSettings}
             onOpenFullCoach={agentToken ? openFullCoach : undefined}
+            onApplyAction={onApplyCoachAction}
+            onTurnHandled={onCoachTurnHandled}
           />
           <section className="session-next-review">
             <Clock3 size={18} />

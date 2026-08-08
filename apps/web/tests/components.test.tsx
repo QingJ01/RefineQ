@@ -17,8 +17,9 @@ import { ProgressTopicDetail } from "../components/progress-topic-detail";
 import { ReviewQueue } from "../components/review-queue";
 import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
-import { SessionCoach } from "../components/session-coach";
+import { CoachActionCard, SessionCoach } from "../components/session-coach";
 import { WorkspaceSwitcher } from "../components/workspace-switcher";
+import { ScheduleCalendar } from "../components/schedule-calendar";
 import { translator } from "../lib/i18n";
 import type { SearchSource } from "../lib/types";
 
@@ -54,6 +55,86 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="account-delete-confirmation"');
     expect(html).toContain("Type learner@example.com to confirm");
     expect(html).toContain("Delete account permanently");
+  });
+
+  it("renders the plan as a compact calendar agenda for the sidebar", () => {
+    const html = renderToStaticMarkup(
+      <ScheduleCalendar
+        locale="zh"
+        topicLabels={{ derivatives: "导数应用" }}
+        onUpdateSession={() => undefined}
+        plan={{
+          id: "plan-calendar",
+          goal: "数学考试",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-calendar",
+            topic_id: "derivatives",
+            planned_at: "2026-08-10T08:00:00Z",
+            minutes: 45,
+          }],
+        }}
+      />,
+    );
+
+    expect(html).toContain("RefineQ 学习时间表");
+    expect(html).toContain("导数应用");
+    expect(html).toContain('data-testid="schedule-calendar"');
+  });
+
+  it.each([
+    ["applied", "coach-action-applied"],
+    ["confirmation_required", "coach-action-confirmation_required"],
+    ["failed", "coach-action-failed"],
+    ["executing", "coach-action-executing"],
+  ] as const)("renders the %s coach action card state", (status, testId) => {
+    const html = renderToStaticMarkup(
+      <CoachActionCard
+        locale="en"
+        state={{
+          status,
+          proposal: {
+            type: "adjust_practice",
+            action_id: "action-1",
+            topic_id: "limits",
+            topic_name: "Limits",
+            difficulty: 2,
+            learning_mode: "concept",
+            destructive: true,
+          },
+        }}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain(`data-testid="${testId}"`);
+  });
+
+  it("renders rejected proposals as explanations, never as success", () => {
+    const html = renderToStaticMarkup(
+      <CoachActionCard
+        locale="en"
+        state={{
+          status: "rejected",
+          proposal: {
+            type: "rejected",
+            reason_code: "unknown_topic",
+            summary: "This workspace has no topic named Operating systems.",
+            candidates: [],
+          },
+        }}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="coach-action-rejected"');
+    expect(html).toContain("This workspace has no topic named Operating systems.");
+    expect(html).not.toContain('data-testid="coach-action-applied"');
   });
 
   it("renders one coherent capability session with contextual sources and coach", () => {
