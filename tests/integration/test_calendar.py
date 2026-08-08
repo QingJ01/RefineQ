@@ -163,6 +163,6 @@ def test_calendar_rejects_naive_reversed_and_excessive_ranges(tmp_path: Path) ->
         ]
 
     assert [response.status_code for response in responses] == [422, 422, 422]
-    assert {
-        response.json()["error"]["code"] for response in responses
-    } == {"invalid_calendar_range"}
+    assert {response.json()["error"]["code"] for response in responses} == {
+        "invalid_calendar_range"
+    }
