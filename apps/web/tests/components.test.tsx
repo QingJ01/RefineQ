@@ -292,6 +292,39 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="archived-workspaces-toggle"');
   });
 
+  it("exposes a consistent command center with direct workspace section links", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("en")}
+        busy={false}
+        workspaces={[{
+          id: "product-space",
+          title: "Product discovery",
+          subject: "Product",
+          goal: "Validate a real user problem",
+          topics: ["User interviews"],
+          keywords: ["discovery"],
+          routing_summary: "Product capability learning",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-08T00:00:00Z",
+        }]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="home-nav-item active"');
+    expect(html).toContain('data-testid="home-command-header"');
+    expect(html).toContain('data-testid="current-learning-space"');
+    expect(html).toContain('href="/learn/product-space/today"');
+    expect(html).toContain('href="/learn/product-space/path"');
+    expect(html).toContain('href="/learn/product-space/materials"');
+    expect(html).toContain('href="/learn/product-space/progress"');
+  });
+
   it("renders plan sessions as a numbered study path", () => {
     const html = renderToStaticMarkup(
       <PlanTimeline
