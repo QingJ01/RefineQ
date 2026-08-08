@@ -232,6 +232,9 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toMatch(/\.mobile-context-shortcuts a\s*\{[^}]*min-height: 44px/s);
     expect(styles).toMatch(/\.mobile-sticky-task-action[^}]*position: sticky/s);
     expect(styles).toMatch(/\.session-task > label[^}]*font-size: 12px/s);
+    expect(styles).toMatch(/\.workspace-switcher\s*\{[^}]*min-height: 44px/s);
+    expect(styles).toMatch(/\.workspace-switcher > strong\s*\{[^}]*font-size: 12px/s);
+    expect(styles).toMatch(/\.session-source-link[^}]*min-height: 44px/s);
   });
 });
 

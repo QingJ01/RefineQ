@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 from refineq.identity.service import IdentityService
 from refineq.integrations.object_storage import ObjectStorage
+from refineq.operations.recovery import (
+    RecoveryLease,
+    durable_atomic_bytes,
+    durable_mkdir,
+    durable_remove_tree,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,23 +38,7 @@ class AccountDeletionCoordinator:
         self.root = data_root.resolve() / "recovery" / "account-deletions"
         self.identity = identity
         self.object_storage = object_storage
-
-    @staticmethod
-    def _atomic_bytes(path: Path, payload: bytes) -> None:
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{path.name}-",
-            suffix=".tmp",
-            dir=path.parent,
-        )
-        temporary = Path(temporary_name)
-        try:
-            with os.fdopen(descriptor, "wb") as output:
-                output.write(payload)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        self._leases: dict[str, RecoveryLease] = {}
 
     def _write_manifest(
         self,
@@ -70,7 +57,7 @@ class AccountDeletionCoordinator:
             ensure_ascii=False,
             indent=2,
         ).encode("utf-8")
-        self._atomic_bytes(directory / "manifest.json", payload)
+        durable_atomic_bytes(directory / "manifest.json", payload)
 
     def prepare(
         self,
@@ -85,9 +72,13 @@ class AccountDeletionCoordinator:
             current_password=current_password,
         )
         deletion_id = uuid4().hex
-        self.root.mkdir(parents=True, exist_ok=True)
+        durable_mkdir(self.root)
+        lease = RecoveryLease.acquire(self.root / ".coordinator.lock")
+        if lease is None:
+            raise RuntimeError("Another account deletion is already active")
         directory = self.root / deletion_id
-        directory.mkdir()
+        durable_mkdir(directory)
+        self._leases[deletion_id] = lease
         entries: list[dict[str, str]] = []
         self._write_manifest(
             directory,
@@ -105,7 +96,7 @@ class AccountDeletionCoordinator:
             began = True
             for index, source in enumerate(self.identity.account_storage_objects(user_id)):
                 blob_name = f"{index:06d}.bin"
-                self._atomic_bytes(
+                durable_atomic_bytes(
                     directory / blob_name,
                     self.object_storage.get(source["key"]),
                 )
@@ -118,9 +109,12 @@ class AccountDeletionCoordinator:
                     entries=entries,
                 )
         except Exception:
-            if began:
-                self.identity.cancel_account_deletion(user_id, deletion_id=deletion_id)
-            shutil.rmtree(directory)
+            try:
+                if began:
+                    self.identity.cancel_account_deletion(user_id, deletion_id=deletion_id)
+                durable_remove_tree(directory)
+            finally:
+                self._release(deletion_id)
             raise
         return PendingAccountDeletion(
             deletion_id=deletion_id,
@@ -142,12 +136,15 @@ class AccountDeletionCoordinator:
             )
 
     def rollback(self, pending: PendingAccountDeletion) -> None:
-        self._restore(pending)
-        self.identity.cancel_account_deletion(
-            pending.user_id,
-            deletion_id=pending.deletion_id,
-        )
-        shutil.rmtree(pending.directory)
+        try:
+            self._restore(pending)
+            self.identity.cancel_account_deletion(
+                pending.user_id,
+                deletion_id=pending.deletion_id,
+            )
+            durable_remove_tree(pending.directory)
+        finally:
+            self._release(pending.deletion_id)
 
     def complete(
         self,
@@ -166,7 +163,15 @@ class AccountDeletionCoordinator:
         except Exception:
             self.rollback(pending)
             raise
-        shutil.rmtree(pending.directory)
+        try:
+            durable_remove_tree(pending.directory)
+        finally:
+            self._release(pending.deletion_id)
+
+    def _release(self, deletion_id: str) -> None:
+        lease = self._leases.pop(deletion_id, None)
+        if lease is not None:
+            lease.release()
 
     def _load(self, directory: Path) -> PendingAccountDeletion:
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
@@ -199,15 +204,27 @@ class AccountDeletionCoordinator:
 
         if not self.root.exists():
             return
-        for directory in sorted(path for path in self.root.iterdir() if path.is_dir()):
-            pending = self._load(directory)
-            exists, current_deletion_id = self.identity.account_deletion_state(
-                pending.user_id
-            )
-            if exists and current_deletion_id == pending.deletion_id:
-                self._restore(pending)
-                self.identity.cancel_account_deletion(
-                    pending.user_id,
-                    deletion_id=pending.deletion_id,
+        lease = RecoveryLease.acquire(self.root / ".coordinator.lock")
+        if lease is None:
+            return
+        try:
+            for directory in sorted(path for path in self.root.iterdir() if path.is_dir()):
+                pending = self._load(directory)
+                exists, current_deletion_id = self.identity.account_deletion_state(
+                    pending.user_id
                 )
-            shutil.rmtree(directory)
+                if exists and current_deletion_id == pending.deletion_id:
+                    self._restore(pending)
+                    self.identity.cancel_account_deletion(
+                        pending.user_id,
+                        deletion_id=pending.deletion_id,
+                    )
+                durable_remove_tree(directory)
+        finally:
+            lease.release()
+
+    def close(self) -> None:
+        """Release process leases; incomplete journals remain for the next process."""
+
+        for deletion_id in list(self._leases):
+            self._release(deletion_id)

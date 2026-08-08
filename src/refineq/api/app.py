@@ -44,6 +44,7 @@ from refineq.integrations.object_storage import ConfiguredObjectStorage
 from refineq.integrations.ocr import OcrService
 from refineq.integrations.repository import IntegrationRepository
 from refineq.integrations.service import IntegrationTester
+from refineq.knowledge.deletion import MaterialDeletionCoordinator
 from refineq.knowledge.embeddings import PlatformEmbeddingService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
@@ -140,6 +141,12 @@ def create_app(
         embedder=app.state.embedding_service,
         enforce_owner_state=True,
     )
+    app.state.material_deletions = MaterialDeletionCoordinator(
+        data_root=app.state.settings.data_root,
+        knowledge=app.state.knowledge,
+        object_storage=app.state.object_storage,
+    )
+    app.state.material_deletions.recover_pending()
     app.state.model_settings = PlatformModelSettingsRepository(
         app.state.integrations,
         allowed_hosts=app.state.settings.allowed_model_hosts,
@@ -206,6 +213,8 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(workspaces_router)
     app.include_router(admin_router)
+    app.router.add_event_handler("shutdown", app.state.account_deletions.close)
+    app.router.add_event_handler("shutdown", app.state.material_deletions.close)
     app.router.add_event_handler("shutdown", app.state.database.close)
     return app
 

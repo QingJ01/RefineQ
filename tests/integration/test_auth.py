@@ -740,7 +740,57 @@ def test_pending_account_deletion_is_recovered_after_process_interruption(
     assert login.status_code == 200
     assert recovered_app.state.object_storage.get(storage_key) == b"Recover me"
     recovery_root = settings.data_root / "recovery" / "account-deletions"
-    assert not recovery_root.exists() or list(recovery_root.iterdir()) == []
+    assert not recovery_root.exists() or not any(path.is_dir() for path in recovery_root.iterdir())
+
+
+def test_live_account_deletion_is_not_recovered_by_another_app_instance(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_root=tmp_path / "data", _env_file=None)
+    active_app = create_app(settings)
+    user = active_app.state.identity.register(
+        email="active-delete@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Learner",
+    )
+    stored = active_app.state.object_storage.put(
+        owner_id=user.id,
+        workspace_id="workspace-active",
+        material_id="material-active",
+        filename="active.txt",
+        payload=b"active deletion",
+    )
+    active_app.state.knowledge.add_document(
+        owner_id=user.id,
+        project_id="workspace-active",
+        material_id="material-active",
+        filename="active.txt",
+        text="active deletion",
+        size=len(b"active deletion"),
+        storage_key=stored.key,
+    )
+    pending = active_app.state.account_deletions.prepare(
+        user.id,
+        current_password="correct-horse-battery-staple",
+    )
+    active_app.state.object_storage.delete(stored.key)
+
+    second_app = create_app(settings)
+    try:
+        assert active_app.state.identity.account_deletion_state(user.id) == (
+            True,
+            pending.deletion_id,
+        )
+        with pytest.raises(FileNotFoundError):
+            active_app.state.object_storage.get(stored.key)
+    finally:
+        second_app.state.account_deletions.close()
+        second_app.state.material_deletions.close()
+        second_app.state.database.close()
+        active_app.state.account_deletions.rollback(pending)
+        active_app.state.database.close()
+
+    assert active_app.state.object_storage.get(stored.key) == b"active deletion"
 
 
 def test_account_deletion_fence_rejects_a_late_material_write(tmp_path: Path) -> None:

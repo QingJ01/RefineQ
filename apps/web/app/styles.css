@@ -5663,6 +5663,15 @@ textarea:focus {
     padding: 0 10px;
   }
 
+  .workspace-switcher {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .workspace-switcher > strong {
+    font-size: 12px;
+  }
+
   .workspace-home-link,
   .workspace-nav-label,
   .sidebar-learning {
@@ -6327,7 +6336,8 @@ textarea:focus {
 
   .session-mode-bar button,
   .session-task-actions button,
-  .context-link {
+  .context-link,
+  .session-source-link {
     min-height: 44px;
   }
 

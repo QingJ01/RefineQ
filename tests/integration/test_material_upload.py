@@ -318,6 +318,54 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
     ).id == material["id"]
 
 
+def test_pending_bulk_material_delete_is_recovered_after_process_interruption(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_root=tmp_path / "data", _env_file=None)
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = _register(client, "bulk-delete-recovery@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study recovery journals"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"Recover this material", "text/plain")},
+        ).json()[0]
+        owner_id = client.get("/auth/me", headers=headers).json()["id"]
+        storage_key = app.state.knowledge.get_material_storage_key(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id=material["id"],
+        )
+        app.state.material_deletions.prepare(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_ids=[material["id"]],
+        )
+        app.state.object_storage.delete(storage_key)
+
+    recovered_app = create_app(settings)
+    try:
+        assert recovered_app.state.object_storage.get(storage_key) == b"Recover this material"
+        assert recovered_app.state.knowledge.get_material(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id=material["id"],
+        ).id == material["id"]
+        recovery_root = settings.data_root / "recovery" / "material-deletions"
+        assert not any(path.is_dir() for path in recovery_root.iterdir())
+    finally:
+        recovered_app.state.account_deletions.close()
+        recovered_app.state.material_deletions.close()
+        recovered_app.state.database.close()
+
+
 def test_workspace_material_delete_is_owner_scoped(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 

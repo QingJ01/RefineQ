@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import shutil
 from dataclasses import replace
 from functools import partial
 from hashlib import sha256
-from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
-from uuid import uuid4
 
 from anyio import to_thread
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
@@ -425,87 +421,27 @@ def _bulk_delete_materials(
     user: CurrentUser,
 ) -> Response:
     _require_project(request, user.id, project_id)
-    knowledge = request.app.state.knowledge
-    object_storage = request.app.state.object_storage
-    staging_directory: Path | None = None
-    staged: list[tuple[MaterialRecord, str, Path]] = []
-    attempted: list[tuple[MaterialRecord, str, Path]] = []
-    rollback_failed = False
-    deletion_error: Exception | None = None
     try:
-        recovery_root = request.app.state.settings.data_root / "recovery" / "material-deletions"
-        recovery_root.mkdir(parents=True, exist_ok=True)
-        staging_directory = recovery_root / uuid4().hex
-        staging_directory.mkdir()
-        for index, material_id in enumerate(payload.material_ids):
-            record = knowledge.get_material(
-                owner_id=user.id,
-                project_id=project_id,
-                material_id=material_id,
-            )
-            storage_key = knowledge.get_material_storage_key(
-                owner_id=user.id,
-                project_id=project_id,
-                material_id=material_id,
-            )
-            staged_path = staging_directory / f"{index:06d}.bin"
-            staged_path.write_bytes(object_storage.get(storage_key))
-            staged.append((record, storage_key, staged_path))
-        (staging_directory / "manifest.json").write_text(
-            json.dumps(
-                [
-                    {"material": record.model_dump(mode="json"), "storage_key": storage_key}
-                    for record, storage_key, _ in staged
-                ],
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        for entry in staged:
-            attempted.append(entry)
-            object_storage.delete(entry[1])
-        knowledge.delete_materials(
+        pending = request.app.state.material_deletions.prepare(
             owner_id=user.id,
             project_id=project_id,
             material_ids=payload.material_ids,
         )
-    except Exception as error:
-        deletion_error = error
-        for record, _, staged_path in attempted:
-            try:
-                object_storage.put(
-                    owner_id=user.id,
-                    workspace_id=project_id,
-                    material_id=record.id,
-                    filename=record.filename,
-                    payload=staged_path.read_bytes(),
-                )
-            except Exception:
-                rollback_failed = True
-        if staging_directory is not None and not rollback_failed:
-            shutil.rmtree(staging_directory, ignore_errors=True)
-    else:
-        if staging_directory is not None:
-            shutil.rmtree(staging_directory, ignore_errors=True)
-
-    if deletion_error is None:
+        request.app.state.material_deletions.complete(pending)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    if not rollback_failed and isinstance(
-        deletion_error,
-        (MaterialNotFoundError, FileNotFoundError),
-    ):
+    except (MaterialNotFoundError, FileNotFoundError) as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "material_not_found", "message": "Material not found"},
-        ) from deletion_error
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail={
-            "code": "material_bulk_delete_failed",
-            "message": "Selected materials could not be deleted safely",
-        },
-    ) from deletion_error
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "material_bulk_delete_failed",
+                "message": "Selected materials could not be deleted safely",
+            },
+        ) from error
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
