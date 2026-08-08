@@ -409,6 +409,78 @@ def test_upload_revalidates_workspace_after_parsing_before_writing(
         ) == 0
 
 
+def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the_lease(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    upload_writing = Event()
+    delete_waiting = Event()
+    continue_upload = Event()
+    stored_keys: list[str] = []
+    original_put = app.state.object_storage.put
+    original_prepare = app.state.material_deletions.prepare
+
+    def delayed_put(*args, **kwargs):
+        upload_writing.set()
+        assert continue_upload.wait(timeout=5)
+        stored = original_put(*args, **kwargs)
+        stored_keys.append(stored.key)
+        return stored
+
+    def observed_prepare(*args, **kwargs):
+        delete_waiting.set()
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(app.state.object_storage, "put", delayed_put)
+    monkeypatch.setattr(app.state.material_deletions, "prepare", observed_prepare)
+
+    with TestClient(app) as client:
+        token = _register(client, "empty-workspace-upload-race@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study empty workspace upload races"},
+        ).json()["workspace"]["id"]
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            upload = executor.submit(
+                client.post,
+                f"/workspaces/{workspace_id}/materials",
+                headers=headers,
+                files={"files": ("race.txt", b"serialized upload", "text/plain")},
+            )
+            assert upload_writing.wait(timeout=5)
+            deletion = executor.submit(
+                client.delete,
+                f"/workspaces/{workspace_id}",
+                headers=headers,
+            )
+            assert delete_waiting.wait(timeout=5)
+            continue_upload.set()
+            uploaded = upload.result(timeout=5)
+            deleted = deletion.result(timeout=5)
+        missing_workspace = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        )
+
+    assert uploaded.status_code == 201
+    assert deleted.status_code == 204
+    assert missing_workspace.status_code == 404
+    with app.state.database.session() as session:
+        assert session.scalar(
+            select(func.count()).select_from(materials).where(
+                materials.c.project_id == workspace_id
+            )
+        ) == 0
+    assert stored_keys
+    for storage_key in stored_keys:
+        with pytest.raises(FileNotFoundError):
+            app.state.object_storage.get(storage_key)
+
+
 def test_workspace_delete_restores_material_objects_when_index_cleanup_fails(
     tmp_path: Path,
     monkeypatch,
@@ -482,6 +554,50 @@ def test_workspace_delete_restores_state_when_learning_cleanup_fails(
     assert snapshot.status_code == 200
     assert restored.status_code == 200
     assert restored.content == b"workspace rollback material"
+
+
+def test_workspace_delete_stays_committed_when_recovery_journal_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    deletion_module = import_module("refineq.knowledge.deletion")
+    original_remove_tree = deletion_module.durable_remove_tree
+
+    with TestClient(app) as client:
+        token = _register(client, "workspace-delete-journal-cleanup@example.com")
+        headers = _headers(token)
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study committed deletion cleanup"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"delete completely", "text/plain")},
+        ).json()[0]
+
+        def remove_then_fail(path: Path) -> None:
+            original_remove_tree(path)
+            raise OSError("directory fsync failed after removal")
+
+        monkeypatch.setattr(deletion_module, "durable_remove_tree", remove_then_fail)
+        deleted = client.delete(f"/workspaces/{workspace_id}", headers=headers)
+        missing_workspace = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        )
+
+    assert deleted.status_code == 204
+    assert missing_workspace.status_code == 404
+    with app.state.database.session() as session:
+        assert session.scalar(
+            select(func.count()).select_from(materials).where(
+                materials.c.material_id == material["id"]
+            )
+        ) == 0
+    assert not any(path.name == material["id"] for path in app.state.settings.data_root.rglob("*"))
 
 
 def test_pending_bulk_material_delete_is_recovered_after_process_interruption(

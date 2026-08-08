@@ -40,6 +40,7 @@ test.beforeAll(() => {
 
 
 test("learner completes and restores a capability learning journey", async ({ page }, testInfo) => {
+  test.slow();
   const uniqueEmail = `capability-learner-${Date.now()}@example.com`;
   const browserErrors: string[] = [];
   page.on("console", (message) => {
@@ -145,7 +146,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("workspace-switcher")).toBeFocused();
     await expect(page.getByTestId("workspace-switcher")).toBeVisible();
     expect((await page.getByTestId("workspace-switcher").boundingBox())?.height).toBeGreaterThanOrEqual(44);
-    expect(await page.getByTestId("workspace-switcher").locator("strong").evaluate(
+    expect(await page.getByTestId("workspace-switcher").locator(":scope > strong").evaluate(
       (element) => Number.parseFloat(getComputedStyle(element).fontSize),
     )).toBeGreaterThanOrEqual(12);
     await expect(page.getByTestId("workspace-switcher")).toHaveAccessibleName(
@@ -168,6 +169,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("mobile-sticky-task-action")).toBeVisible();
     await expect(page.getByTestId("mobile-sticky-task-action")).toHaveCSS("position", "sticky");
     await page.getByTestId("mobile-shortcut-path").click();
+    await page.waitForTimeout(450);
     await page.screenshot({ path: testInfo.outputPath("capability-learning-mobile.png") });
     await page.setViewportSize({ width: 1440, height: 1024 });
   });
@@ -190,7 +192,31 @@ test("learner completes and restores a capability learning journey", async ({ pa
         "用户需求验证：A user asked for data export, but repeated interview evidence showed the underlying need was a trustworthy weekly reporting workflow. Validate the problem before choosing a feature solution.",
       ),
     });
-    await expect(page.locator(".material-list").getByText("user-interview.txt")).toBeVisible();
+    await expect(
+      page.locator(".material-list .material-title-row > span").getByText(
+        "user-interview.txt",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "interview-notes.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from(
+        "# Research notes\n\nThree interviewees described a manual reporting handoff and unclear ownership.",
+      ),
+    });
+    const notesMaterial = page.locator(".material-list li").filter({ hasText: "interview-notes.md" });
+    await expect(notesMaterial).toBeVisible();
+    await notesMaterial.locator('[data-testid^="material-edit-"]').click();
+    await notesMaterial.locator(".material-edit-form input").nth(0).fill("Weekly research notes");
+    await notesMaterial.locator(".material-edit-form input").nth(1).fill("research, interview");
+    await notesMaterial.locator('.material-edit-form button[type="submit"]').click();
+    await expect(notesMaterial).toContainText("Weekly research notes");
+    await page.getByTestId("material-filter-tag").selectOption("research");
+    await expect(page.locator(".material-list li")).toHaveCount(1);
+    await page.getByTestId("material-sort").selectOption("title");
+    await page.getByTestId("material-filter-tag").selectOption("all");
+    await expect(page.locator(".material-list li")).toHaveCount(2);
     await page.getByTestId("material-search").fill("weekly reporting workflow");
     await page.locator(".material-search button").click();
     await expect(page.locator(".material-search-results")).toContainText("user-interview.txt");
@@ -259,23 +285,52 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.reload();
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
     await page.getByTestId("nav-materials").click();
-    await expect(page.locator(".material-list").getByText("user-interview.txt")).toBeVisible();
+    await expect(
+      page.locator(".material-list .material-title-row > span").getByText(
+        "user-interview.txt",
+        { exact: true },
+      ),
+    ).toBeVisible();
     await page.getByTestId("nav-today").click();
     await expect(page.locator(".coach-capability-notice")).toBeVisible();
     await expect(page.getByTestId("session-coach-input")).toBeDisabled();
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+    await page.waitForTimeout(450);
     await page.screenshot({ path: testInfo.outputPath("capability-learning-desktop.png") });
   });
 
-  await test.step("confirm before deleting a source", async () => {
+  await test.step("update and export the account without losing the active workspace", async () => {
+    await page.getByTestId("nav-account").click();
+    await expect(page).toHaveURL(/\/account$/);
+    await expect(page.getByTestId("account-center")).toBeVisible();
+    const profileForm = page.getByTestId("account-profile-form");
+    await profileForm.locator("input").first().fill("Capability learner updated");
+    await profileForm.locator("button").click();
+    await expect(page.locator(".account-identity-stamp strong")).toHaveText(
+      "Capability learner updated",
+    );
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("account-export").click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/^refineq-account-\d{4}-\d{2}-\d{2}\.json$/);
+
+    await page.locator(".account-header-actions a").click();
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
+  });
+
+  await test.step("confirm before bulk deleting organized sources", async () => {
     await page.getByTestId("nav-materials").click();
-    const material = page.locator(".material-list").getByText("user-interview.txt");
-    await page.getByTestId(/material-delete-/).click();
+    await expect(page.locator(".material-list li")).toHaveCount(2);
+    await page.getByTestId("material-select-all").check();
+    await expect(page.getByTestId("material-bulk-delete")).toBeEnabled();
+    await page.getByTestId("material-bulk-delete").click();
     await page.getByTestId("confirm-dialog-cancel").click();
-    await expect(material).toBeVisible();
-    await page.getByTestId(/material-delete-/).click();
+    await expect(page.locator(".material-list li")).toHaveCount(2);
+    await page.getByTestId("material-bulk-delete").click();
     await page.getByTestId("confirm-dialog-confirm").click();
-    await expect(material).toBeHidden();
+    await expect(page.locator(".material-list li")).toHaveCount(0);
   });
 
   const unexpectedBrowserErrors = browserErrors.filter(
@@ -285,9 +340,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
 });
 
 
-test("administrator routes survive direct navigation, refresh, and browser history", async ({
-  page,
-}) => {
+test("administrator routes and operations survive real navigation", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByTestId("email").fill(adminEmail);
   await page.getByTestId("password").fill(adminPassword);
@@ -327,6 +380,49 @@ test("administrator routes survive direct navigation, refresh, and browser histo
   await expect(page.getByTestId("admin-integration-detail")).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("admin-integration-detail")).toBeVisible();
+
+  await page.locator('.admin-nav a[href="/admin/operations"]').click();
+  await expect(page).toHaveURL(/\/admin\/operations$/);
+  await expect(page.getByTestId("admin-users")).toContainText(adminEmail);
+  await expect(page.getByTestId("admin-jobs")).toBeVisible();
+  await expect(page.getByTestId("admin-activity")).toBeVisible();
+  await expect(page.getByTestId("admin-backups")).toBeVisible();
+
+  await page.getByTestId("admin-create-backup").click();
+  await expect(page.locator(".admin-backup-list li").first()).toBeVisible();
+  await page.locator(".admin-backup-list li").first().locator("button").click();
+  await expect(page.getByTestId("confirm-dialog")).toContainText("RESTORE");
+  await page.getByTestId("confirm-dialog-confirm").click();
+  await expect(page.getByTestId("confirm-dialog")).toBeHidden();
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: testInfo.outputPath("admin-operations-desktop.png") });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const mobileOperations = page.getByTestId("admin-operations");
+  await expect(mobileOperations).toBeVisible();
+  await expect(mobileOperations).toHaveAttribute("aria-busy", "false");
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("admin-operations-mobile.png") });
+
+  await page.route("**/api/admin/jobs", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "service_unavailable",
+          message: "D:\\sensitive\\admin.sqlite3",
+        },
+      }),
+    });
+  });
+  await page.reload();
+  const localizedError = page.locator('.admin-operations-notice[role="alert"]');
+  await expect(localizedError).toContainText("服务暂时不可用，请稍后重试。");
+  await expect(localizedError).not.toContainText("admin.sqlite3");
 });
 
 

@@ -101,7 +101,13 @@ Set-Location apps/web
 npm test
 npm run lint
 npm run build
+npm run test:e2e
 ```
+
+端到端测试覆盖完整学习旅程：学习空间切换与历史恢复、资料来源引用、计划编辑、练习重试与反馈、
+账户资料与数据导出、资料标签/筛选/批量删除、移动端快捷导航，以及管理员用户、任务、审计和备份操作。
+运行 Playwright 时可通过 `REFINEQ_PYTHON` 指定后端 Python；测试数据保存在
+`apps/web/.playwright-data`，不得提交到仓库。
 
 ## License
 

@@ -165,11 +165,13 @@ export function StudyWorkspace({
 
   useEffect(() => {
     if (window.sessionStorage.getItem(SECTION_FOCUS_KEY) !== "1") return;
+    if (restoring || !workspace || !sectionHeadingRef.current) return;
     window.sessionStorage.removeItem(SECTION_FOCUS_KEY);
-    window.requestAnimationFrame(() => {
+    const timeout = window.setTimeout(() => {
       sectionHeadingRef.current?.focus({ preventScroll: true });
-    });
-  }, [section]);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [restoring, section, workspace]);
 
   const redirectUnavailableWorkspace = useCallback(() => {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);

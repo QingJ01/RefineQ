@@ -63,19 +63,28 @@ class MaterialDeletionCoordinator:
         *,
         owner_id: str,
         project_id: str,
-        material_ids: list[str],
+        material_ids: list[str] | None,
     ) -> PendingMaterialDeletion:
         deletion_id = uuid4().hex
         durable_mkdir(self.root)
-        lease = RecoveryLease.acquire(self.lease_path)
+        lease = RecoveryLease.acquire_wait(self.lease_path)
         if lease is None:
             raise RuntimeError("Another material object mutation is already active")
         directory = self.root / deletion_id
         self._leases[deletion_id] = lease
         entries: list[dict[str, object]] = []
         try:
+            selected_ids = material_ids
+            if selected_ids is None:
+                selected_ids = [
+                    material.id
+                    for material in self.knowledge.list_materials(
+                        owner_id=owner_id,
+                        project_id=project_id,
+                    )
+                ]
             durable_mkdir(directory)
-            for index, material_id in enumerate(material_ids):
+            for index, material_id in enumerate(selected_ids):
                 record = self.knowledge.get_material(
                     owner_id=owner_id,
                     project_id=project_id,
@@ -144,19 +153,24 @@ class MaterialDeletionCoordinator:
         try:
             for entry in pending.entries:
                 self.object_storage.delete(str(entry["storage_key"]))
-            self.knowledge.delete_materials(
-                owner_id=pending.owner_id,
-                project_id=pending.project_id,
-                material_ids=[
-                    MaterialRecord.model_validate(entry["material"]).id
-                    for entry in pending.entries
-                ],
-            )
+            if pending.entries:
+                self.knowledge.delete_materials(
+                    owner_id=pending.owner_id,
+                    project_id=pending.project_id,
+                    material_ids=[
+                        MaterialRecord.model_validate(entry["material"]).id
+                        for entry in pending.entries
+                    ],
+                )
         except Exception:
             self.rollback(pending)
             raise
         try:
             durable_remove_tree(pending.directory)
+        except OSError:
+            # Objects and SQL rows are already durably deleted. A leftover or
+            # partially removed journal is safe for startup recovery to clean.
+            pass
         finally:
             self._release(pending.deletion_id)
 

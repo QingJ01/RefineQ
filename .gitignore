@@ -29,6 +29,7 @@ npm-debug.log*
 playwright-report/
 test-results/
 .playwright-data/
+.playwright-data-backups/
 apps/web/AGENTS.md
 apps/web/CLAUDE.md
 

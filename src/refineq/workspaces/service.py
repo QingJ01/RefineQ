@@ -289,22 +289,16 @@ class WorkspaceService:
                     owner_id,
                     workspace_id,
                 )
-                materials = self._knowledge.list_materials(
+                pending = self._material_deletions.prepare(
                     owner_id=owner_id,
                     project_id=workspace_id,
+                    material_ids=None,
                 )
-                if materials:
-                    pending = self._material_deletions.prepare(
-                        owner_id=owner_id,
-                        project_id=workspace_id,
-                        material_ids=[material.id for material in materials],
-                    )
                 self._learning.delete(owner_id, workspace_id)
                 self._sessions.delete_for_workspace(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)
 
-            if pending is not None:
-                self._material_deletions.complete(pending)
+            self._material_deletions.complete(pending)
         except Exception:
             try:
                 if pending is not None and pending.directory.exists():

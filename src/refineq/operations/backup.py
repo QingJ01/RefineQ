@@ -151,11 +151,8 @@ def create_backup(data_root: Path, archive: Path) -> BackupResult:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_archive: Path | None = None
     try:
-        with tempfile.TemporaryDirectory(
-            prefix=".refineq-backup-stage-",
-            dir=destination.parent,
-        ) as stage_name:
-            stage_root = Path(stage_name) / "data"
+        with tempfile.TemporaryDirectory(prefix="rqb-") as stage_name:
+            stage_root = Path(stage_name) / "d"
             entries: list[dict[str, Any]] = []
             for source in sorted(source_root.rglob("*")):
                 if not source.is_file():
@@ -327,10 +324,10 @@ def restore_backup(archive: Path, destination_root: Path) -> RestoreResult:
                 raise BackupValidationError("Backup payload does not match its manifest")
 
             with tempfile.TemporaryDirectory(
-                prefix=".refineq-restore-stage-",
+                prefix="rqr-",
                 dir=destination.parent,
             ) as stage_name:
-                staged_data = Path(stage_name) / "data"
+                staged_data = Path(stage_name) / "d"
                 staged_data.mkdir()
                 for relative, entry in entries.items():
                     target = (staged_data / Path(*PurePosixPath(relative).parts)).resolve()
@@ -437,8 +434,11 @@ def validate_managed_backup(backup_root: Path, backup_id: str) -> ManagedBackup:
 
     archive = _managed_archive(backup_root, backup_id)
     info = _managed_info(archive)
-    with tempfile.TemporaryDirectory(prefix=".refineq-validate-", dir=archive.parent) as root:
-        result = restore_backup(archive, Path(root) / "data")
+    # The OS temporary root is intentionally used here. Nesting validation under
+    # a deployment path can exceed the legacy Windows path limit for otherwise
+    # valid owner/workspace/material keys.
+    with tempfile.TemporaryDirectory(prefix="rqv-") as root:
+        result = restore_backup(archive, Path(root) / "d")
     if result.file_count != info.file_count or result.total_bytes != info.total_bytes:
         raise BackupValidationError("Managed backup validation totals do not match")
     return info

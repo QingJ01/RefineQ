@@ -112,13 +112,40 @@ def test_restore_rejects_archive_path_traversal(tmp_path: Path) -> None:
 
 def test_managed_backups_use_opaque_ids_and_support_full_restore_validation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    backup_module = __import__("refineq.operations.backup", fromlist=["tempfile"])
+    original_temporary_directory = backup_module.tempfile.TemporaryDirectory
+    temporary_parents: list[Path | None] = []
+
+    def tracked_temporary_directory(*args, **kwargs):
+        parent = kwargs.get("dir")
+        temporary_parents.append(Path(parent) if parent is not None else None)
+        return original_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(
+        backup_module.tempfile,
+        "TemporaryDirectory",
+        tracked_temporary_directory,
+    )
     source = tmp_path / "runtime"
     backup_root = tmp_path / "managed-backups"
     _seed_runtime(source)
+    deeply_nested = (
+        source
+        / "users"
+        / ("user_" + "a" * 32)
+        / "workspaces"
+        / ("workspace_" + "b" * 32)
+        / "materials"
+        / ("material_" + "c" * 32)
+    )
+    deeply_nested.parent.mkdir(parents=True)
+    deeply_nested.write_text("long portable path", encoding="utf-8")
 
     created = create_managed_backup(source, backup_root)
     listed = list_managed_backups(backup_root)
+    temporary_parents.clear()
     validated = validate_managed_backup(backup_root, created.id)
 
     assert created.id.startswith("backup_")
@@ -127,6 +154,7 @@ def test_managed_backups_use_opaque_ids_and_support_full_restore_validation(
     assert validated.id == created.id
     assert validated.file_count == created.file_count
     assert validated.total_bytes == created.total_bytes
+    assert temporary_parents[0] is None
 
 
 @pytest.mark.parametrize("backup_id", ["../outside", "..\\outside", "backup_invalid.zip"])
