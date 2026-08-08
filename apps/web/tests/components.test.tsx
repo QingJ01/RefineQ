@@ -7,6 +7,7 @@ import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole, refreshAdminAudit } from "../components/admin-console";
 import { AccountCenter } from "../components/account-center";
 import { AppSidebar } from "../components/app-sidebar";
+import { GlobalCalendar } from "../components/global-calendar";
 import { LearningHome } from "../components/learning-home";
 import { InitialDiagnostic } from "../components/initial-diagnostic";
 import { LearningReport } from "../components/learning-report";
@@ -85,6 +86,97 @@ describe("shared authenticated sidebar", () => {
     expect(html).not.toContain('data-testid="app-nav-admin"');
     expect(html).toContain("学习首页");
     expect(html).toContain("总日历");
+  });
+});
+
+
+describe("cross-workspace calendar", () => {
+  const calendarWorkspaces = [
+    sidebarWorkspaces[0],
+    {
+      ...sidebarWorkspaces[0],
+      id: "english-space",
+      title: "English speaking",
+      subject: "English",
+    },
+  ];
+  const calendarTasks = [
+    {
+      id: "session-math-1",
+      workspace_id: "math-space",
+      workspace_title: "Mathematics",
+      workspace_archived: false,
+      topic_id: "limits",
+      topic_label: "Limits",
+      planned_at: "2026-08-08T01:00:00.000Z",
+      minutes: 30,
+      activity: "practice" as const,
+      status: "planned" as const,
+    },
+    {
+      id: "session-english-1",
+      workspace_id: "english-space",
+      workspace_title: "English speaking",
+      workspace_archived: false,
+      topic_id: "speaking",
+      topic_label: "Speaking",
+      planned_at: "2026-08-08T09:00:00.000Z",
+      minutes: 45,
+      activity: "learn" as const,
+      status: "completed" as const,
+    },
+  ];
+
+  it("summarizes visible tasks and deep-links each task to its owning space", () => {
+    const html = renderToStaticMarkup(
+      <GlobalCalendar
+        locale="en"
+        month={new Date(2026, 7, 1)}
+        selectedDate="2026-08-08"
+        tasks={calendarTasks}
+        workspaces={calendarWorkspaces}
+        includeArchived={false}
+        loading={false}
+        error=""
+        onMonthChange={() => undefined}
+        onSelectedDateChange={() => undefined}
+        onIncludeArchivedChange={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="global-calendar"');
+    expect(html).toContain('data-testid="calendar-workspace-filter-math-space"');
+    expect(html).toContain("2 tasks");
+    expect(html).toContain("75 min");
+    expect(html).toContain("2 spaces");
+    expect(html).toContain('href="/learn/math-space/calendar?session=session-math-1"');
+    expect(html).toContain('href="/learn/english-space/calendar?session=session-english-1"');
+    expect(html).toContain("Open in learning space");
+    expect(html).not.toContain(">Save<");
+    expect(html).not.toContain(">Delete<");
+  });
+
+  it("distinguishes an empty month from an account with no learning spaces", () => {
+    const renderEmpty = (workspaces: typeof calendarWorkspaces) => renderToStaticMarkup(
+      <GlobalCalendar
+        locale="en"
+        month={new Date(2026, 7, 1)}
+        selectedDate="2026-08-08"
+        tasks={[]}
+        workspaces={workspaces}
+        includeArchived={false}
+        loading={false}
+        error=""
+        onMonthChange={() => undefined}
+        onSelectedDateChange={() => undefined}
+        onIncludeArchivedChange={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(renderEmpty(calendarWorkspaces)).toContain("No tasks this month");
+    expect(renderEmpty([])).toContain("No learning spaces yet");
   });
 });
 
@@ -198,6 +290,42 @@ describe("focused learning components", () => {
 
     expect(html).toContain('data-activity="review"');
     expect(html).toContain("Review");
+  });
+
+  it("opens a deep-linked session on its date and marks it as focused", () => {
+    const html = renderToStaticMarkup(
+      <ScheduleCalendar
+        locale="en"
+        focusedSessionId="session-focus"
+        topicLabels={{ limits: "Limits", derivatives: "Derivatives" }}
+        onUpdateSession={() => undefined}
+        plan={{
+          id: "plan-focus",
+          goal: "Pass calculus",
+          exam_at: "2026-09-01T08:00:00Z",
+          daily_minutes: 45,
+          sessions: [
+            {
+              id: "session-first",
+              topic_id: "limits",
+              planned_at: "2026-08-01T08:00:00Z",
+              minutes: 20,
+            },
+            {
+              id: "session-focus",
+              topic_id: "derivatives",
+              planned_at: "2026-08-10T08:00:00Z",
+              minutes: 45,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain("2026-08-10");
+    expect(html).toContain('data-session-id="session-focus"');
+    expect(html).toContain('data-focused="true"');
+    expect(html).toContain("Derivatives");
   });
 
   it("renders guided empty cards for plans, schedules, and progress", () => {

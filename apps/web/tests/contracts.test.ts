@@ -1389,6 +1389,30 @@ describe("global calendar API", () => {
   });
 });
 
+
+describe("global calendar route", () => {
+  it("loads a bounded owner calendar and hands task deep links back to workspace calendar", () => {
+    const page = fileURLToPath(new URL("../app/calendar/page.tsx", import.meta.url));
+    const route = fileURLToPath(new URL("../components/global-calendar-route.tsx", import.meta.url));
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(page)).toBe(true);
+    expect(existsSync(route)).toBe(true);
+    if (!existsSync(page) || !existsSync(route)) return;
+    const pageSource = readFileSync(page, "utf8");
+    const routeSource = readFileSync(route, "utf8");
+    expect(pageSource).toContain("<GlobalCalendarRoute");
+    expect(routeSource).toContain("api.getCalendar");
+    expect(routeSource).toContain("calendarGridRange");
+    expect(routeSource).toContain("includeArchived");
+    expect(workspaceSource).toContain("new URLSearchParams(window.location.search)");
+    expect(workspaceSource).toContain("focusedSessionId={focusedCalendarSessionId}");
+  });
+});
+
 describe("plan setting validation", () => {
   it("requires a goal, a future date, valid minutes, and every topic exactly once", () => {
     const invalid = validatePlanSettings({

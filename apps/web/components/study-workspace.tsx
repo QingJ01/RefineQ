@@ -165,6 +165,7 @@ export function StudyWorkspace({
   const section = initialSection;
   const [homeBusy, setHomeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [focusedCalendarSessionId, setFocusedCalendarSessionId] = useState<string | null>(null);
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [snapshotConflict, setSnapshotConflict] = useState(false);
@@ -204,6 +205,16 @@ export function StudyWorkspace({
   }, [auth?.access_token, setModelConfigured]);
 
   useEffect(() => installSessionHandoff(window.sessionStorage), []);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setFocusedCalendarSessionId(
+        section === "calendar"
+          ? new URLSearchParams(window.location.search).get("session")
+          : null,
+      );
+    });
+  }, [initialWorkspaceId, section]);
 
   function runGuardedPracticeAction(action: PracticeNavigationAction): boolean {
     return guardPracticeNavigation(
@@ -1447,10 +1458,12 @@ export function StudyWorkspace({
           )}
           {section === "calendar" && (
             <ScheduleCalendar
+              key={focusedCalendarSessionId ?? "workspace-calendar"}
               plan={plan}
               locale={locale}
               topicLabels={progress?.topics}
               busySessionId={busySessionId}
+              focusedSessionId={focusedCalendarSessionId}
               onUpdateSession={updatePlanSession}
             />
           )}

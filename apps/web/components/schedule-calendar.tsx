@@ -20,19 +20,26 @@ export function ScheduleCalendar({
   locale,
   topicLabels = {},
   busySessionId,
+  focusedSessionId,
   onUpdateSession,
 }: {
   plan: StudyPlan | null;
   locale: Locale;
   topicLabels?: Record<string, string>;
   busySessionId?: string | null;
+  focusedSessionId?: string | null;
   onUpdateSession: (
     session: StudySession,
     input: { planned_at?: string; minutes?: number; status?: "planned" | "completed" },
   ) => void | boolean | Promise<void | boolean>;
 }) {
   const zh = locale === "zh";
-  const initial = plan?.sessions[0] ? new Date(plan.sessions[0].planned_at) : new Date();
+  const focusedSession = plan?.sessions.find((session) => session.id === focusedSessionId);
+  const initial = focusedSession
+    ? new Date(focusedSession.planned_at)
+    : plan?.sessions[0]
+      ? new Date(plan.sessions[0].planned_at)
+      : new Date();
   const [month, setMonth] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(dateKey(initial));
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -122,7 +129,7 @@ export function ScheduleCalendar({
               return (
                 <button type="button" key={key} className={selectedDate === key ? "calendar-day selected" : "calendar-day"} onClick={() => setSelectedDate(key)}>
                   <span>{date.getDate()}</span>
-                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} key={session.id}>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</i>)}</div>
+                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}${session.id === focusedSessionId ? " focused" : ""}`} data-activity={session.activity ?? "learn"} data-session-id={session.id} data-focused={session.id === focusedSessionId ? "true" : undefined} key={session.id}>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</i>)}</div>
                 </button>
               );
             })}
@@ -133,7 +140,7 @@ export function ScheduleCalendar({
           <h3>{zh ? "当天安排" : "Day schedule"}</h3>
           {selectedSessions.length === 0 ? <p>{zh ? "这一天没有学习任务。" : "No study sessions on this day."}</p> : (
             <ol>{selectedSessions.map((session) => (
-              <li key={session.id}>
+              <li key={session.id} data-session-id={session.id} data-focused={session.id === focusedSessionId ? "true" : undefined}>
                 {editingId === session.id ? (
                   <div className="calendar-editor">
                     <label>{zh ? "日期与时间" : "Date and time"}<input type="datetime-local" value={plannedAt} onChange={(event) => setPlannedAt(event.target.value)} /></label>
@@ -141,7 +148,7 @@ export function ScheduleCalendar({
                     <div><button type="button" disabled={busySessionId === session.id || !plannedAt} onClick={() => void save(session)}>{zh ? "保存" : "Save"}</button><button type="button" onClick={() => setEditingId(null)}>{zh ? "取消" : "Cancel"}</button></div>
                   </div>
                 ) : (
-                  <button type="button" className={`agenda-event activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} onClick={() => beginEdit(session)}>
+                  <button type="button" className={`agenda-event activity-${session.activity ?? "learn"}${session.id === focusedSessionId ? " focused" : ""}`} data-activity={session.activity ?? "learn"} onClick={() => beginEdit(session)}>
                     <i /><span><strong>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</strong><small>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date(session.planned_at))} · {session.minutes} {zh ? "分钟" : "min"}</small></span>
                   </button>
                 )}
