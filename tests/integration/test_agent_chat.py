@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -659,7 +660,10 @@ def test_agent_action_proposal_replays_without_reinvoking_models(tmp_path: Path)
     assert len(intent_transport.calls) == 1
 
 
-def test_agent_action_extraction_failure_degrades_to_plain_reply(tmp_path: Path) -> None:
+def test_agent_action_extraction_failure_degrades_to_plain_reply(
+    tmp_path: Path,
+    caplog,
+) -> None:
     reply_transport = FakeModelTransport(text="Keep reasoning about the question.")
     app = create_app(
         Settings(data_root=tmp_path / "data", _env_file=None),
@@ -671,19 +675,28 @@ def test_agent_action_extraction_failure_degrades_to_plain_reply(tmp_path: Path)
         headers = _headers(user["token"])
         project_id = _seed_project(client, headers)
         _configure_model(app)
-        response = client.post(
-            f"/projects/{project_id}/agent/chat",
-            headers=headers,
-            json={
-                "session_id": "coach-session",
-                "turn_id": "turn-1",
-                "message": "Explain this",
-            },
-        )
+        with caplog.at_level(logging.WARNING, logger="refineq.agent.service"):
+            response = client.post(
+                f"/projects/{project_id}/agent/chat",
+                headers=headers,
+                json={
+                    "session_id": "coach-session",
+                    "turn_id": "turn-1",
+                    "message": "private learner answer",
+                },
+            )
 
     assert response.status_code == 200
     assert response.json()["message"] == "Keep reasoning about the question."
     assert response.json()["action_proposal"] is None
+    operational_logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "refineq.agent.service"
+    )
+    assert "event=intent_extraction_failed reason=model_or_timeout" in operational_logs
+    assert "duration_ms=" in operational_logs
+    assert "private learner answer" not in operational_logs
 
 
 def test_blocked_action_extraction_respects_its_independent_budget(

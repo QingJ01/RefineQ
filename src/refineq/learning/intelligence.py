@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import re
+from time import perf_counter
 from typing import Literal
 
 from openai import OpenAIError
@@ -15,6 +17,28 @@ from refineq.agent.structured import (
 )
 from refineq.knowledge.index import KnowledgeIndex, SearchResult
 from refineq.learning.models import Grounding, LearningMode
+
+logger = logging.getLogger(__name__)
+
+
+def _log_model_event(
+    event: str,
+    *,
+    reason: str,
+    mode: str,
+    started_at: float,
+    level: int = logging.INFO,
+) -> None:
+    """Record only operational metadata; learner and provider content stays out of logs."""
+
+    logger.log(
+        level,
+        "event=%s reason=%s duration_ms=%.1f mode=%s",
+        event,
+        reason,
+        (perf_counter() - started_at) * 1000,
+        mode,
+    )
 
 
 class RubricCriterion(BaseModel):
@@ -301,6 +325,7 @@ class LearningIntelligenceService:
         difficulty_level: int,
         learning_mode: LearningMode = LearningMode.CONCEPT,
     ) -> GeneratedQuestion:
+        started_at = perf_counter()
         try:
             sources = self._knowledge.search(
                 owner_id=owner_id,
@@ -310,9 +335,22 @@ class LearningIntelligenceService:
             )
         except ValueError:
             sources = []
+            _log_model_event(
+                "learning_material_search_skipped",
+                reason="invalid_query",
+                mode="none",
+                started_at=started_at,
+                level=logging.WARNING,
+            )
         try:
             settings = self._settings.load(owner_id)
         except ModelNotConfiguredError:
+            _log_model_event(
+                "learning_question_fallback",
+                reason="model_not_configured",
+                mode="fallback",
+                started_at=started_at,
+            )
             return fallback_question(
                 topic_id=topic_id,
                 topic_name=topic_name,
@@ -353,6 +391,13 @@ class LearningIntelligenceService:
                 response_model=QuestionModelOutput,
             )
         except (OpenAIError, StructuredModelResponseError):
+            _log_model_event(
+                "learning_question_fallback",
+                reason="model_error",
+                mode="fallback",
+                started_at=started_at,
+                level=logging.WARNING,
+            )
             return fallback_question(
                 topic_id=topic_id,
                 topic_name=topic_name,
@@ -360,7 +405,7 @@ class LearningIntelligenceService:
                 sources=sources,
                 learning_mode=learning_mode,
             )
-        return GeneratedQuestion(
+        question = GeneratedQuestion(
             topic_id=topic_id,
             topic_name=topic_name,
             difficulty_level=difficulty_level,
@@ -381,6 +426,13 @@ class LearningIntelligenceService:
             learning_mode=learning_mode,
             mode="ai",
         )
+        _log_model_event(
+            "learning_question_completed",
+            reason="none",
+            mode="ai",
+            started_at=started_at,
+        )
+        return question
 
     def grade_answer(
         self,
@@ -389,9 +441,16 @@ class LearningIntelligenceService:
         question: GeneratedQuestion,
         answer: str,
     ) -> GradingResult:
+        started_at = perf_counter()
         try:
             settings = self._settings.load(owner_id)
         except ModelNotConfiguredError:
+            _log_model_event(
+                "learning_grading_fallback",
+                reason="model_not_configured",
+                mode="fallback",
+                started_at=started_at,
+            )
             return fallback_grade(question, answer)
         rubric = "\n".join(
             f"- {item.criterion}: {item.max_points} points" for item in question.rubric
@@ -423,10 +482,17 @@ class LearningIntelligenceService:
                 response_model=GradingModelOutput,
             )
         except (OpenAIError, StructuredModelResponseError):
+            _log_model_event(
+                "learning_grading_fallback",
+                reason="model_error",
+                mode="fallback",
+                started_at=started_at,
+                level=logging.WARNING,
+            )
             return fallback_grade(question, answer)
         deterministic_evidence = fallback_grade(question, answer).mastery_evidence
         mastery_evidence = deterministic_evidence and output.sufficient_evidence
-        return GradingResult(
+        result = GradingResult(
             score=output.score,
             passed=output.score >= question.pass_score and mastery_evidence,
             strengths=output.strengths,
@@ -437,3 +503,10 @@ class LearningIntelligenceService:
             mode="ai",
             mastery_evidence=mastery_evidence,
         )
+        _log_model_event(
+            "learning_grading_completed",
+            reason="none",
+            mode="ai",
+            started_at=started_at,
+        )
+        return result

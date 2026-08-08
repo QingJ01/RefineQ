@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from refineq.agent.settings import ModelSettings, ModelSettingsRepository
@@ -149,22 +150,26 @@ def test_fallback_tasks_change_with_the_selected_learning_mode() -> None:
 
 def test_question_generation_falls_back_when_model_is_not_configured(
     tmp_path: Path,
+    caplog,
 ) -> None:
     service, transport = _service(tmp_path, configured=False)
 
-    question = service.generate_question(
-        owner_id="owner",
-        workspace_id="calculus",
-        topic_id="limits",
-        topic_name="函数极限",
-        mastery=0.25,
-        difficulty_level=2,
-    )
+    with caplog.at_level(logging.INFO):
+        question = service.generate_question(
+            owner_id="owner-private-id",
+            workspace_id="calculus-private-id",
+            topic_id="limits-private-id",
+            topic_name="函数极限",
+            mastery=0.25,
+            difficulty_level=2,
+        )
 
     assert question.mode == "fallback"
     assert question.prompt
     assert question.expected_answer
     assert transport.calls == []
+    assert "event=learning_question_fallback reason=model_not_configured" in caplog.text
+    assert "private-id" not in caplog.text
 
 
 def test_generates_ai_question_without_sources_when_model_configured(tmp_path: Path) -> None:
@@ -215,6 +220,36 @@ def test_falls_back_without_sources_when_model_is_not_configured(tmp_path: Path)
     assert question.mode == "fallback"
     assert question.citations == []
     assert transport.calls == []
+
+
+def test_fallback_grading_log_contains_only_operational_metadata(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    service, _ = _service(tmp_path, configured=False)
+    question = fallback_question(
+        topic_id="private-topic-id",
+        topic_name="Private topic name",
+        difficulty_level=2,
+        sources=[],
+    )
+
+    with caplog.at_level(logging.INFO, logger="refineq.learning.intelligence"):
+        service.grade_answer(
+            owner_id="private-owner-id",
+            question=question,
+            answer="private learner answer",
+        )
+
+    operational_logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "refineq.learning.intelligence"
+    )
+    assert "event=learning_grading_fallback reason=model_not_configured" in operational_logs
+    assert "duration_ms=" in operational_logs
+    assert "mode=fallback" in operational_logs
+    assert "private" not in operational_logs
 
 
 def test_ai_grading_returns_explainable_feedback_and_valid_citations(

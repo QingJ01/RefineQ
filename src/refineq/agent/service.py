@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,6 +29,8 @@ from refineq.storage.json_store import RecordNotFoundError, validate_identifier
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
+
+logger = logging.getLogger(__name__)
 
 MAX_SESSION_MESSAGES = 20
 MAX_SESSION_TURNS = 20
@@ -329,10 +332,15 @@ class AgentService:
             topic_id: BKTState.model_validate(state).p_mastery
             for topic_id, state in progress["bkt_states"].items()
         }
+        topic_names = {
+            topic_id: str(topic.get("name") or topic_id)
+            for topic_id, topic in progress["topics"].items()
+        }
         context = build_agent_context(
             goal=progress["goal"],
             plan=progress.get("plan"),
             mastery=mastery,
+            topic_names=topic_names,
             sources=sources,
             session_context=(
                 payload.session_context.model_dump(exclude_none=True)
@@ -444,7 +452,17 @@ class AgentService:
             try:
                 extraction = intent_future.result(timeout=remaining)
             except (OpenAIError, TimeoutError, StructuredModelResponseError, ValueError):
+                logger.warning(
+                    "event=intent_extraction_failed reason=model_or_timeout "
+                    "duration_ms=%.1f mode=async",
+                    (perf_counter() - intent_started_at) * 1000,
+                )
                 extraction = None
+            else:
+                logger.info(
+                    "event=intent_extraction_completed reason=none duration_ms=%.1f mode=async",
+                    (perf_counter() - intent_started_at) * 1000,
+                )
             if extraction is not None and extraction.action is not None:
                 latest = self._learning.get(owner_id, project_id).data.get("progress", {})
                 timezone = (

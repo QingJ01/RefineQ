@@ -13,6 +13,7 @@ def build_agent_context(
     goal: str,
     plan: dict[str, Any] | None,
     mastery: dict[str, float],
+    topic_names: dict[str, str],
     sources: list[SearchResult],
     session_context: dict[str, str] | None = None,
 ) -> str:
@@ -23,7 +24,12 @@ def build_agent_context(
         "goal": goal,
         "study_plan": plan,
         "weakest_knowledge_points": [
-            {"topic": topic, "mastery": round(score, 3)} for topic, score in weak_points
+            {
+                "topic_id": topic_id,
+                "topic": topic_names.get(topic_id, topic_id),
+                "mastery": round(score, 3),
+            }
+            for topic_id, score in weak_points
         ],
         "retrieved_materials": [
             {

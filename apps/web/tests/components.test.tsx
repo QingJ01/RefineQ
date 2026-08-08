@@ -358,6 +358,7 @@ describe("focused learning components", () => {
           explanation: "这道题用于检验你能否从行为证据识别真实需求。",
           grounding,
           sources,
+          mode: "ai",
         } : null}
         answer=""
         result={reflect ? {
@@ -372,7 +373,7 @@ describe("focused learning components", () => {
           feedback: "已经区分了表面诉求与行为证据。",
           strengths: ["引用了行为证据"],
           gaps: [],
-          misconceptions: [],
+          misconceptions: ["misread observed behavior as stated preference"],
           citations: [],
           sources,
           grounding,
@@ -401,6 +402,7 @@ describe("focused learning components", () => {
     const recoveryHtml = renderGrounding("material", [source], true, false);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
+    expect(materialHtml).toContain('data-testid="question-generation-mode"');
     expect(materialHtml).toContain('data-testid="question-explanation"');
     expect(materialHtml).toContain("这道题用于检验你能否从行为证据识别真实需求。");
     expect(materialHtml).toContain("材料依据");
@@ -410,6 +412,9 @@ describe("focused learning components", () => {
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
+    expect(feedbackHtml).toContain('data-testid="grading-mode"');
+    expect(feedbackHtml).toContain('data-testid="feedback-misconceptions"');
+    expect(feedbackHtml).toContain("misread observed behavior as stated preference");
     expect(feedbackHtml).toContain("材料依据");
     expect(feedbackHtml).toContain('data-testid="feedback-sources"');
     expect(feedbackHtml).toContain("用户访谈原文.md");
