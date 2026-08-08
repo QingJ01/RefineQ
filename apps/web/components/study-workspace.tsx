@@ -2,41 +2,45 @@
 
 import {
   Archive,
-  Bot,
   BookOpen,
   CalendarDays,
+  ChartNoAxesColumnIncreasing,
+  ChevronsUpDown,
+  House,
   Languages,
   LogOut,
-  NotebookTabs,
   Settings2,
   Sparkles,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AgentPanel } from "@/components/agent-panel";
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
 import { EvidenceLedger } from "@/components/evidence-ledger";
 import { LearningHome } from "@/components/learning-home";
+import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
-import { PracticeCard } from "@/components/practice-card";
 import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
 import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
+import { inferLearningMode } from "@/lib/learning-session";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
   loadLearningSession,
+  saveLearningLocale,
   saveLearningSession,
 } from "@/lib/session";
 import type {
   AnswerResult,
   AuthResponse,
   LearningEvidence,
+  LearningMode,
   LearningWorkspace,
   Locale,
   MaterialRecord,
@@ -50,6 +54,7 @@ import type {
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
+import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
 
 const ROUTE_NOTICE_KEY = "refineq.workspace-route-notice";
 
@@ -76,7 +81,8 @@ export function StudyWorkspace({
   const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<AnswerResult | null>(null);
-  const [practiceDifficulty, setPracticeDifficulty] = useState<number | null>(null);
+  const [learningMode, setLearningMode] = useState<LearningMode>("concept");
+  const [coachSessionId, setCoachSessionId] = useState<string | undefined>();
   const section = initialSection;
   const [homeBusy, setHomeBusy] = useState(false);
   const [practiceBusy, setPracticeBusy] = useState(false);
@@ -85,6 +91,8 @@ export function StudyWorkspace({
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
   const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const questionRequestIdRef = useRef<string | null>(null);
+  const attemptIdRef = useRef<string | null>(null);
 
   function reportError(caught: unknown) {
     setError(
@@ -103,15 +111,38 @@ export function StudyWorkspace({
     setEvidence(snapshot.evidence);
     setMaterials(snapshot.materials);
     setSavedQuestions(snapshot.saved_questions ?? []);
-    setQuestion(null);
-    setResult(null);
-    setAnswer("");
+    const activeQuestion = snapshot.active_question ?? null;
+    setLearningMode(
+      activeQuestion?.learning_mode
+      ?? inferLearningMode(snapshot.workspace.subject, snapshot.workspace.goal),
+    );
+    setCoachSessionId(undefined);
+    setQuestion(activeQuestion);
+    setResult(snapshot.last_answer ?? null);
+    const draftKey = activeQuestion
+      ? `refineq.practice-draft:${snapshot.workspace.id}:${activeQuestion.id}`
+      : null;
+    setAnswer(
+      snapshot.last_answer || !draftKey
+        ? ""
+        : window.sessionStorage.getItem(draftKey) ?? "",
+    );
+    questionRequestIdRef.current = null;
+    attemptIdRef.current = null;
   }
+
+  const redirectUnavailableWorkspace = useCallback(() => {
+    window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+    setWorkspace(null);
+    setRoute(null);
+    setPreviousWorkspaceId(null);
+    router.replace("/");
+  }, [router]);
 
   useEffect(() => {
     let active = true;
     async function restore() {
-      const saved = loadLearningSession(window.localStorage);
+      const saved = loadLearningSession(window.sessionStorage);
       if (!saved) {
         if (active) setRestoring(false);
         return;
@@ -131,17 +162,30 @@ export function StudyWorkspace({
         if (!active) return;
         setAuth(restoredAuth);
         setWorkspaces(recent);
-        const selectedId = initialWorkspaceId ?? (saved.home ? undefined : saved.workspaceId);
-        const selected = recent.find((item) => item.id === selectedId);
-        if (selected) {
+        const selectedId = initialWorkspaceId;
+        const resolution = resolveRequestedWorkspace(selectedId, recent);
+        if (resolution.kind === "home") {
+          saveLearningSession(window.sessionStorage, {
+            token: saved.token,
+            workspaceId: saved.workspaceId,
+            locale: saved.locale ?? "zh",
+          });
+          setWorkspace(null);
+          return;
+        }
+        if (resolution.kind === "unavailable") {
+          redirectUnavailableWorkspace();
+          return;
+        }
+        if (resolution.kind === "workspace") {
+          const selected = resolution.workspace;
           const snapshot = await api.getWorkspaceSnapshot(saved.token, selected.id);
           if (!active) return;
           applySnapshot(snapshot);
-          saveLearningSession(window.localStorage, {
+          saveLearningSession(window.sessionStorage, {
             token: saved.token,
             workspaceId: selected.id,
             locale: saved.locale ?? "zh",
-            home: false,
           });
           const rawNotice = window.sessionStorage.getItem(ROUTE_NOTICE_KEY);
           if (rawNotice) {
@@ -162,7 +206,10 @@ export function StudyWorkspace({
       } catch (caught) {
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
-          clearLearningSession(window.localStorage);
+          clearLearningSession(window.sessionStorage);
+          router.replace("/");
+        } else if (caught instanceof ApiError && caught.status === 404 && initialWorkspaceId) {
+          redirectUnavailableWorkspace();
         } else {
           setError(caught instanceof Error ? caught.message : "Unable to restore the learning session");
         }
@@ -172,23 +219,39 @@ export function StudyWorkspace({
     }
     void restore();
     return () => { active = false; };
-  }, [initialWorkspaceId]);
+  }, [initialWorkspaceId, redirectUnavailableWorkspace, router]);
+
+  useEffect(() => {
+    if (!route) return;
+    const timeout = window.setTimeout(() => {
+      window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
+      setRoute(null);
+      setPreviousWorkspaceId(null);
+    }, 7000);
+    return () => window.clearTimeout(timeout);
+  }, [route]);
 
   async function authenticated(response: AuthResponse) {
+    if (initialWorkspaceId) setHomeBusy(true);
     setAuth(response);
     setError("");
-    saveLearningSession(window.localStorage, {
+    saveLearningSession(window.sessionStorage, {
       token: response.access_token,
       locale,
-      home: !initialWorkspaceId,
     });
     try {
       const recent = await api.listWorkspaces(response.access_token);
       setWorkspaces(recent);
       const selected = recent.find((item) => item.id === initialWorkspaceId);
-      if (selected) await openWorkspace(selected, response.access_token, initialSection);
+      if (initialWorkspaceId && !selected) {
+        redirectUnavailableWorkspace();
+        return;
+      }
+      if (selected) await openWorkspace(selected, response.access_token, initialSection, "replace");
     } catch (caught) {
       reportError(caught);
+    } finally {
+      if (initialWorkspaceId) setHomeBusy(false);
     }
   }
 
@@ -196,6 +259,7 @@ export function StudyWorkspace({
     target: LearningWorkspace,
     token = auth?.access_token,
     targetSection: LearningSection = "today",
+    navigation: "push" | "replace" = "push",
   ) {
     if (!token) return;
     setHomeBusy(true);
@@ -203,13 +267,16 @@ export function StudyWorkspace({
     try {
       const snapshot = await api.getWorkspaceSnapshot(token, target.id);
       applySnapshot(snapshot);
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token,
         workspaceId: target.id,
         locale,
-        home: false,
       });
-      router.push(learningPath(target.id, targetSection));
+      if (navigation === "replace") {
+        router.replace(learningPath(target.id, targetSection));
+      } else {
+        router.push(learningPath(target.id, targetSection));
+      }
     } catch (caught) {
       reportError(caught);
     } finally {
@@ -223,7 +290,7 @@ export function StudyWorkspace({
     setError("");
     try {
       const route = await api.resolveWorkspace(auth.access_token, intent);
-      const saved = loadLearningSession(window.localStorage);
+      const saved = loadLearningSession(window.sessionStorage);
       const previousId = workspace?.id ?? saved?.workspaceId ?? null;
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
       applySnapshot(snapshot);
@@ -234,11 +301,10 @@ export function StudyWorkspace({
         previousWorkspaceId: previousId === route.workspace.id ? null : previousId,
       }));
       setWorkspaces(await api.listWorkspaces(auth.access_token));
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token: auth.access_token,
         workspaceId: route.workspace.id,
         locale,
-        home: false,
       });
       router.push(learningPath(route.workspace.id, "today"));
     } catch (caught) {
@@ -252,13 +318,25 @@ export function StudyWorkspace({
     if (!auth || !workspace) return;
     setPracticeBusy(true);
     setError("");
+    questionRequestIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     try {
       await loadNextQuestion(
-        () => api.getWorkspaceQuestion(auth.access_token, workspace.id, request),
+        () => api.createWorkspaceQuestion(auth.access_token, workspace.id, {
+          requestId: questionRequestIdRef.current ?? undefined,
+          learningMode,
+          ...request,
+        }),
         (nextQuestion) => {
+          if (question) {
+            window.sessionStorage.removeItem(
+              `refineq.practice-draft:${workspace.id}:${question.id}`,
+            );
+          }
           setQuestion(nextQuestion);
           setResult(null);
           setAnswer("");
+          questionRequestIdRef.current = null;
+          attemptIdRef.current = null;
         },
       );
     } catch (caught) {
@@ -271,18 +349,24 @@ export function StudyWorkspace({
   async function submitAnswer() {
     if (!auth || !workspace || !question) return;
     setPracticeBusy(true);
+    attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     try {
-      setResult(
-        await api.submitWorkspaceAnswer(
+      const graded = await api.submitWorkspaceAnswer(
           auth.access_token,
           workspace.id,
           question.id,
           answer,
-        ),
+          attemptIdRef.current,
+        );
+      setResult(graded);
+      attemptIdRef.current = null;
+      window.sessionStorage.removeItem(
+        `refineq.practice-draft:${workspace.id}:${question.id}`,
       );
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
       setProgress(snapshot.progress);
       setEvidence(snapshot.evidence);
+      setPlan(snapshot.plan);
     } catch (caught) {
       reportError(caught);
     } finally {
@@ -315,9 +399,12 @@ export function StudyWorkspace({
   }
 
   async function practiceTopic(topicId: string, difficulty?: number) {
+    if (!workspace) return;
+    router.push(learningPath(workspace.id, "today"));
     await getQuestion({
       topicId,
-      difficulty: difficulty ?? practiceDifficulty ?? undefined,
+      difficulty,
+      learningMode,
       replace: question !== null,
     });
     window.requestAnimationFrame(() => {
@@ -382,6 +469,34 @@ export function StudyWorkspace({
       setMaterials((current) => current.filter((item) => item.id !== material.id));
     } catch (caught) {
       reportError(caught);
+    }
+  }
+
+  async function askSessionCoach(message: string) {
+    if (!auth || !workspace) throw new Error(t("error"));
+    const reply = await api.chatWorkspace(
+      auth.access_token,
+      workspace.id,
+      message,
+      coachSessionId,
+      crypto.randomUUID(),
+      undefined,
+      {
+        learning_mode: learningMode,
+        stage: result ? "reflect" : question ? "practice" : "learn",
+        question: question?.prompt,
+        draft: answer || undefined,
+        feedback: result?.feedback,
+      },
+    );
+    setCoachSessionId(reply.session_id);
+    return reply;
+  }
+
+  function changeLearningMode(mode: LearningMode) {
+    setLearningMode(mode);
+    if (question) {
+      void getQuestion({ learningMode: mode, replace: true });
     }
   }
 
@@ -472,26 +587,34 @@ export function StudyWorkspace({
     setPreviousWorkspaceId(null);
   }
 
-  function logout() {
-    clearLearningSession(window.localStorage);
-    setAuth(null);
-    setWorkspace(null);
-    setWorkspaces([]);
-  }
-
-  function returnHome() {
+  function prepareRouteNavigation() {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
     setRoute(null);
     setPreviousWorkspaceId(null);
+  }
+
+  function prepareHomeNavigation() {
+    prepareRouteNavigation();
     if (auth) {
-      saveLearningSession(window.localStorage, {
+      saveLearningSession(window.sessionStorage, {
         token: auth.access_token,
         workspaceId: workspace?.id,
         locale,
-        home: true,
       });
     }
     setWorkspace(null);
+  }
+
+  function logout() {
+    clearLearningSession(window.sessionStorage);
+    setAuth(null);
+    setWorkspace(null);
+    setWorkspaces([]);
+    router.replace("/");
+  }
+
+  function returnHome() {
+    prepareHomeNavigation();
     router.push("/");
   }
 
@@ -499,18 +622,36 @@ export function StudyWorkspace({
     const next = locale === "zh" ? "en" : "zh";
     setLocale(next);
     if (auth) {
-      saveLearningSession(window.localStorage, {
-        token: auth.access_token,
-        workspaceId: workspace?.id,
-        locale: next,
-        home: !workspace,
-      });
+      saveLearningLocale(window.sessionStorage, auth.access_token, next, workspace?.id);
     }
     document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
   }
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
   if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
+  if (!workspace && initialWorkspaceId) {
+    const retryTarget = workspaces.find((item) => item.id === initialWorkspaceId);
+    return (
+      <main id="main-content" className="workspace-route-state" data-testid="workspace-route-state">
+        <BrandMark size={48} />
+        <span className="kicker">REFINEQ / LEARNING SPACE</span>
+        <h1>{homeBusy && !error ? t("loading") : t("workspaceOpenFailed")}</h1>
+        <p>{error || (locale === "zh" ? "正在恢复这个空间的资料与学习进度。" : "Restoring this space, its sources, and progress.")}</p>
+        <div>
+          {retryTarget && !homeBusy && (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => void openWorkspace(retryTarget, auth.access_token, initialSection, "replace")}
+            >
+              {t("retry")}
+            </button>
+          )}
+          <Link className="primary-action" href="/">{t("backLearningHome")}</Link>
+        </div>
+      </main>
+    );
+  }
   if (!workspace) {
     return (
       <>
@@ -539,95 +680,99 @@ export function StudyWorkspace({
     / Math.max(1, masteryValues.length);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
+    { id: "path", icon: CalendarDays },
     { id: "materials", icon: Archive },
     { id: "calendar", icon: CalendarDays },
-    { id: "evidence", icon: NotebookTabs },
-    { id: "coach", icon: Bot },
+    { id: "progress", icon: ChartNoAxesColumnIncreasing },
   ];
 
   return (
     <main id="main-content" className="workspace-shell">
       <aside className="workspace-sidebar">
-        <button className="sidebar-brand wordmark-button" onClick={returnHome} aria-label="RefineQ">
+        <Link className="sidebar-brand wordmark-button" href="/" onClick={prepareRouteNavigation} aria-label="RefineQ">
           <BrandMark className="brand-mark" size={36} />
           <BrandName />
-        </button>
-        <nav className="workspace-nav" aria-label="Study sections">
+        </Link>
+        <Link
+          data-testid="workspace-home-link"
+          className="workspace-home-link"
+          href="/"
+          onClick={prepareRouteNavigation}
+        >
+          <House size={18} />
+          <span>{t("learningHome")}</span>
+        </Link>
+        <Link
+          data-testid="workspace-switcher"
+          className="workspace-switcher"
+          href="/"
+          onClick={prepareRouteNavigation}
+          aria-label={`${t("switchSpace")}: ${workspace.title}`}
+        >
+          <span className="workspace-switcher-heading">
+            <span className="kicker">{t("currentSpace")}</span>
+            <ChevronsUpDown size={15} />
+          </span>
+          <strong>{workspace.title}</strong>
+          <span className="workspace-switcher-topic">
+            {progress?.topics ? Object.values(progress.topics)[0] : workspace.topics[0]}
+          </span>
+          <span className="workspace-switcher-progress">
+            <span>{t("learningProgress")}</span>
+            <strong>{Math.round(averageMastery * 100)}%</strong>
+          </span>
+          <i><b style={{ width: `${Math.round(averageMastery * 100)}%` }} /></i>
+        </Link>
+        <span className="workspace-nav-label">{t("workspaceSections")}</span>
+        <nav className="workspace-nav" aria-label={t("workspaceSections")}>
           {nav.map(({ id, icon: Icon }) => (
-            <button
+            <Link
               key={id}
               data-testid={`nav-${id}`}
               className={section === id ? "active" : ""}
-              onClick={() => {
-                router.push(`/learn/${workspace.id}/${id}`);
-              }}
+              href={learningPath(workspace.id, id)}
+              onClick={prepareRouteNavigation}
               aria-label={t(id)}
               aria-current={section === id ? "page" : undefined}
             >
               <Icon size={19} />
               <span>{t(id)}</span>
-            </button>
+            </Link>
           ))}
           {auth.user.role === "admin" && (
-            <button
+            <Link
               data-testid="nav-admin"
-              onClick={() => router.push("/admin")}
-              aria-label="管理"
+              href="/admin"
+              aria-label={t("administration")}
             >
               <Settings2 size={19} />
-              <span>管理</span>
-            </button>
+              <span>{t("administration")}</span>
+            </Link>
           )}
         </nav>
-        <div className="sidebar-learning">
-          <span className="kicker">CURRENT LEARNING</span>
-          <strong>{workspace.title}</strong>
-          <p>{workspace.goal}</p>
-          <button className="quiet-button switch-learning" onClick={returnHome}>
-            <Sparkles size={15} /> {t("recentLearning")}
-          </button>
-        </div>
         <div className="sidebar-actions">
           <button className="quiet-button" onClick={toggleLocale}><Languages size={16} /> {t("language")}</button>
           <button className="quiet-button" onClick={logout}><LogOut size={16} /> {t("logout")}</button>
         </div>
       </aside>
       <section className="workspace-stage">
-        <header className="workspace-header">
-          <div>
-            <span className="kicker">{t("workspaceEyebrow")}</span>
-            <h1>{workspace.title}</h1>
-            <p>{workspace.goal}</p>
-          </div>
-          <span className="workspace-date">
-            {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            }).format(new Date())}
-          </span>
-        </header>
-        <div className="workspace-progress">
-          <div className="progress-copy">
-            <strong>{Math.round(averageMastery * 100)}%</strong>
-            <span>{t("mastery")}</span>
-          </div>
-          <div
-            className="progress-track"
-            role="progressbar"
-            aria-label={t("mastery")}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(averageMastery * 100)}
-          >
-            <span style={{ width: `${Math.round(averageMastery * 100)}%` }} />
-          </div>
-          <dl className="progress-stats">
-            <div><dt>{t("attempts")}</dt><dd>{progress?.attempt_count ?? 0}</dd></div>
-            <div><dt>{t("diagnostic")}</dt><dd>{progress?.diagnostic_count ?? 0}</dd></div>
-          </dl>
-        </div>
-        <section className="workspace-content">
+        {section !== "today" && (
+          <header className="workspace-header">
+            <div>
+              <span className="kicker">{t("workspaceEyebrow")}</span>
+              <h1>{workspace.title}</h1>
+              <p>{workspace.goal}</p>
+            </div>
+            <span className="workspace-date">
+              {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              }).format(new Date())}
+            </span>
+          </header>
+        )}
+        <section className={`workspace-content workspace-content-${section}`}>
           {route && (
             <div className="workspace-route-notice" data-testid="workspace-route-notice" role="status">
               <Sparkles size={18} />
@@ -641,37 +786,53 @@ export function StudyWorkspace({
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span><button aria-label={t("routingDismiss")} onClick={() => setError("")}>×</button></div>}
           {section === "today" && (
-            <div className="today-grid">
-              <div className="daily-heading"><span className="kicker">TODAY&apos;S FOCUS</span><h2>{t("today")}</h2></div>
-               <PlanTimeline
-                 plan={plan}
-                 locale={locale}
-                 t={t}
-                 onUpdateSession={updatePlanSession}
-                 onStartSession={(session) => practiceTopic(session.topic_id)}
-                 busySessionId={busySessionId}
-                 topicLabels={progress?.topics}
-               />
-               <PracticeCard
-                 question={question}
-                 answer={answer}
-                 result={result}
-                 busy={practiceBusy}
-                 difficulty={practiceDifficulty}
-                 savedQuestions={savedQuestions}
-                 onAnswerChange={setAnswer}
-                 onGetQuestion={getQuestion}
-                 onSubmit={submitAnswer}
-                 onDifficultyChange={setPracticeDifficulty}
-                 onToggleSaved={toggleSavedQuestion}
-                 t={t}
-               />
-               <ProgressInsights
-                 progress={progress}
-                 t={t}
-                 onPracticeTopic={practiceTopic}
-                 topicLabels={progress?.topics}
-               />
+            <LearningSessionCanvas
+              locale={locale}
+              t={t}
+              workspace={workspace}
+              plan={plan}
+              progress={progress}
+              materials={materials}
+              question={question}
+              answer={answer}
+              result={result}
+              busy={practiceBusy}
+              learningMode={learningMode}
+              savedQuestions={savedQuestions}
+              onLearningModeChange={changeLearningMode}
+              onAnswerChange={(value) => {
+                setAnswer(value);
+                if (question) {
+                  window.sessionStorage.setItem(
+                    `refineq.practice-draft:${workspace.id}:${question.id}`,
+                    value,
+                  );
+                }
+              }}
+              onStartTask={() => getQuestion({ learningMode })}
+              onSubmit={submitAnswer}
+              onNextTask={() => getQuestion({ learningMode, replace: true })}
+              onToggleSaved={toggleSavedQuestion}
+              onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
+              onAskCoach={askSessionCoach}
+            />
+          )}
+          {section === "path" && (
+            <div className="learning-path-view" data-testid="learning-path-view">
+              <div className="page-section-heading">
+                <span className="kicker">PATH / ADAPTIVE</span>
+                <h2>{t("path")}</h2>
+                <p>{locale === "zh" ? "围绕能力目标组织每次学习，而不是堆积重复日程。" : "Each session advances the capability goal without a wall of repeated dates."}</p>
+              </div>
+              <PlanTimeline
+                plan={plan}
+                locale={locale}
+                t={t}
+                onUpdateSession={updatePlanSession}
+                onStartSession={(session) => practiceTopic(session.topic_id)}
+                busySessionId={busySessionId}
+                topicLabels={progress?.topics}
+              />
             </div>
           )}
           {section === "materials" && (
@@ -695,15 +856,21 @@ export function StudyWorkspace({
               onUpdateSession={updatePlanSession}
             />
           )}
-          {section === "evidence" && <EvidenceLedger evidence={evidence} locale={locale} t={t} />}
-          {section === "coach" && (
-            <AgentPanel
-              token={auth.access_token}
-              workspaceId={workspace.id}
-              t={t}
-              isAdmin={auth.user.role === "admin"}
-              onOpenSettings={() => router.push("/admin/integrations/chat")}
-            />
+          {section === "progress" && (
+            <div className="learning-progress-view" data-testid="learning-progress-view">
+              <div className="page-section-heading">
+                <span className="kicker">PROGRESS / CAPABILITY</span>
+                <h2>{t("progress")}</h2>
+                <p>{locale === "zh" ? "把能力变化、实践反馈和下一步安排放在一起。" : "Capability change, task feedback, and next actions in one place."}</p>
+              </div>
+              <ProgressInsights
+                progress={progress}
+                t={t}
+                onPracticeTopic={practiceTopic}
+                topicLabels={progress?.topics}
+              />
+              <EvidenceLedger evidence={evidence} locale={locale} t={t} />
+            </div>
           )}
         </section>
       </section>

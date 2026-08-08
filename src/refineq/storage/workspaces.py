@@ -87,9 +87,7 @@ class WorkspaceRepository:
             for record in self._store.list(owner_id, "workspaces")
         ]
         visible = (
-            workspaces
-            if include_archived
-            else [item for item in workspaces if not item.archived]
+            workspaces if include_archived else [item for item in workspaces if not item.archived]
         )
         return sorted(
             visible,

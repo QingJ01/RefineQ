@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
@@ -16,6 +16,8 @@ from refineq.learning.service import (
     PlanSessionUpdate,
     ProgressResponse,
     ProjectNotFoundError,
+    QuestionNotFoundError,
+    QuestionRequest,
     QuestionResponse,
     QuestionSaveRequest,
     SavedQuestionResponse,
@@ -30,7 +32,7 @@ workspace_router = APIRouter(
 
 
 def _raise_api_error(error: LearningServiceError) -> None:
-    if isinstance(error, ProjectNotFoundError):
+    if isinstance(error, (ProjectNotFoundError, QuestionNotFoundError)):
         status_code = status.HTTP_404_NOT_FOUND
     elif isinstance(error, (LearningNotSeededError, LearningConflictError)):
         status_code = status.HTTP_409_CONFLICT
@@ -76,44 +78,68 @@ def create_plan(project_id: str, request: Request, user: CurrentUser) -> StudyPl
         _raise_api_error(error)
 
 
-@router.get("/question", response_model=QuestionResponse)
-def question(
+@router.post("/question", response_model=QuestionResponse)
+def create_question(
     project_id: str,
+    payload: QuestionRequest,
     request: Request,
     user: CurrentUser,
-    topic_id: str | None = None,
-    difficulty: int | None = Query(default=None, ge=1, le=5),
-    replace: bool = False,
 ) -> QuestionResponse:
     try:
         return request.app.state.learning_service.next_question(
             user.id,
             project_id,
-            topic_id=topic_id,
-            difficulty_level=difficulty,
-            replace_pending=replace,
+            topic_id=payload.topic_id,
+            difficulty_level=payload.difficulty,
+            learning_mode=payload.mode,
+            replace_pending=payload.replace,
+            request_id=payload.request_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
 
 
-@workspace_router.get("/question", response_model=QuestionResponse)
-def workspace_question(
+@workspace_router.post("/question", response_model=QuestionResponse)
+def create_workspace_question(
     workspace_id: str,
+    payload: QuestionRequest,
     request: Request,
     user: CurrentUser,
-    topic_id: str | None = None,
-    difficulty: int | None = Query(default=None, ge=1, le=5),
-    replace: bool = False,
 ) -> QuestionResponse:
     try:
         return request.app.state.workspace_learning_service.next_question(
             user.id,
             workspace_id,
-            topic_id=topic_id,
-            difficulty_level=difficulty,
-            replace_pending=replace,
+            topic_id=payload.topic_id,
+            difficulty_level=payload.difficulty,
+            learning_mode=payload.mode,
+            replace_pending=payload.replace,
+            request_id=payload.request_id,
         )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@router.get("/question", response_model=QuestionResponse)
+def pending_question(
+    project_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> QuestionResponse:
+    try:
+        return request.app.state.learning_service.pending_question(user.id, project_id)
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.get("/question", response_model=QuestionResponse)
+def pending_workspace_question(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> QuestionResponse:
+    try:
+        return request.app.state.workspace_learning_service.pending_question(user.id, workspace_id)
     except LearningServiceError as error:
         _raise_api_error(error)
 

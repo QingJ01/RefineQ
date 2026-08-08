@@ -19,7 +19,7 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
 
   useEffect(() => {
     let active = true;
-    const session = loadLearningSession(window.localStorage);
+    const session = loadLearningSession(window.sessionStorage);
     if (!session) {
       router.replace("/");
       return () => { active = false; };
@@ -41,7 +41,7 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
       .catch((caught: unknown) => {
         if (!active) return;
         if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
-          clearLearningSession(window.localStorage);
+          clearLearningSession(window.sessionStorage);
           router.replace("/");
         } else {
           setVerificationError(caught instanceof Error ? caught.message : "Verification failed");
@@ -51,7 +51,7 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
   }, [router, verificationNonce]);
 
   function logout() {
-    clearLearningSession(window.localStorage);
+    clearLearningSession(window.sessionStorage);
     router.replace("/");
   }
 
@@ -78,8 +78,8 @@ export function AdminRoute({ activeKind }: { activeKind?: IntegrationKind }) {
       onLogout={logout}
       onToggleLocale={() => setLocale((current) => {
         const next = current === "zh" ? "en" : "zh";
-        const session = loadLearningSession(window.localStorage);
-        if (session) saveLearningSession(window.localStorage, { ...session, locale: next });
+        const session = loadLearningSession(window.sessionStorage);
+        if (session) saveLearningSession(window.sessionStorage, { ...session, locale: next });
         document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
         return next;
       })}

@@ -1,5 +1,6 @@
 import type {
   AgentReply,
+  AgentSessionContext,
   AgentSessionDetail,
   AgentSessionSummary,
   AdminOverview,
@@ -185,17 +186,34 @@ export class ApiClient {
   getWorkspaceQuestion(
     token: string,
     workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<PracticeQuestion> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/question`,
+      { signal },
+      token,
+    );
+  }
+
+  createWorkspaceQuestion(
+    token: string,
+    workspaceId: string,
     options: PracticeRequest = {},
     signal?: AbortSignal,
   ): Promise<PracticeQuestion> {
-    const query = new URLSearchParams();
-    if (options.topicId) query.set("topic_id", options.topicId);
-    if (options.difficulty !== undefined) query.set("difficulty", String(options.difficulty));
-    if (options.replace) query.set("replace", "true");
-    const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request(
-      `/workspaces/${workspaceId}/learning/question${suffix}`,
-      { signal },
+      `/workspaces/${workspaceId}/learning/question`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({
+          request_id: options.requestId ?? crypto.randomUUID().replaceAll("-", ""),
+          topic_id: options.topicId,
+          difficulty: options.difficulty,
+          mode: options.learningMode ?? "concept",
+          replace: options.replace ?? false,
+        }),
+      },
       token,
       this.longRequestTimeouts.model,
     );
@@ -230,6 +248,7 @@ export class ApiClient {
     workspaceId: string,
     questionId: string,
     answer: string,
+    attemptId?: string,
     signal?: AbortSignal,
   ): Promise<AnswerResult> {
     return this.request(
@@ -238,7 +257,7 @@ export class ApiClient {
         method: "POST",
         signal,
         body: JSON.stringify({
-          attempt_id: crypto.randomUUID().replaceAll("-", ""),
+          attempt_id: attemptId ?? crypto.randomUUID().replaceAll("-", ""),
           question_id: questionId,
           answer,
         }),
@@ -328,12 +347,18 @@ export class ApiClient {
     sessionId?: string,
     turnId?: string,
     signal?: AbortSignal,
+    sessionContext?: AgentSessionContext,
   ): Promise<AgentReply> {
     return this.request(
       `/workspaces/${workspaceId}/agent/chat`,
       {
         method: "POST",
-        body: JSON.stringify({ message, session_id: sessionId, turn_id: turnId }),
+        body: JSON.stringify({
+          message,
+          session_id: sessionId,
+          turn_id: turnId,
+          session_context: sessionContext,
+        }),
         signal,
       },
       token,

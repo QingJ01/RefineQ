@@ -90,9 +90,10 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
             ),
         )
 
-        question_response = client.get(
+        question_response = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
+            json={"request_id": "ai-question-1"},
         )
         assert question_response.status_code == 200
         question = question_response.json()
@@ -165,8 +166,10 @@ def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) 
         before = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()[
             "progress"
         ]["mastery"]
-        question = client.get(
-            f"/workspaces/{workspace_id}/learning/question", headers=headers
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "fallback-question-1"},
         ).json()
         answer = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
@@ -213,20 +216,33 @@ def test_workspace_practice_can_replace_a_question_at_a_chosen_difficulty(
         ).json()
         topic_id = next(iter(snapshot["progress"]["mastery"]))
 
-        first = client.get(
+        first = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
-            params={"topic_id": topic_id, "difficulty": 1},
+            json={
+                "request_id": "targeted-question-1",
+                "topic_id": topic_id,
+                "difficulty": 1,
+            },
         )
-        replacement = client.get(
+        replacement = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
-            params={"topic_id": topic_id, "difficulty": 5, "replace": "true"},
+            json={
+                "request_id": "targeted-question-2",
+                "topic_id": topic_id,
+                "difficulty": 5,
+                "replace": True,
+            },
         )
-        invalid_topic = client.get(
+        invalid_topic = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
-            params={"topic_id": "unknown-topic", "replace": "true"},
+            json={
+                "request_id": "targeted-question-3",
+                "topic_id": "unknown-topic",
+                "replace": True,
+            },
         )
 
     assert first.status_code == 200
@@ -238,3 +254,31 @@ def test_workspace_practice_can_replace_a_question_at_a_chosen_difficulty(
     assert replacement.json()["id"] != first.json()["id"]
     assert invalid_topic.status_code == 409
     assert invalid_topic.json()["error"]["code"] == "learning_conflict"
+
+
+def test_workspace_learning_task_accepts_project_mode(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "product-learner@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Product Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习产品思维，并练习验证真实用户需求"},
+        ).json()["workspace"]["id"]
+        response = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "project-question-1", "mode": "project"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["learning_mode"] == "project"

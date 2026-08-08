@@ -9,5 +9,11 @@ export function LearningRoute({
   workspaceId: string;
   section: LearningSection;
 }) {
-  return <StudyWorkspace initialWorkspaceId={workspaceId} initialSection={section} />;
+  return (
+    <StudyWorkspace
+      key={workspaceId}
+      initialWorkspaceId={workspaceId}
+      initialSection={section}
+    />
+  );
 }

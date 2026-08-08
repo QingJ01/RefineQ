@@ -4,25 +4,26 @@ import {
   ArrowRight,
   Archive,
   ArchiveRestore,
+  BookOpen,
   Check,
   Clock3,
-  History,
+  House,
   Languages,
   LogOut,
-  MessageSquarePlus,
   Pencil,
   Settings2,
   Sparkles,
   Trash2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Translator } from "@/lib/i18n";
+import { learningPath } from "@/lib/learning-routes";
 import type { LearningWorkspace } from "@/lib/types";
-
 
 export function LearningHome({
   t,
@@ -62,6 +63,7 @@ export function LearningHome({
   const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<LearningWorkspace | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const activeWorkspaces = workspaces.filter((item) => !item.archived);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -99,19 +101,42 @@ export function LearningHome({
   return (
     <main id="main-content" className="home-shell">
       <aside className="home-sidebar">
-        <div className="sidebar-brand">
+        <Link className="sidebar-brand wordmark-button" href="/" aria-label="RefineQ">
           <BrandMark className="brand-mark" size={36} />
           <BrandName />
-        </div>
-        <a className="home-nav-item active" href="#learning-composer"><MessageSquarePlus size={19} /><span>{t("startLearning")}</span></a>
-        <a className="home-nav-item" href="#recent-learning"><History size={19} /><span>{t("recentLearning")}</span></a>
+        </Link>
+        <nav className="home-primary-navigation" aria-label={t("learningHome")}>
+          <Link className="home-nav-item active" href="/" aria-current="page">
+            <House size={19} />
+            <span>{t("learningHome")}</span>
+          </Link>
+          {activeWorkspaces.length > 0 && (
+            <>
+              <span className="home-nav-label">{t("recentLearning")}</span>
+              <div className="home-space-list">
+                {activeWorkspaces.map((workspace) => (
+                  <Link
+                    key={workspace.id}
+                    className="home-space-link"
+                    href={learningPath(workspace.id, "today")}
+                    aria-label={`${t("switchSpace")}: ${workspace.title}`}
+                  >
+                    <BookOpen size={17} />
+                    <span>{workspace.title}</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
+        </nav>
         {isAdmin && (
           <button
             data-testid="home-admin"
             className="home-nav-item home-admin-link"
             onClick={onAdmin}
           >
-            <Settings2 size={19} /><span>平台控制台</span>
+            <Settings2 size={19} /><span>{t("administration")}</span>
           </button>
         )}
         <div className="home-sidebar-actions">

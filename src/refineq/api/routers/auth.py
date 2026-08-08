@@ -81,9 +81,7 @@ def request_password_reset(
         ttl=timedelta(minutes=request.app.state.settings.password_reset_ttl_minutes),
     )
     return PasswordResetAccepted(
-        reset_token=(
-            token if request.app.state.settings.password_reset_expose_token else None
-        )
+        reset_token=(token if request.app.state.settings.password_reset_expose_token else None)
     )
 
 

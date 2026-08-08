@@ -59,6 +59,12 @@ class LearningRepository:
         self.get_or_create(owner_id, project_id)
         return self._store.mutate(owner_id, "learning", project_id, transform)
 
+    def question_transaction(self, owner_id: str, project_id: str):
+        """Serialize question generation so retries cannot duplicate model work."""
+
+        project_id = validate_identifier(project_id, field="project_id")
+        return self._store.owner_transaction(owner_id, f"question-{project_id}")
+
     def record_attempt(
         self,
         owner_id: str,

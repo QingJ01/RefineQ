@@ -55,7 +55,4 @@ class PlatformEmbeddingService:
             for vector in vectors
         ):
             raise RuntimeError("Embedding provider returned invalid vectors")
-        return [
-            vector + [0.0] * (EMBEDDING_DIMENSIONS - len(vector))
-            for vector in vectors
-        ]
+        return [vector + [0.0] * (EMBEDDING_DIMENSIONS - len(vector)) for vector in vectors]

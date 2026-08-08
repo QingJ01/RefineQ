@@ -221,5 +221,55 @@ def test_corrupt_storage_secrets_fail_closed_instead_of_using_local_storage(tmp_
 
     with pytest.raises(IntegrationConfigurationError, match="secrets"):
         storage._active()
+    with pytest.raises(IntegrationConfigurationError, match="secrets"):
+        storage.put(
+            owner_id="owner",
+            workspace_id="space",
+            material_id="material-1",
+            filename="notes.txt",
+            payload=b"must roll back",
+        )
+    assert not (
+        tmp_path / "local" / "users" / "owner" / "workspaces" / "space" / "materials" / "material-1"
+    ).exists()
 
     database.close()
+
+
+def test_configured_storage_keeps_a_local_canonical_copy_when_backend_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class RemoteStorage:
+        def __init__(self) -> None:
+            self.payloads: dict[str, bytes] = {}
+
+        def put(self, **kwargs):
+            key = f"remote/{kwargs['material_id']}"
+            self.payloads[key] = kwargs["payload"]
+            return type(
+                "RemoteObject",
+                (),
+                {"key": key, "created": True, "rollback": lambda value: None},
+            )()
+
+        def get(self, key: str) -> bytes:
+            return self.payloads[key]
+
+        def delete(self, key: str) -> None:
+            self.payloads.pop(key, None)
+
+    remote = RemoteStorage()
+    storage = ConfiguredObjectStorage(object(), data_root=tmp_path / "local")
+    monkeypatch.setattr(storage, "_active", lambda: remote)
+
+    stored = storage.put(
+        owner_id="owner",
+        workspace_id="space",
+        material_id="material-1",
+        filename="notes.txt",
+        payload=b"durable notes",
+    )
+    monkeypatch.setattr(storage, "_active", lambda: storage.local)
+
+    assert storage.get(stored.key) == b"durable notes"

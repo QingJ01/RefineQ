@@ -183,6 +183,37 @@ def test_natural_language_exam_and_daily_time_shape_the_created_plan(
     assert 13 <= len(plan["sessions"]) <= 14
 
 
+def test_flexible_capability_goal_uses_a_focused_seven_day_path(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": "Learn product thinking by validating a real user need",
+            },
+        )
+        workspace_id = created.json()["workspace"]["id"]
+        snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
+
+    assert created.status_code == 200
+    assert snapshot.status_code == 200
+    plan = snapshot.json()["plan"]
+    assert len(plan["sessions"]) == 7
+    assert [session["activity"] for session in plan["sessions"]] == [
+        "learn",
+        "practice",
+        "apply",
+        "review",
+        "learn",
+        "practice",
+        "apply",
+    ]
+
+
 def test_explicit_plan_constraints_override_values_in_intent(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
     exam_at = datetime.now(UTC) + timedelta(days=4)
@@ -357,10 +388,13 @@ def test_workspace_can_be_renamed_archived_restored_and_deleted(tmp_path: Path) 
         deleted = client.delete(f"/workspaces/{created['id']}", headers=headers)
         assert deleted.status_code == 204
         assert client.get("/workspaces", headers=headers).json() == []
-        assert client.get(
-            f"/workspaces/{created['id']}/snapshot",
-            headers=headers,
-        ).status_code == 404
+        assert (
+            client.get(
+                f"/workspaces/{created['id']}/snapshot",
+                headers=headers,
+            ).status_code
+            == 404
+        )
 
 
 def test_workspace_lifecycle_is_owner_scoped(tmp_path: Path) -> None:
@@ -456,9 +490,10 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             headers=headers,
             json={"intent": "准备微积分考试"},
         ).json()["workspace"]["id"]
-        question = client.get(
+        question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
+            json={"request_id": "saved-question-1"},
         ).json()
 
         saved = client.put(
@@ -482,6 +517,7 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             },
         )
         assert answer.status_code == 200
+        assert answer.json()["next_review_at"]
 
         listed = client.get(
             f"/workspaces/{workspace_id}/learning/questions/saved",
@@ -490,6 +526,13 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
         assert [item["id"] for item in listed.json()] == [question["id"]]
         assert snapshot.json()["saved_questions"] == listed.json()
+        assert snapshot.json()["active_question"]["id"] == question["id"]
+        assert snapshot.json()["last_answer"]["attempt_id"] == "saved-attempt"
+        assert any(
+            session["activity"] == "review"
+            and session["planned_at"] == answer.json()["next_review_at"]
+            for session in snapshot.json()["plan"]["sessions"]
+        )
 
         bob = client.post(
             "/auth/register",

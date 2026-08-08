@@ -50,6 +50,9 @@ def test_http_errors_use_the_refineq_error_envelope(tmp_path: Path) -> None:
             "message": "Not Found",
         }
     }
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
 
 def test_application_uses_the_sql_record_store(tmp_path: Path) -> None:

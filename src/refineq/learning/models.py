@@ -37,6 +37,15 @@ class ReviewRating(StrEnum):
     EASY = "easy"
 
 
+class LearningMode(StrEnum):
+    """How a learner wants to build a capability in the current session."""
+
+    CONCEPT = "concept"
+    CASE = "case"
+    PROJECT = "project"
+    EXAM = "exam"
+
+
 class BKTState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -136,6 +145,7 @@ class StudySession(BaseModel):
     topic_id: str = Field(min_length=1)
     planned_at: datetime
     minutes: int = Field(ge=5, le=480)
+    activity: Literal["learn", "practice", "apply", "review"] = "practice"
     status: Literal["planned", "completed"] = "planned"
 
     _normalize_planned_at = field_validator("planned_at", mode="after")(_as_utc)

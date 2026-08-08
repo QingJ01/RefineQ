@@ -86,9 +86,10 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert plan.status_code == 200
         assert len(plan.json()["sessions"]) == 4
 
-        question_response = client.get(
+        question_response = client.post(
             f"/projects/{project_id}/learning/question",
             headers=alice_headers,
+            json={"request_id": "journey-question-1"},
         )
         assert question_response.status_code == 200
         question = question_response.json()
@@ -136,6 +137,9 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert progress.json()["topics"] == {"chain-rule": "Chain Rule"}
         assert evidence.status_code == 200
         assert {item["kind"] for item in evidence.json()} == {"attempt", "diagnostic"}
+        attempt_evidence = next(item for item in evidence.json() if item["kind"] == "attempt")
+        assert "Chain Rule" in attempt_evidence["summary"]
+        assert "chain-rule" not in attempt_evidence["summary"]
 
         forbidden = client.get(
             f"/projects/{project_id}/learning/progress",

@@ -368,7 +368,7 @@ def _download_material(
             detail={"code": "material_not_found", "message": "Material not found"},
         ) from error
     escaped = record.filename.replace('"', "")
-    disposition = f'attachment; filename="{escaped}"; filename*=UTF-8\'\'{quote(record.filename)}'
+    disposition = f"attachment; filename=\"{escaped}\"; filename*=UTF-8''{quote(record.filename)}"
     return Response(
         content=payload,
         media_type=record.content_type,
@@ -404,18 +404,34 @@ def _delete_material(
 ) -> Response:
     _require_project(request, user.id, project_id)
     try:
+        record = request.app.state.knowledge.get_material(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+        )
         storage_key = request.app.state.knowledge.get_material_storage_key(
             owner_id=user.id,
             project_id=project_id,
             material_id=material_id,
         )
+        payload = request.app.state.object_storage.get(storage_key)
         request.app.state.object_storage.delete(storage_key)
-        request.app.state.knowledge.delete_material(
-            owner_id=user.id,
-            project_id=project_id,
-            material_id=material_id,
-        )
-    except MaterialNotFoundError as error:
+        try:
+            request.app.state.knowledge.delete_material(
+                owner_id=user.id,
+                project_id=project_id,
+                material_id=material_id,
+            )
+        except Exception:
+            request.app.state.object_storage.put(
+                owner_id=user.id,
+                workspace_id=project_id,
+                material_id=material_id,
+                filename=record.filename,
+                payload=payload,
+            )
+            raise
+    except (MaterialNotFoundError, FileNotFoundError) as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "material_not_found", "message": "Material not found"},
