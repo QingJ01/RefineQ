@@ -13,6 +13,7 @@ import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
 import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
+import { SessionCoach } from "../components/session-coach";
 import { translator } from "../lib/i18n";
 
 
@@ -658,5 +659,26 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="agent-history"');
     expect(html).toContain('data-testid="agent-suggestion"');
     expect(html).toContain("Checking model");
+  });
+
+  it("gives administrators a recovery action when the coach model is unavailable", () => {
+    const html = renderToStaticMarkup(
+      <SessionCoach
+        locale="zh"
+        modelConfigured={false}
+        isAdmin
+        onConfigure={() => undefined}
+        onAsk={async () => ({
+          session_id: "session-1",
+          message: "reply",
+          citations: [],
+          sources: [],
+        })}
+      />,
+    );
+
+    expect(html).toContain("学习 Agent 尚未配置模型");
+    expect(html).toContain('data-testid="coach-configure-model"');
+    expect(html).toContain("前往配置");
   });
 });

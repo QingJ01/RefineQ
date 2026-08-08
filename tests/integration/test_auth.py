@@ -71,6 +71,17 @@ def test_login_and_authenticated_profile(tmp_path: Path) -> None:
     assert profile.json() == registered["user"]
 
 
+def test_invalid_login_uses_a_specific_error_code(tmp_path: Path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        response = client.post(
+            "/auth/login",
+            json={"email": "missing@example.com", "password": "wrong-password"},
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_credentials"
+
+
 def test_unauthorized_access_uses_a_stable_error_code(tmp_path: Path) -> None:
     with TestClient(_app(tmp_path)) as client:
         response = client.get("/auth/me")

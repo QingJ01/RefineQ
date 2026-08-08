@@ -58,7 +58,10 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
             password=payload.password.get_secret_value(),
         )
     except InvalidCredentialsError as error:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": str(error)},
+        ) from error
     return _auth_response(request, user)
 
 

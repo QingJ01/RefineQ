@@ -25,6 +25,7 @@ import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
+import { localizeApiError } from "@/lib/error-messages";
 import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import { inferLearningMode } from "@/lib/learning-session";
@@ -94,13 +95,7 @@ export function StudyWorkspace({
   const attemptIdRef = useRef<string | null>(null);
 
   function reportError(caught: unknown) {
-    setError(
-      caught instanceof ApiError
-        ? `${caught.code}: ${caught.message}`
-        : caught instanceof Error
-          ? caught.message
-          : t("error"),
-    );
+    setError(localizeApiError(caught, locale));
   }
 
   function applySnapshot(snapshot: WorkspaceSnapshot) {
@@ -627,7 +622,7 @@ export function StudyWorkspace({
   }
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
-  if (!auth) return <AuthPanel t={t} onAuthenticated={authenticated} />;
+  if (!auth) return <AuthPanel t={t} locale={locale} onAuthenticated={authenticated} />;
   if (!workspace && initialWorkspaceId) {
     const retryTarget = workspaces.find((item) => item.id === initialWorkspaceId);
     return (
