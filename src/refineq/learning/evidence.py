@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import datetime
 from hashlib import sha256
 from typing import Any
 
-from refineq.learning.models import LearningEvidence, LearningRecommendation
+from refineq.learning.models import LearningEvidence
 
 
 def stable_id(namespace: str, *parts: str) -> str:
@@ -35,23 +34,4 @@ def create_evidence(
         summary=summary.strip(),
         observed_at=observed_at,
         details=details or {},
-    )
-
-
-def make_recommendation(
-    *,
-    action: str,
-    rationale: str,
-    evidence: Iterable[LearningEvidence],
-) -> LearningRecommendation:
-    """Create a recommendation only when its supporting evidence is explicit."""
-
-    evidence_ids = list(dict.fromkeys(item.id for item in evidence))
-    if not evidence_ids:
-        raise ValueError("recommendation requires at least one evidence item")
-    return LearningRecommendation(
-        id=stable_id("recommendation", action, *sorted(evidence_ids)),
-        action=action.strip(),
-        rationale=rationale.strip(),
-        evidence_ids=evidence_ids,
     )

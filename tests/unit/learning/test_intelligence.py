@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from refineq.agent.settings import ModelSettings, ModelSettingsRepository
+from refineq.agent.settings import ModelNotConfiguredError, ModelSettings
 from refineq.knowledge.index import KnowledgeIndex, SearchResult
 from refineq.learning.intelligence import (
     GeneratedQuestion,
@@ -53,6 +53,25 @@ class FakeStructuredTransport:
         )
 
 
+class FakeModelSettings:
+    def __init__(self, *, configured: bool = True) -> None:
+        self.settings = (
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            )
+            if configured
+            else None
+        )
+
+    def load(self, owner_id: str) -> ModelSettings:
+        del owner_id
+        if self.settings is None:
+            raise ModelNotConfiguredError("Model settings have not been configured")
+        return self.settings
+
+
 def test_ai_grading_contract_requires_an_explicit_evidence_judgment() -> None:
     assert GradingModelOutput.model_fields["sufficient_evidence"].is_required()
 
@@ -66,16 +85,7 @@ def _service(tmp_path: Path, *, configured: bool = True):
         filename="limits.md",
         text="函数极限描述自变量趋近某点时函数值所趋近的值，不要求函数在该点取到该值。",
     )
-    settings = ModelSettingsRepository(tmp_path)
-    if configured:
-        settings.save(
-            "owner",
-            ModelSettings(
-                base_url="https://api.openai.com/v1",
-                model="study-model",
-                api_key="secret-key-1234",
-            ),
-        )
+    settings = FakeModelSettings(configured=configured)
     transport = FakeStructuredTransport()
     return LearningIntelligenceService(knowledge, settings, transport), transport
 
@@ -200,15 +210,7 @@ def test_question_generation_falls_back_when_model_is_not_configured(
 
 def test_generates_ai_question_without_sources_when_model_configured(tmp_path: Path) -> None:
     knowledge = KnowledgeIndex(tmp_path / "knowledge")
-    settings = ModelSettingsRepository(tmp_path / "settings")
-    settings.save(
-        "owner",
-        ModelSettings(
-            base_url="https://api.openai.com/v1",
-            model="study-model",
-            api_key="secret-key-1234",
-        ),
-    )
+    settings = FakeModelSettings()
     transport = FakeStructuredTransport()
     service = LearningIntelligenceService(knowledge, settings, transport)
 
@@ -230,7 +232,7 @@ def test_generates_ai_question_without_sources_when_model_configured(tmp_path: P
 
 def test_falls_back_without_sources_when_model_is_not_configured(tmp_path: Path) -> None:
     knowledge = KnowledgeIndex(tmp_path / "knowledge")
-    settings = ModelSettingsRepository(tmp_path / "settings")
+    settings = FakeModelSettings(configured=False)
     transport = FakeStructuredTransport()
     service = LearningIntelligenceService(knowledge, settings, transport)
 

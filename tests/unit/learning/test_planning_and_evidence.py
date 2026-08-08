@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from refineq.learning.evidence import create_evidence, make_recommendation
+from refineq.learning.evidence import create_evidence
 from refineq.learning.planning import build_study_plan
 from refineq.learning.service import _recent_learning_needs
 
@@ -54,32 +54,6 @@ def test_evidence_ids_are_idempotent_for_one_source_event() -> None:
     )
 
     assert first.id == retried.id
-
-
-def test_recommendation_must_cite_learning_evidence() -> None:
-    with pytest.raises(ValueError, match="evidence"):
-        make_recommendation(
-            action="Review the chain rule",
-            rationale="Recent mistakes show a gap.",
-            evidence=[],
-        )
-
-
-def test_recommendation_carries_evidence_ids() -> None:
-    evidence = create_evidence(
-        kind="attempt",
-        source_id="attempt-42",
-        summary="Chain-rule question answered incorrectly.",
-        observed_at=START,
-    )
-
-    recommendation = make_recommendation(
-        action="Review the chain rule",
-        rationale="A recent attempt exposed an application gap.",
-        evidence=[evidence],
-    )
-
-    assert recommendation.evidence_ids == [evidence.id]
 
 
 def test_study_plan_and_session_ids_are_stable() -> None:
