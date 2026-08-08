@@ -84,3 +84,35 @@ def test_structured_transport_uses_finite_timeout_retry_and_output_budget(
     assert captured["client"]["timeout"] <= 30
     assert captured["client"]["max_retries"] <= 2
     assert captured["request"]["max_tokens"] <= 4_000
+
+
+def test_structured_transport_accepts_short_lived_client_configuration(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            del kwargs
+            message = type("Message", (), {"content": '{"action":"create","reason":"new"}'})
+            choice = type("Choice", (), {"message": message})
+            return type("Response", (), {"choices": [choice]})
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})
+
+    monkeypatch.setattr("refineq.agent.structured.OpenAI", FakeOpenAI)
+
+    OpenAICompatibleStructuredTransport(timeout=8.0, max_retries=0).complete(
+        settings=ModelSettings(
+            base_url="https://api.openai.com/v1",
+            model="exam-tutor",
+            api_key="secret",
+        ),
+        messages=[{"role": "user", "content": "route this"}],
+        response_model=RoutingAnswer,
+    )
+
+    assert captured["timeout"] == 8.0
+    assert captured["max_retries"] == 0

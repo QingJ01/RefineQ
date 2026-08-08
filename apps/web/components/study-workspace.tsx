@@ -26,6 +26,11 @@ import { PlanTimeline } from "@/components/plan-timeline";
 import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
 import { api, ApiError } from "@/lib/api";
+import {
+  executeCoachAction,
+  pendingCoachTurn,
+  type PendingCoachTurn,
+} from "@/lib/coach-actions";
 import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import { inferLearningMode } from "@/lib/learning-session";
@@ -38,6 +43,7 @@ import {
 } from "@/lib/session";
 import type {
   AnswerResult,
+  ExecutableActionProposal,
   AuthResponse,
   LearningEvidence,
   LearningMode,
@@ -93,6 +99,9 @@ export function StudyWorkspace({
   const [showArchived, setShowArchived] = useState(false);
   const questionRequestIdRef = useRef<string | null>(null);
   const attemptIdRef = useRef<string | null>(null);
+  const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
+  const appliedActionIdsRef = useRef(new Set<string>());
+  const activeWorkspaceIdRef = useRef<string | null>(null);
 
   function reportError(caught: unknown) {
     setError(
@@ -105,6 +114,11 @@ export function StudyWorkspace({
   }
 
   function applySnapshot(snapshot: WorkspaceSnapshot) {
+    if (activeWorkspaceIdRef.current !== snapshot.workspace.id) {
+      pendingTurnIdRef.current = null;
+      appliedActionIdsRef.current.clear();
+    }
+    activeWorkspaceIdRef.current = snapshot.workspace.id;
     setWorkspace(snapshot.workspace);
     setProgress(snapshot.progress);
     setPlan(snapshot.plan);
@@ -314,17 +328,20 @@ export function StudyWorkspace({
     }
   }
 
-  async function getQuestion(request: PracticeRequest = {}) {
-    if (!auth || !workspace) return;
+  async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
+    if (!auth || !workspace) return false;
     setPracticeBusy(true);
     setError("");
-    questionRequestIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
+    const requestId = request.requestId
+      ?? questionRequestIdRef.current
+      ?? crypto.randomUUID().replaceAll("-", "");
+    if (!request.requestId) questionRequestIdRef.current = requestId;
     try {
       await loadNextQuestion(
         () => api.createWorkspaceQuestion(auth.access_token, workspace.id, {
-          requestId: questionRequestIdRef.current ?? undefined,
           learningMode,
           ...request,
+          requestId,
         }),
         (nextQuestion) => {
           if (question) {
@@ -339,8 +356,10 @@ export function StudyWorkspace({
           attemptIdRef.current = null;
         },
       );
+      return true;
     } catch (caught) {
       reportError(caught);
+      return false;
     } finally {
       setPracticeBusy(false);
     }
@@ -374,8 +393,8 @@ export function StudyWorkspace({
     }
   }
 
-  async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean) {
-    if (!auth || !workspace) return;
+  async function toggleSavedQuestion(target: PracticeQuestion, saved: boolean): Promise<boolean> {
+    if (!auth || !workspace) return false;
     setPracticeBusy(true);
     setError("");
     try {
@@ -391,8 +410,10 @@ export function StudyWorkspace({
       setSavedQuestions((current) => updated.saved
         ? [updated, ...current.filter((item) => item.id !== updated.id)]
         : current.filter((item) => item.id !== updated.id));
+      return true;
     } catch (caught) {
       reportError(caught);
+      return false;
     } finally {
       setPracticeBusy(false);
     }
@@ -474,12 +495,18 @@ export function StudyWorkspace({
 
   async function askSessionCoach(message: string) {
     if (!auth || !workspace) throw new Error(t("error"));
+    const pendingTurn = pendingCoachTurn(
+      pendingTurnIdRef.current,
+      message,
+      () => crypto.randomUUID(),
+    );
+    pendingTurnIdRef.current = pendingTurn;
     const reply = await api.chatWorkspace(
       auth.access_token,
       workspace.id,
       message,
       coachSessionId,
-      crypto.randomUUID(),
+      pendingTurn.id,
       undefined,
       {
         learning_mode: learningMode,
@@ -487,10 +514,66 @@ export function StudyWorkspace({
         question: question?.prompt,
         draft: answer || undefined,
         feedback: result?.feedback,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       },
     );
     setCoachSessionId(reply.session_id);
     return reply;
+  }
+
+  async function refreshWorkspaceSnapshot() {
+    if (!auth || !workspace) throw new Error(t("error"));
+    try {
+      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      applySnapshot(snapshot);
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
+  }
+
+  async function applyCoachAction(
+    proposal: ExecutableActionProposal,
+    options: { confirmed?: boolean; historical?: boolean } = {},
+  ) {
+    const storedDraft = question
+      ? window.sessionStorage.getItem(`refineq.practice-draft:${workspace?.id}:${question.id}`)
+      : null;
+    return executeCoachAction(proposal, {
+      appliedActionIds: appliedActionIdsRef.current,
+      hasDraft: Boolean((storedDraft ?? answer).trim()),
+      confirmed: options.confirmed,
+      historical: options.historical,
+      applyAdjust: (action) => getQuestion({
+        requestId: action.action_id,
+        topicId: action.topic_id,
+        difficulty: action.difficulty,
+        learningMode: action.learning_mode,
+        replace: action.destructive,
+      }),
+      applyPlanUpdate: async (action) => {
+        const target = plan?.sessions.find((session) => session.id === action.session_id);
+        if (!target) {
+          reportError(new Error(locale === "zh" ? "找不到要调整的计划场次。" : "The plan session is no longer available."));
+          return false;
+        }
+        return updatePlanSession(target, {
+          status: action.status ?? undefined,
+          planned_at: action.planned_at ?? undefined,
+        });
+      },
+      applySaveQuestion: async (action) => {
+        const target = question?.id === action.question_id
+          ? question
+          : savedQuestions.find((item) => item.id === action.question_id);
+        if (!target) {
+          reportError(new Error(locale === "zh" ? "找不到要收藏的题目。" : "The question is no longer available."));
+          return false;
+        }
+        return toggleSavedQuestion(target, action.saved);
+      },
+      refreshSnapshot: refreshWorkspaceSnapshot,
+    });
   }
 
   function changeLearningMode(mode: LearningMode) {
@@ -550,8 +633,8 @@ export function StudyWorkspace({
   async function updatePlanSession(
     session: StudySession,
     input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
-  ) {
-    if (!auth || !workspace) return;
+  ): Promise<boolean> {
+    if (!auth || !workspace) return false;
     setBusySessionId(session.id);
     setError("");
     try {
@@ -565,8 +648,10 @@ export function StudyWorkspace({
         ...current,
         sessions: current.sessions.map((item) => item.id === updated.id ? updated : item),
       } : current);
+      return true;
     } catch (caught) {
       reportError(caught);
+      return false;
     } finally {
       setBusySessionId(null);
     }
@@ -809,12 +894,14 @@ export function StudyWorkspace({
                   );
                 }
               }}
-              onStartTask={() => getQuestion({ learningMode })}
+              onStartTask={() => { void getQuestion({ learningMode }); }}
               onSubmit={submitAnswer}
-              onNextTask={() => getQuestion({ learningMode, replace: true })}
-              onToggleSaved={toggleSavedQuestion}
+              onNextTask={() => { void getQuestion({ learningMode, replace: true }); }}
+              onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
               onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
               onAskCoach={askSessionCoach}
+              onApplyCoachAction={applyCoachAction}
+              onCoachTurnHandled={() => { pendingTurnIdRef.current = null; }}
             />
           )}
           {section === "path" && (
@@ -828,7 +915,7 @@ export function StudyWorkspace({
                 plan={plan}
                 locale={locale}
                 t={t}
-                onUpdateSession={updatePlanSession}
+                onUpdateSession={(session, input) => { void updatePlanSession(session, input); }}
                 onStartSession={(session) => practiceTopic(session.topic_id)}
                 busySessionId={busySessionId}
                 topicLabels={progress?.topics}

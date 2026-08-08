@@ -62,6 +62,7 @@ def create_app(
     *,
     model_transport: ModelTransport | None = None,
     learning_model_transport: StructuredModelTransport | None = None,
+    agent_intent_transport: StructuredModelTransport | None = None,
     database: Database | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
@@ -151,6 +152,12 @@ def create_app(
         app.state.learning_intelligence,
     )
     app.state.sessions = SessionRepository(app.state.store)
+    resolved_intent_transport = agent_intent_transport
+    if resolved_intent_transport is None and model_transport is None:
+        resolved_intent_transport = OpenAICompatibleStructuredTransport(
+            timeout=8.0,
+            max_retries=0,
+        )
     app.state.workspace_service = WorkspaceService(
         workspaces=app.state.workspaces,
         learning=app.state.learning,
@@ -171,6 +178,7 @@ def create_app(
         sessions=app.state.sessions,
         model_settings=app.state.model_settings,
         transport=model_transport or OpenAICompatibleTransport(),
+        intent_transport=resolved_intent_transport,
         max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
     app.state.workspace_agent = AgentService(
@@ -180,6 +188,7 @@ def create_app(
         sessions=app.state.sessions,
         model_settings=app.state.model_settings,
         transport=model_transport or OpenAICompatibleTransport(),
+        intent_transport=resolved_intent_transport,
         max_sessions=app.state.settings.max_agent_sessions_per_user,
     )
     app.state.identity = IdentityService(app.state.database)
