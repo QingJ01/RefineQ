@@ -25,6 +25,42 @@ import {
 import type { StudyPlan } from "../lib/types";
 
 
+describe("workspace state boundaries", () => {
+  it("separates authentication, workspace, practice, and agent state into domain hooks", () => {
+    const hookFiles = {
+      auth: fileURLToPath(new URL("../hooks/use-learning-auth.ts", import.meta.url)),
+      workspace: fileURLToPath(new URL("../hooks/use-workspace-state.ts", import.meta.url)),
+      practice: fileURLToPath(new URL("../hooks/use-practice-state.ts", import.meta.url)),
+      agent: fileURLToPath(new URL("../hooks/use-agent-state.ts", import.meta.url)),
+    };
+
+    expect(Object.values(hookFiles).every(existsSync)).toBe(true);
+    if (!Object.values(hookFiles).every(existsSync)) return;
+
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const authSource = readFileSync(hookFiles.auth, "utf8");
+    const stateSource = readFileSync(hookFiles.workspace, "utf8");
+    const practiceSource = readFileSync(hookFiles.practice, "utf8");
+    const agentSource = readFileSync(hookFiles.agent, "utf8");
+
+    expect(workspaceSource).toContain("useLearningAuth()");
+    expect(workspaceSource).toContain("useWorkspaceState()");
+    expect(workspaceSource).toContain("usePracticeState()");
+    expect(workspaceSource).toContain("useAgentState()");
+    expect(authSource).toContain("clearLearningSession");
+    expect(authSource).toContain("saveLearningLocale");
+    expect(stateSource).toContain("applySnapshot");
+    expect(practiceSource).toContain("questionRequestIdRef");
+    expect(practiceSource).toContain("attemptIdRef");
+    expect(practiceSource).toContain("refineq.practice-draft:");
+    expect(agentSource).toContain("api.chatWorkspace");
+  });
+});
+
+
 describe("administrator integration status", () => {
   it("projects a connection test result into the visible integration status", () => {
     const setting = {
@@ -130,6 +166,22 @@ describe("administrator routing", () => {
       `/api/admin/backups/${backupId}/restore-validation`,
     ]);
     expect(requests.at(-1)?.body).toEqual({ confirmation: `RESTORE ${backupId}` });
+  });
+
+  it("localizes administrator operation labels and hides raw API failures", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../components/admin-console.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).toContain("localizeApiError(caught, locale)");
+    expect(source).not.toContain("`${caught.code}: ${caught.message}`");
+    expect(source).toContain("c.email");
+    expect(source).toContain("c.materialIndex");
+    expect(source).toContain("c.embeddingBackfill");
+    expect(source).toContain("c.files");
+    expect(source).toContain("auditActionLabel(entry.action, locale)");
+    expect(source).toContain("roleLabel(user.role, locale)");
   });
 });
 

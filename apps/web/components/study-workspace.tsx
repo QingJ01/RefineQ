@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import { BrandMark, BrandName } from "@/components/brand";
@@ -28,40 +28,34 @@ import { ProgressInsights } from "@/components/progress-insights";
 import { ProgressTopicDetail } from "@/components/progress-topic-detail";
 import { ReviewQueue } from "@/components/review-queue";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { useAgentState } from "@/hooks/use-agent-state";
+import { useLearningAuth } from "@/hooks/use-learning-auth";
+import { usePracticeState } from "@/hooks/use-practice-state";
+import { useWorkspaceState } from "@/hooks/use-workspace-state";
 import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
-import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
-import { inferLearningMode } from "@/lib/learning-session";
 import { loadModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
   loadLearningSession,
-  saveLearningLocale,
   saveLearningSession,
 } from "@/lib/session";
 import type {
-  AnswerResult,
   AttemptFeedbackInput,
   AttemptInsight,
   AuthResponse,
   DueReviewInsight,
-  LearningEvidence,
-  LearningInsights,
   LearningMode,
   LearningWorkspace,
-  Locale,
   MaterialRecord,
   MaterialUpdateInput,
   PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
-  Progress,
-  SavedPracticeQuestion,
-  StudySession,
-  StudyPlan,
   SearchSource,
+  StudySession,
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
@@ -79,70 +73,78 @@ export function StudyWorkspace({
   initialSection?: LearningSection;
 } = {}) {
   const router = useRouter();
-  const [locale, setLocale] = useState<Locale>("zh");
-  const t = useMemo(() => translator(locale), [locale]);
-  const [restoring, setRestoring] = useState(true);
-  const [auth, setAuth] = useState<AuthResponse | null>(null);
-  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
-  const [workspaces, setWorkspaces] = useState<LearningWorkspace[]>([]);
-  const [workspace, setWorkspace] = useState<LearningWorkspace | null>(null);
-  const [plan, setPlan] = useState<StudyPlan | null>(null);
-  const [progress, setProgress] = useState<Progress | null>(null);
-  const [evidence, setEvidence] = useState<LearningEvidence[]>([]);
-  const [insights, setInsights] = useState<LearningInsights | null>(null);
-  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
-  const [materials, setMaterials] = useState<MaterialRecord[]>([]);
-  const [question, setQuestion] = useState<PracticeQuestion | null>(null);
-  const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
-  const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState<AnswerResult | null>(null);
-  const [learningMode, setLearningMode] = useState<LearningMode>("concept");
-  const [coachSessionId, setCoachSessionId] = useState<string | undefined>();
+  const {
+    auth,
+    error,
+    locale,
+    modelConfigured,
+    reportError,
+    resetAuthentication,
+    restoring,
+    setAuth,
+    setError,
+    setLocale,
+    setModelConfigured,
+    setRestoring,
+    t,
+    toggleLocale: toggleLearningLocale,
+  } = useLearningAuth();
+  const {
+    applySnapshot: applyWorkspaceSnapshot,
+    clearWorkspaceState,
+    evidence,
+    insights,
+    materials,
+    plan,
+    previousWorkspaceId,
+    progress,
+    route,
+    savedQuestions,
+    selectedTopicId,
+    setEvidence,
+    setInsights,
+    setMaterials,
+    setPlan,
+    setPreviousWorkspaceId,
+    setProgress,
+    setRoute,
+    setSavedQuestions,
+    setSelectedTopicId,
+    setShowArchived,
+    setWorkspace,
+    setWorkspaces,
+    showArchived,
+    workspace,
+    workspaces,
+  } = useWorkspaceState();
+  const {
+    answer,
+    attemptIdRef,
+    clearPracticeState,
+    hydratePractice,
+    learningMode,
+    practiceBusy,
+    question,
+    questionRequestIdRef,
+    result,
+    setAnswer,
+    setLearningMode,
+    setPracticeBusy,
+    setQuestion,
+    setResult,
+  } = usePracticeState();
+  const { askCoach, resetAgent } = useAgentState();
   const section = initialSection;
   const [homeBusy, setHomeBusy] = useState(false);
-  const [practiceBusy, setPracticeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [route, setRoute] = useState<WorkspaceRoute | null>(null);
-  const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
-  const questionRequestIdRef = useRef<string | null>(null);
-  const attemptIdRef = useRef<string | null>(null);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
 
-  function reportError(caught: unknown) {
-    setError(localizeApiError(caught, locale));
-  }
-
-  function applySnapshot(snapshot: WorkspaceSnapshot) {
-    setWorkspace(snapshot.workspace);
-    setProgress(snapshot.progress);
-    setPlan(snapshot.plan);
-    setEvidence(snapshot.evidence);
-    setInsights(null);
-    setSelectedTopicId(null);
-    setMaterials(snapshot.materials);
-    setSavedQuestions(snapshot.saved_questions ?? []);
-    const activeQuestion = snapshot.active_question ?? null;
-    setLearningMode(
-      activeQuestion?.learning_mode
-      ?? inferLearningMode(snapshot.workspace.subject, snapshot.workspace.goal),
-    );
-    setCoachSessionId(undefined);
-    setQuestion(activeQuestion);
-    setResult(snapshot.last_answer ?? null);
-    const draftKey = activeQuestion
-      ? `refineq.practice-draft:${snapshot.workspace.id}:${activeQuestion.id}`
-      : null;
-    setAnswer(
-      snapshot.last_answer || !draftKey
-        ? ""
-        : window.sessionStorage.getItem(draftKey) ?? "",
-    );
-    questionRequestIdRef.current = null;
-    attemptIdRef.current = null;
-  }
+  const applySnapshot = useCallback((snapshot: WorkspaceSnapshot) => {
+    applyWorkspaceSnapshot(snapshot);
+    hydratePractice(snapshot);
+    resetAgent();
+  }, [applyWorkspaceSnapshot, hydratePractice, resetAgent]);
 
   useEffect(() => {
     const token = auth?.access_token;
@@ -157,7 +159,7 @@ export function StudyWorkspace({
         if (active) setError(localizeApiError(caught, locale));
       });
     return () => { active = false; };
-  }, [auth?.access_token, locale, section, workspace?.id]);
+  }, [auth?.access_token, locale, section, setError, setInsights, workspace?.id]);
 
   useEffect(() => {
     if (window.sessionStorage.getItem(SECTION_FOCUS_KEY) !== "1") return;
@@ -173,7 +175,7 @@ export function StudyWorkspace({
     setRoute(null);
     setPreviousWorkspaceId(null);
     router.replace("/");
-  }, [router]);
+  }, [router, setPreviousWorkspaceId, setRoute, setWorkspace]);
 
   useEffect(() => {
     let active = true;
@@ -259,7 +261,21 @@ export function StudyWorkspace({
     }
     void restore();
     return () => { active = false; };
-  }, [initialWorkspaceId, redirectUnavailableWorkspace, router]);
+  }, [
+    applySnapshot,
+    initialWorkspaceId,
+    redirectUnavailableWorkspace,
+    router,
+    setAuth,
+    setError,
+    setLocale,
+    setModelConfigured,
+    setPreviousWorkspaceId,
+    setRestoring,
+    setRoute,
+    setWorkspace,
+    setWorkspaces,
+  ]);
 
   useEffect(() => {
     if (!route) return;
@@ -269,7 +285,7 @@ export function StudyWorkspace({
       setPreviousWorkspaceId(null);
     }, 7000);
     return () => window.clearTimeout(timeout);
-  }, [route]);
+  }, [route, setPreviousWorkspaceId, setRoute]);
 
   async function authenticated(response: AuthResponse) {
     if (initialWorkspaceId) setHomeBusy(true);
@@ -611,24 +627,15 @@ export function StudyWorkspace({
   }
 
   async function askSessionCoach(message: string) {
-    if (!auth || !workspace) throw new Error(t("error"));
-    const reply = await api.chatWorkspace(
-      auth.access_token,
-      workspace.id,
-      message,
-      coachSessionId,
-      crypto.randomUUID(),
-      undefined,
-      {
-        learning_mode: learningMode,
-        stage: result ? "reflect" : question ? "practice" : "learn",
-        question: question?.prompt,
-        draft: answer || undefined,
-        feedback: result?.feedback,
-      },
-    );
-    setCoachSessionId(reply.session_id);
-    return reply;
+    return askCoach(message, {
+      token: auth?.access_token,
+      workspaceId: workspace?.id,
+      learningMode,
+      question,
+      result,
+      answer,
+      errorMessage: t("error"),
+    });
   }
 
   function changeLearningMode(mode: LearningMode) {
@@ -780,10 +787,10 @@ export function StudyWorkspace({
   }
 
   function logout() {
-    clearLearningSession(window.sessionStorage);
-    setAuth(null);
-    setModelConfigured(null);
-    setWorkspace(null);
+    resetAuthentication();
+    clearWorkspaceState();
+    clearPracticeState();
+    resetAgent();
     setWorkspaces([]);
     router.replace("/");
   }
@@ -794,12 +801,7 @@ export function StudyWorkspace({
   }
 
   function toggleLocale() {
-    const next = locale === "zh" ? "en" : "zh";
-    setLocale(next);
-    if (auth) {
-      saveLearningLocale(window.sessionStorage, auth.access_token, next, workspace?.id);
-    }
-    document.documentElement.lang = next === "zh" ? "zh-CN" : "en";
+    toggleLearningLocale(workspace?.id);
   }
 
   if (restoring) return <main className="loading-stage"><BrandMark size={44} /><span>{t("loading")}</span></main>;
