@@ -153,3 +153,33 @@ def test_public_deployment_exposes_security_and_resource_boundaries() -> None:
     for name in required_names:
         assert name in example
         assert name in compose
+
+
+def test_optional_password_delivery_and_demo_credentials_are_runtime_configured() -> None:
+    example = _read(".env.example")
+    compose = _read("infra/compose.yml")
+    api_environment = compose.split("\n  api:", maxsplit=1)[1].split("\n  web:", maxsplit=1)[0]
+    required_names = {
+        "REFINEQ_PUBLIC_SITE_URL",
+        "REFINEQ_SMTP_HOST",
+        "REFINEQ_SMTP_PORT",
+        "REFINEQ_SMTP_FROM_EMAIL",
+        "REFINEQ_SMTP_USERNAME",
+        "REFINEQ_SMTP_PASSWORD",
+        "REFINEQ_SMTP_STARTTLS",
+        "REFINEQ_SMTP_USE_SSL",
+        "REFINEQ_SMTP_TIMEOUT_SECONDS",
+        "REFINEQ_DEMO_EMAIL",
+        "REFINEQ_DEMO_PASSWORD",
+    }
+
+    for name in required_names:
+        assert name in example
+        assert name in api_environment
+    assert "REFINEQ_SMTP_PASSWORD=" in example
+    assert "REFINEQ_DEMO_PASSWORD=" in example
+    assert "${REFINEQ_SMTP_PASSWORD:-}" in api_environment
+    assert "${REFINEQ_DEMO_PASSWORD:-}" in api_environment
+    assert "REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN=false" in example
+    assert 'refineq-demo = "refineq.operations.demo_cli:main"' in _read("pyproject.toml")
+    assert "api refineq-demo" in _read("docs/deployment.md")
