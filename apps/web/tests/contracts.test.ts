@@ -1341,6 +1341,39 @@ describe("implicit workspace API", () => {
   });
 });
 
+
+describe("global calendar API", () => {
+  it("serializes a bounded range and archived-space preference", async () => {
+    let requestedPath = "";
+    let requestedInit: RequestInit | undefined;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedInit = init;
+      return new Response(JSON.stringify({
+        starts_at: "2026-07-26T00:00:00.000Z",
+        ends_at: "2026-09-06T00:00:00.000Z",
+        tasks: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.getCalendar(
+      "calendar-token",
+      "2026-07-26T00:00:00.000Z",
+      "2026-09-06T00:00:00.000Z",
+      true,
+    );
+
+    expect(requestedPath).toBe(
+      "/api/calendar?starts_at=2026-07-26T00%3A00%3A00.000Z"
+      + "&ends_at=2026-09-06T00%3A00%3A00.000Z&include_archived=true",
+    );
+    expect(requestedInit?.method ?? "GET").toBe("GET");
+    expect((requestedInit?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer calendar-token",
+    );
+  });
+});
+
 describe("plan setting validation", () => {
   it("requires a goal, a future date, valid minutes, and every topic exactly once", () => {
     const invalid = validatePlanSettings({

@@ -13,6 +13,7 @@ import type {
   AttemptFeedbackResponse,
   AuthCapabilities,
   AuthResponse,
+  CalendarResponse,
   LearningWorkspace,
   LearningInsights,
   IntegrationKind,
@@ -221,6 +222,17 @@ export class ApiClient {
   listWorkspaces(token: string, includeArchived = false): Promise<LearningWorkspace[]> {
     const query = includeArchived ? "?include_archived=true" : "";
     return this.request(`/workspaces${query}`, {}, token);
+  }
+
+  getCalendar(
+    token: string,
+    startsAt: string,
+    endsAt: string,
+    includeArchived = false,
+  ): Promise<CalendarResponse> {
+    const query = new URLSearchParams({ starts_at: startsAt, ends_at: endsAt });
+    if (includeArchived) query.set("include_archived", "true");
+    return this.request(`/calendar?${query.toString()}`, {}, token);
   }
 
   updateWorkspace(

@@ -35,6 +35,25 @@ export interface LearningWorkspace {
   last_active_at: string;
 }
 
+export interface CalendarTask {
+  id: string;
+  workspace_id: string;
+  workspace_title: string;
+  workspace_archived: boolean;
+  topic_id: string;
+  topic_label: string;
+  planned_at: string;
+  minutes: number;
+  activity: "learn" | "practice" | "apply" | "review";
+  status: "planned" | "completed";
+}
+
+export interface CalendarResponse {
+  starts_at: string;
+  ends_at: string;
+  tasks: CalendarTask[];
+}
+
 export interface WorkspaceRoute {
   action: "created" | "switched" | "reused";
   confidence: number;
