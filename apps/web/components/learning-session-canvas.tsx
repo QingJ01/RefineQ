@@ -140,6 +140,7 @@ export function LearningSessionCanvas({
   savedQuestions,
   agentToken,
   modelConfigured,
+  onModelUnavailable,
   isAdmin = false,
   onOpenAgentSettings,
   onLearningModeChange,
@@ -164,7 +165,8 @@ export function LearningSessionCanvas({
   learningMode: LearningMode;
   savedQuestions: SavedPracticeQuestion[];
   agentToken?: string;
-  modelConfigured?: boolean;
+  modelConfigured?: boolean | null;
+  onModelUnavailable?: () => void;
   isAdmin?: boolean;
   onOpenAgentSettings?: () => void;
   onLearningModeChange: (mode: LearningMode) => void;
@@ -403,7 +405,8 @@ export function LearningSessionCanvas({
           <SessionCoach
             locale={locale}
             onAsk={onAskCoach}
-            modelConfigured={modelConfigured ?? true}
+            modelConfigured={modelConfigured}
+            onModelUnavailable={onModelUnavailable}
             isAdmin={isAdmin}
             onConfigure={onOpenAgentSettings}
             onOpenFullCoach={agentToken ? openFullCoach : undefined}
@@ -423,6 +426,7 @@ export function LearningSessionCanvas({
             t={t}
             locale={locale}
             modelConfigured={modelConfigured}
+            onModelUnavailable={onModelUnavailable}
             isAdmin={isAdmin}
             onOpenSettings={onOpenAgentSettings}
           />

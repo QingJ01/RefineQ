@@ -29,6 +29,7 @@ import { localizeApiError } from "@/lib/error-messages";
 import { translator } from "@/lib/i18n";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
 import { inferLearningMode } from "@/lib/learning-session";
+import { loadModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
   clearLearningSession,
@@ -71,7 +72,7 @@ export function StudyWorkspace({
   const t = useMemo(() => translator(locale), [locale]);
   const [restoring, setRestoring] = useState(true);
   const [auth, setAuth] = useState<AuthResponse | null>(null);
-  const [modelConfigured, setModelConfigured] = useState<boolean>();
+  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
   const [workspaces, setWorkspaces] = useState<LearningWorkspace[]>([]);
   const [workspace, setWorkspace] = useState<LearningWorkspace | null>(null);
   const [plan, setPlan] = useState<StudyPlan | null>(null);
@@ -147,9 +148,9 @@ export function StudyWorkspace({
           setLocale(saved.locale);
           document.documentElement.lang = saved.locale === "zh" ? "zh-CN" : "en";
         }
-        const [user, settings] = await Promise.all([
+        const [user, configured] = await Promise.all([
           api.getProfile(saved.token),
-          api.getModelSettings(saved.token),
+          loadModelCapability(() => api.getModelSettings(saved.token)),
         ]);
         const restoredAuth: AuthResponse = {
           access_token: saved.token,
@@ -159,7 +160,7 @@ export function StudyWorkspace({
         const recent = await api.listWorkspaces(saved.token);
         if (!active) return;
         setAuth(restoredAuth);
-        setModelConfigured(settings.configured);
+        setModelConfigured(configured);
         setWorkspaces(recent);
         const selectedId = initialWorkspaceId;
         const resolution = resolveRequestedWorkspace(selectedId, recent);
@@ -239,12 +240,12 @@ export function StudyWorkspace({
       locale,
     });
     try {
-      const [recent, settings] = await Promise.all([
+      const [recent, configured] = await Promise.all([
         api.listWorkspaces(response.access_token),
-        api.getModelSettings(response.access_token),
+        loadModelCapability(() => api.getModelSettings(response.access_token)),
       ]);
       setWorkspaces(recent);
-      setModelConfigured(settings.configured);
+      setModelConfigured(configured);
       const selected = recent.find((item) => item.id === initialWorkspaceId);
       if (initialWorkspaceId && !selected) {
         redirectUnavailableWorkspace();
@@ -611,7 +612,7 @@ export function StudyWorkspace({
   function logout() {
     clearLearningSession(window.sessionStorage);
     setAuth(null);
-    setModelConfigured(undefined);
+    setModelConfigured(null);
     setWorkspace(null);
     setWorkspaces([]);
     router.replace("/");
@@ -804,6 +805,7 @@ export function StudyWorkspace({
               savedQuestions={savedQuestions}
               agentToken={auth.access_token}
               modelConfigured={modelConfigured}
+              onModelUnavailable={() => setModelConfigured(false)}
               isAdmin={auth.user.role === "admin"}
               onOpenAgentSettings={() => router.push("/admin/integrations/chat")}
               onLearningModeChange={changeLearningMode}

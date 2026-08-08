@@ -4,6 +4,7 @@ import Image from "next/image";
 import { ArrowUp, LoaderCircle, MessageCircleMore, Settings2, Sparkles } from "lucide-react";
 import { FormEvent, useState } from "react";
 
+import { ApiError } from "@/lib/api";
 import type { AgentReply, Locale } from "@/lib/types";
 
 
@@ -16,6 +17,7 @@ const copy = {
     send: "发送",
     error: "暂时无法连接教练，你仍可以继续当前学习任务。",
     modelMissing: "学习 Agent 尚未配置模型。练习、资料和进度仍可继续使用。",
+    modelUnknown: "暂时无法确认学习 Agent 状态。本地练习、资料和进度仍可继续使用。",
     configure: "前往配置",
     fullCoach: "完整对话与历史",
   },
@@ -27,6 +29,7 @@ const copy = {
     send: "Send",
     error: "The coach is temporarily unavailable. You can continue the current task.",
     modelMissing: "The learning Agent has not been configured. Practice, material, and progress remain available.",
+    modelUnknown: "The learning Agent status is unavailable. Local practice, material, and progress remain available.",
     configure: "Open settings",
     fullCoach: "Full conversation and history",
   },
@@ -39,13 +42,15 @@ export function SessionCoach({
   isAdmin = false,
   onConfigure,
   onOpenFullCoach,
+  onModelUnavailable,
 }: {
   locale: Locale;
   onAsk: (message: string) => Promise<AgentReply>;
-  modelConfigured?: boolean;
+  modelConfigured?: boolean | null;
   isAdmin?: boolean;
   onConfigure?: () => void;
   onOpenFullCoach?: () => void;
+  onModelUnavailable?: () => void;
 }) {
   const text = copy[locale];
   const [message, setMessage] = useState("");
@@ -62,7 +67,10 @@ export function SessionCoach({
       const response = await onAsk(normalized);
       setReply(response.message);
       setMessage("");
-    } catch {
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.code === "model_not_configured") {
+        onModelUnavailable?.();
+      }
       setError(text.error);
     } finally {
       setBusy(false);
@@ -102,9 +110,9 @@ export function SessionCoach({
           <MessageCircleMore size={14} /> {text.fullCoach}
         </button>
       )}
-      {!modelConfigured && (
+      {modelConfigured !== true && (
         <div className="coach-capability-notice" role="status">
-          <p>{text.modelMissing}</p>
+          <p>{modelConfigured === false ? text.modelMissing : text.modelUnknown}</p>
           {isAdmin && onConfigure && (
             <button
               type="button"
@@ -122,7 +130,7 @@ export function SessionCoach({
             key={suggestion}
             type="button"
             data-testid="session-coach-suggestion"
-            disabled={busy || !modelConfigured}
+            disabled={busy || modelConfigured !== true}
             onClick={() => void ask(suggestion)}
           >
             {suggestion}
@@ -138,9 +146,9 @@ export function SessionCoach({
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder={text.placeholder}
-          disabled={busy || !modelConfigured}
+          disabled={busy || modelConfigured !== true}
         />
-        <button type="submit" aria-label={text.send} disabled={busy || !message.trim() || !modelConfigured}>
+        <button type="submit" aria-label={text.send} disabled={busy || !message.trim() || modelConfigured !== true}>
           {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={17} />}
         </button>
       </form>

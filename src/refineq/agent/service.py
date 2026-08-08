@@ -373,9 +373,10 @@ class AgentService:
                 if not response_sources:
                     citations = [citation for citation in citations if citation in available]
                     response_sources = [available[citation] for citation in citations]
+                restored_citation_ids = {source.citation_id for source in response_sources}
                 return AgentChatResponse(
                     session_id=session_id,
-                    message=_sanitize_reply(stored_turn["message"], set(available)),
+                    message=_sanitize_reply(stored_turn["message"], restored_citation_ids),
                     citations=citations,
                     sources=response_sources,
                 )

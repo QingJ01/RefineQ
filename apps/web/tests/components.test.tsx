@@ -772,6 +772,26 @@ describe("focused learning components", () => {
     expect(html).toContain("前往配置");
   });
 
+  it("keeps local learning explicit when model capability status cannot be checked", () => {
+    const html = renderToStaticMarkup(
+      <SessionCoach
+        locale="zh"
+        modelConfigured={null}
+        onAsk={async () => ({
+          session_id: "session-1",
+          message: "reply",
+          citations: [],
+          sources: [],
+        })}
+      />,
+    );
+
+    expect(html).toContain("暂时无法确认学习 Agent 状态");
+    expect(html).toContain("本地练习、资料和进度仍可继续使用");
+    expect(html).toContain('data-testid="session-coach-input"');
+    expect(html).toContain("disabled");
+  });
+
   it("makes the complete conversation workspace reachable from today's session", () => {
     const html = renderToStaticMarkup(
       <LearningSessionCanvas

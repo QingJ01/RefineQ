@@ -958,3 +958,24 @@ it("routes workspace restoration failures through the safe localized mapper", ()
   expect(restoreSource).toContain("localizeApiError(caught, saved.locale ?? \"zh\")");
   expect(restoreSource).not.toContain("caught.message");
 });
+
+
+it("treats model capability checks as optional and propagates runtime unavailability", () => {
+  const workspaceSource = readFileSync(
+    fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+    "utf8",
+  );
+  const canvasSource = readFileSync(
+    fileURLToPath(new URL("../components/learning-session-canvas.tsx", import.meta.url)),
+    "utf8",
+  );
+  const agentSource = readFileSync(
+    fileURLToPath(new URL("../components/agent-panel.tsx", import.meta.url)),
+    "utf8",
+  );
+
+  expect(workspaceSource).toContain("loadModelCapability(() => api.getModelSettings");
+  expect(workspaceSource).toContain("onModelUnavailable={() => setModelConfigured(false)}");
+  expect(canvasSource).toContain("onModelUnavailable={onModelUnavailable}");
+  expect(agentSource).toContain("onModelUnavailable?.()");
+});

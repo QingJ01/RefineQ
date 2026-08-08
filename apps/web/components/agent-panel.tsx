@@ -47,6 +47,7 @@ export function AgentPanel({
   t,
   locale = "en",
   modelConfigured: configuredFromWorkspace,
+  onModelUnavailable,
   isAdmin = false,
   onOpenSettings,
 }: {
@@ -54,7 +55,8 @@ export function AgentPanel({
   workspaceId: string;
   t: Translator;
   locale?: Locale;
-  modelConfigured?: boolean;
+  modelConfigured?: boolean | null;
+  onModelUnavailable?: () => void;
   isAdmin?: boolean;
   onOpenSettings?: () => void;
 }) {
@@ -65,7 +67,13 @@ export function AgentPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [detectedModelConfigured, setDetectedModelConfigured] = useState<boolean | null>(null);
-  const modelConfigured = configuredFromWorkspace ?? detectedModelConfigured;
+  const modelConfigured = detectedModelConfigured === false
+    ? false
+    : configuredFromWorkspace !== undefined
+      ? configuredFromWorkspace
+      : detectedModelConfigured;
+  const checkingModel = configuredFromWorkspace === undefined
+    && detectedModelConfigured === null;
   const [error, setError] = useState("");
   const [failedTurn, setFailedTurn] = useState<AgentTurn | null>(null);
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
@@ -162,6 +170,7 @@ export function AgentPanel({
         setError(errorMessage(caught, t, locale));
         if (caught instanceof ApiError && caught.code === "model_not_configured") {
           setDetectedModelConfigured(false);
+          onModelUnavailable?.();
         }
       }
     } finally {
@@ -251,7 +260,11 @@ export function AgentPanel({
           <button type="button" data-testid="agent-history" className="quiet-button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((current) => !current)}><History size={15} /> {t("conversationHistory")}</button>
           <button type="button" data-testid="agent-new-conversation" className="quiet-button" onClick={newConversation}><Plus size={15} /> {t("newConversation")}</button>
           <span data-testid="model-status" className={modelConfigured ? "agent-model-status ready" : modelConfigured === null ? "agent-model-status checking" : "agent-model-status"}>
-            {t(modelConfigured ? "aiReady" : modelConfigured === null ? "checkingModel" : "adminSetupRequired")}
+            {t(modelConfigured
+              ? "aiReady"
+              : modelConfigured === null
+                ? checkingModel ? "checkingModel" : "modelStatusUnavailable"
+                : "adminSetupRequired")}
           </span>
           {modelConfigured === false && isAdmin && (
             <button type="button" className="quiet-button agent-settings-link" onClick={onOpenSettings}>
@@ -287,7 +300,7 @@ export function AgentPanel({
             <p>{t("messagePlaceholder")}</p>
             <div className="agent-suggestions">
               {suggestionKeys.map((key) => (
-                <button key={key} type="button" data-testid="agent-suggestion" onClick={() => setMessage(t(key))}>
+                <button key={key} type="button" data-testid="agent-suggestion" disabled={modelConfigured !== true} onClick={() => setMessage(t(key))}>
                   {t(key)}
                 </button>
               ))}
@@ -310,11 +323,11 @@ export function AgentPanel({
         <div ref={logEndRef} aria-hidden="true" />
       </div>
       <form className="chat-composer" onSubmit={send}>
-        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} />
+        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} disabled={modelConfigured !== true} />
         {busy ? (
           <button type="button" data-testid="agent-stop" className="secondary-action" onClick={stopResponse}><Square size={15} /> {t("stop")}</button>
         ) : (
-          <button className="primary-action" disabled={!message.trim()}>{t("send")} <Send size={17} /></button>
+          <button className="primary-action" disabled={!message.trim() || modelConfigured !== true}>{t("send")} <Send size={17} /></button>
         )}
       </form>
       {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} t={t} onClose={() => setSelectedSources([])} />}
