@@ -31,7 +31,7 @@ services:
       REFINEQ_DATABASE_URL: "${REFINEQ_DATABASE_URL:-postgresql+psycopg://refineq:refineq-local-change-me@database:5432/refineq}"
       REFINEQ_HOST: 0.0.0.0
       REFINEQ_PORT: 8000
-      REFINEQ_FORWARDED_ALLOW_IPS: "${REFINEQ_FORWARDED_ALLOW_IPS:-*}"
+      REFINEQ_FORWARDED_ALLOW_IPS: "${REFINEQ_FORWARDED_ALLOW_IPS:-172.30.0.2}"
       REFINEQ_MODEL_ENCRYPTION_KEY: "${REFINEQ_MODEL_ENCRYPTION_KEY:-}"
       REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS: "${REFINEQ_MODEL_ENDPOINT_ALLOWED_HOSTS:-api.openai.com,api.deepseek.com,api.siliconflow.cn}"
       REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS: "${REFINEQ_OBJECT_STORAGE_ENDPOINT_ALLOWED_HOSTS:-}"
@@ -133,7 +133,16 @@ services:
     depends_on:
       web:
         condition: service_healthy
+    networks:
+      default:
+        ipv4_address: 172.30.0.2
     restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   refineq-data:

@@ -4,6 +4,11 @@ The production topology is Caddy in front of Next.js and FastAPI, backed by Post
 pgvector extension. Only Caddy publishes host ports. Original uploads use the `refineq-data` volume
 until an administrator switches object storage to an S3-compatible service.
 
+Compose pins Caddy to `172.30.0.2`, and the API accepts forwarded client addresses only from that
+source. If the private network changes, update the Caddy address and
+`REFINEQ_FORWARDED_ALLOW_IPS` together. Never set the latter to `*`: otherwise a client that reaches
+the API can forge its apparent source address and bypass source-keyed controls.
+
 ## Requirements
 
 - Docker Engine with Compose v2

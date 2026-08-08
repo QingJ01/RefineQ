@@ -316,6 +316,29 @@ def test_two_external_clients_receive_independent_auth_windows(tmp_path: Path) -
         assert second.post("/auth/login", json=payload).status_code == 401
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/auth/password-reset/request", {"email": "missing@example.com"}),
+        (
+            "/auth/password-reset/complete",
+            {"token": "invalid-token", "password": "new-correct-horse-battery-staple"},
+        ),
+    ],
+)
+def test_password_reset_endpoints_use_the_auth_rate_limit(
+    tmp_path: Path,
+    path: str,
+    payload: dict[str, str],
+) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        first = client.post(path, json=payload)
+        second = client.post(path, json=payload)
+
+    assert first.status_code != 429
+    assert second.status_code == 429
+
+
 def test_rate_limiter_prunes_expired_keys_and_caps_new_key_growth() -> None:
     limiter = SlidingWindowRateLimiter(max_keys=2)
 
