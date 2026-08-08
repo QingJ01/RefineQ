@@ -5,8 +5,6 @@ import {
   Archive,
   ArchiveRestore,
   BookOpen,
-  CalendarDays,
-  ChartNoAxesColumnIncreasing,
   Check,
   Clock3,
   House,
@@ -24,18 +22,8 @@ import { FormEvent, useState } from "react";
 import { BrandMark, BrandName } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Translator } from "@/lib/i18n";
-import { learningPath, type LearningSection } from "@/lib/learning-routes";
+import { learningPath } from "@/lib/learning-routes";
 import type { LearningWorkspace } from "@/lib/types";
-
-const primaryWorkspaceRoutes: Array<{
-  id: LearningSection;
-  icon: typeof BookOpen;
-}> = [
-  { id: "today", icon: BookOpen },
-  { id: "path", icon: CalendarDays },
-  { id: "materials", icon: Archive },
-  { id: "progress", icon: ChartNoAxesColumnIncreasing },
-];
 
 export function LearningHome({
   t,
@@ -75,7 +63,7 @@ export function LearningHome({
   const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<LearningWorkspace | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const currentWorkspace = workspaces.find((item) => !item.archived) ?? null;
+  const activeWorkspaces = workspaces.filter((item) => !item.archived);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -122,23 +110,23 @@ export function LearningHome({
             <House size={19} />
             <span>{t("learningHome")}</span>
           </Link>
-          {currentWorkspace && (
+          {activeWorkspaces.length > 0 && (
             <>
-              <div className="home-current-space-summary">
-                <span className="kicker">{t("currentSpace")}</span>
-                <strong>{currentWorkspace.title}</strong>
+              <span className="home-nav-label">{t("recentLearning")}</span>
+              <div className="home-space-list">
+                {activeWorkspaces.map((workspace) => (
+                  <Link
+                    key={workspace.id}
+                    className="home-space-link"
+                    href={learningPath(workspace.id, "today")}
+                    aria-label={`${t("switchSpace")}: ${workspace.title}`}
+                  >
+                    <BookOpen size={17} />
+                    <span>{workspace.title}</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                ))}
               </div>
-              {primaryWorkspaceRoutes.map(({ id, icon: Icon }) => (
-                <Link
-                  key={id}
-                  data-testid={`home-nav-${id}`}
-                  className="home-nav-item"
-                  href={learningPath(currentWorkspace.id, id)}
-                >
-                  <Icon size={19} />
-                  <span>{t(id)}</span>
-                </Link>
-              ))}
             </>
           )}
         </nav>

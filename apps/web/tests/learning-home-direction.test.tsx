@@ -39,7 +39,7 @@ describe("dialog-first learning home", () => {
     expect(styles).toMatch(/\.home-shell\s*\{[^}]*grid-template-columns:\s*264px minmax\(0, 1fr\)/s);
   });
 
-  it("uses real workspace routes in the left navigation", () => {
+  it("keeps global home navigation separate from workspace-local navigation", () => {
     const html = renderToStaticMarkup(
       <LearningHome
         t={translator("zh")}
@@ -64,11 +64,13 @@ describe("dialog-first learning home", () => {
     );
 
     expect(html).toContain('class="home-primary-navigation"');
+    expect(html).toContain('class="home-space-list"');
     expect(html).toContain('href="/"');
     expect(html).toContain('href="/learn/calculus/today"');
-    expect(html).toContain('href="/learn/calculus/path"');
-    expect(html).toContain('href="/learn/calculus/materials"');
-    expect(html).toContain('href="/learn/calculus/progress"');
+    expect(html).toContain("Calculus Sprint");
+    expect(html).not.toContain('href="/learn/calculus/path"');
+    expect(html).not.toContain('href="/learn/calculus/materials"');
+    expect(html).not.toContain('href="/learn/calculus/progress"');
     expect(html).not.toContain('href="#learning-composer"');
     expect(html).not.toContain('href="#recent-learning"');
   });
