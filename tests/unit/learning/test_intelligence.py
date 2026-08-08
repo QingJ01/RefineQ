@@ -260,6 +260,25 @@ def test_fallback_grading_rejects_topic_echo_and_generic_filler() -> None:
     assert filler.mastery_evidence is False
 
 
+def test_source_free_fallback_explains_why_mastery_is_not_updated() -> None:
+    question = fallback_question(
+        topic_id="cache",
+        topic_name="缓存一致性",
+        difficulty_level=2,
+        sources=[],
+    )
+
+    result = fallback_grade(
+        question,
+        "缓存一致性要求多个处理器中的数据副本保持一致，例如写入时需要让其他副本失效。",
+    )
+
+    assert result.passed is False
+    assert result.mastery_evidence is False
+    assert "资料" in result.feedback
+    assert "掌握度" in result.feedback
+
+
 def test_fallback_grading_rejects_repeated_keyword_spam() -> None:
     question = fallback_question(
         topic_id="limits",

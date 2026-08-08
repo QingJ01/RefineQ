@@ -220,7 +220,12 @@ def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
         else "还需要补充一个具体例子或应用。"
     )
     gaps = [] if example_present else [application_gap]
-    if not concept_present:
+    if not expected_terms:
+        gaps.insert(
+            0,
+            "未找到可核对的学习资料，本次降级反馈不计入掌握度；请上传资料或配置模型后再试。",
+        )
+    elif not concept_present:
         gaps.insert(0, f"需要解释“{question.topic_name}”的关键含义，不能只复述题目。")
     if not substantive:
         gaps.append("回答信息不足，请用完整句子说明原理。")
