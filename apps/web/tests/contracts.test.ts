@@ -751,6 +751,56 @@ describe("implicit workspace API", () => {
     });
     expect(plan.id).toBe("plan-2");
   });
+
+  it("loads insights, retries the same question, and updates learner feedback", async () => {
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      const path = String(input);
+      requests.push({
+        path,
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      if (path.endsWith("/insights")) {
+        return new Response(JSON.stringify({
+          workspace_id: "math-space",
+          mastery_history: [],
+          topics: [],
+          due_reviews: [],
+          attempts: [],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path.endsWith("/retry")) {
+        return new Response(JSON.stringify({
+          id: "question-1",
+          topic_id: "limits",
+          prompt: "Explain limits",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        attempt_id: "attempt-1",
+        learner_note: "Review this rubric",
+        appealed: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.getWorkspaceInsights("token-1", "math-space");
+    await client.retryWorkspaceQuestion("token-1", "math-space", "question-1");
+    await client.updateWorkspaceAttemptFeedback("token-1", "math-space", "attempt-1", {
+      learner_note: "Review this rubric",
+      appealed: true,
+    });
+
+    expect(requests).toEqual([
+      { path: "/api/workspaces/math-space/learning/insights", method: "GET" },
+      { path: "/api/workspaces/math-space/learning/questions/question-1/retry", method: "POST" },
+      {
+        path: "/api/workspaces/math-space/learning/attempts/attempt-1/feedback",
+        method: "PATCH",
+        body: { learner_note: "Review this rubric", appealed: true },
+      },
+    ]);
+  });
 });
 
 describe("plan setting validation", () => {

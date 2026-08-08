@@ -59,6 +59,10 @@ class QuestionNotFoundError(LearningServiceError):
     code = "question_not_found"
 
 
+class AttemptNotFoundError(LearningServiceError):
+    code = "attempt_not_found"
+
+
 class TopicSeed(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -160,6 +164,10 @@ class AnswerResponse(BaseModel):
     grading_mode: str = "fallback"
     mastery_updated: bool = True
     next_review_at: datetime | None = None
+    answer: str = ""
+    observed_at: datetime | None = None
+    learner_note: str | None = None
+    appealed: bool = False
     replayed: bool = False
 
 
@@ -178,6 +186,88 @@ class PlanUpdateRequest(BaseModel):
     daily_minutes: int = Field(ge=5, le=480)
     topic_order: list[str] = Field(min_length=1, max_length=200)
     regenerate: bool = False
+
+
+class AttemptFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    learner_note: str | None = Field(default=None, max_length=2_000)
+    appealed: bool | None = None
+
+
+class AttemptFeedbackResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    attempt_id: str
+    learner_note: str | None = None
+    appealed: bool = False
+
+
+class MasteryHistoryPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    attempt_id: str
+    topic_id: str
+    mastery: float = Field(ge=0.0, le=1.0)
+    observed_at: datetime
+
+
+class TopicInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    topic_id: str
+    topic_name: str
+    mastery: float = Field(ge=0.0, le=1.0)
+    attempt_count: int = Field(ge=0)
+    error_count: int = Field(ge=0)
+    last_practiced_at: datetime | None = None
+
+
+class DueReviewInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    session_id: str
+    topic_id: str
+    topic_name: str
+    due_at: datetime
+    minutes: int = Field(ge=5, le=480)
+    overdue: bool
+
+
+class AttemptInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    attempt_id: str
+    question_id: str
+    topic_id: str
+    topic_name: str
+    question_prompt: str
+    answer: str
+    is_correct: bool
+    mastery: float = Field(ge=0.0, le=1.0)
+    score: int = Field(ge=0, le=100)
+    feedback: str
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    misconceptions: list[str] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
+    sources: list[SearchResult] = Field(default_factory=list)
+    grounding: Grounding = Grounding.GENERAL
+    grading_mode: str = "fallback"
+    mastery_updated: bool = True
+    observed_at: datetime
+    learner_note: str | None = None
+    appealed: bool = False
+
+
+class LearningInsightsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workspace_id: str
+    mastery_history: list[MasteryHistoryPoint]
+    topics: list[TopicInsight]
+    due_reviews: list[DueReviewInsight]
+    attempts: list[AttemptInsight]
 
 
 class ProgressResponse(BaseModel):
@@ -640,6 +730,31 @@ class LearningService:
             saved_at=progress.get("saved_questions", {}).get(pending["id"]),
         )
 
+    def retry_question(
+        self,
+        owner_id: str,
+        project_id: str,
+        question_id: str,
+    ) -> QuestionResponse:
+        self._require_project(owner_id, project_id)
+        selected: dict[str, Any] | None = None
+        saved_at: str | None = None
+
+        def restore(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal saved_at, selected
+            progress = self._progress(data)
+            selected = progress.setdefault("question_history", {}).get(question_id)
+            if selected is None:
+                raise QuestionNotFoundError("Practice question not found")
+            progress["pending_question"] = deepcopy(selected)
+            saved_at = progress.get("saved_questions", {}).get(question_id)
+            return data
+
+        self._learning.mutate(owner_id, project_id, restore)
+        if selected is None:
+            raise QuestionNotFoundError("Practice question not found")
+        return self._public_question(selected, saved_at=saved_at)
+
     def set_question_saved(
         self,
         owner_id: str,
@@ -851,6 +966,8 @@ class LearningService:
                 "next_review_at": (
                     next_review_at.isoformat() if next_review_at is not None else None
                 ),
+                "answer": payload.answer,
+                "observed_at": observed_at.isoformat(),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")
@@ -863,6 +980,151 @@ class LearningService:
         if result is None:
             raise LearningServiceError("Answer grading failed")
         return AnswerResponse.model_validate({**result, "replayed": replayed})
+
+    def update_attempt_feedback(
+        self,
+        owner_id: str,
+        project_id: str,
+        attempt_id: str,
+        payload: AttemptFeedbackRequest,
+    ) -> AttemptFeedbackResponse:
+        self._require_project(owner_id, project_id)
+        response: AttemptFeedbackResponse | None = None
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal response
+            attempt = data.get("attempts", {}).get(attempt_id)
+            if attempt is None:
+                raise AttemptNotFoundError("Learning attempt not found")
+            if payload.learner_note is not None:
+                attempt["learner_note"] = payload.learner_note.strip() or None
+            if payload.appealed is not None:
+                attempt["appealed"] = payload.appealed
+            response = AttemptFeedbackResponse(
+                attempt_id=attempt_id,
+                learner_note=attempt.get("learner_note"),
+                appealed=bool(attempt.get("appealed", False)),
+            )
+            return data
+
+        self._learning.mutate(owner_id, project_id, apply)
+        if response is None:
+            raise AttemptNotFoundError("Learning attempt not found")
+        return response
+
+    def insights(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> LearningInsightsResponse:
+        self._require_project(owner_id, project_id)
+        record = self._learning.get(owner_id, project_id)
+        progress = self._progress(record.data)
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        history = progress.get("question_history", {})
+        evidence_times = {
+            item["source_id"]: datetime.fromisoformat(item["observed_at"])
+            for item in progress.get("evidence", [])
+            if item.get("kind") == "attempt"
+        }
+        attempts: list[AttemptInsight] = []
+        for attempt_id, attempt in record.data.get("attempts", {}).items():
+            question = history.get(attempt.get("question_id"), {})
+            attempt_time = datetime.fromisoformat(attempt["observed_at"]) if attempt.get(
+                "observed_at"
+            ) else evidence_times.get(attempt_id, observed_at)
+            topic_id = str(attempt["topic_id"])
+            topic_name = str(progress["topics"][topic_id].get("name") or topic_id)
+            attempts.append(
+                AttemptInsight(
+                    attempt_id=attempt_id,
+                    question_id=str(attempt["question_id"]),
+                    topic_id=topic_id,
+                    topic_name=topic_name,
+                    question_prompt=str(question.get("prompt") or ""),
+                    answer=str(attempt.get("answer") or ""),
+                    is_correct=bool(attempt["is_correct"]),
+                    mastery=float(attempt["mastery"]),
+                    score=int(attempt.get("score", 0)),
+                    feedback=str(attempt.get("feedback") or ""),
+                    strengths=list(attempt.get("strengths", [])),
+                    gaps=list(attempt.get("gaps", [])),
+                    misconceptions=list(attempt.get("misconceptions", [])),
+                    citations=list(attempt.get("citations", [])),
+                    sources=[
+                        SearchResult.model_validate(source)
+                        for source in attempt.get("sources", [])
+                    ],
+                    grounding=attempt.get("grounding", Grounding.GENERAL),
+                    grading_mode=str(attempt.get("grading_mode") or "fallback"),
+                    mastery_updated=bool(attempt.get("mastery_updated", True)),
+                    observed_at=attempt_time,
+                    learner_note=attempt.get("learner_note"),
+                    appealed=bool(attempt.get("appealed", False)),
+                )
+            )
+        attempts.sort(key=lambda item: (item.observed_at, item.attempt_id), reverse=True)
+        chronological = list(reversed(attempts))
+
+        topics: list[TopicInsight] = []
+        for topic_id in progress.get("topic_order") or progress["topics"]:
+            topic_attempts = [item for item in attempts if item.topic_id == topic_id]
+            topics.append(
+                TopicInsight(
+                    topic_id=topic_id,
+                    topic_name=str(progress["topics"][topic_id].get("name") or topic_id),
+                    mastery=BKTState.model_validate(
+                        progress["bkt_states"][topic_id]
+                    ).p_mastery,
+                    attempt_count=len(topic_attempts),
+                    error_count=sum(not item.is_correct for item in topic_attempts),
+                    last_practiced_at=(
+                        max(item.observed_at for item in topic_attempts)
+                        if topic_attempts else None
+                    ),
+                )
+            )
+
+        due_reviews: list[DueReviewInsight] = []
+        for raw_session in (progress.get("plan") or {}).get("sessions", []):
+            session = StudySession.model_validate(raw_session)
+            if (
+                session.activity != "review"
+                or session.status == "completed"
+                or session.planned_at > observed_at
+            ):
+                continue
+            topic_name = str(
+                progress["topics"].get(session.topic_id, {}).get("name") or session.topic_id
+            )
+            due_reviews.append(
+                DueReviewInsight(
+                    session_id=session.id,
+                    topic_id=session.topic_id,
+                    topic_name=topic_name,
+                    due_at=session.planned_at,
+                    minutes=session.minutes,
+                    overdue=session.planned_at < observed_at,
+                )
+            )
+        due_reviews.sort(key=lambda item: (item.due_at, item.session_id))
+        return LearningInsightsResponse(
+            workspace_id=record.data.get("workspace_id") or record.data["project_id"],
+            mastery_history=[
+                MasteryHistoryPoint(
+                    attempt_id=item.attempt_id,
+                    topic_id=item.topic_id,
+                    mastery=item.mastery,
+                    observed_at=item.observed_at,
+                )
+                for item in chronological
+            ],
+            topics=topics,
+            due_reviews=due_reviews,
+            attempts=attempts,
+        )
 
     def progress(self, owner_id: str, project_id: str) -> ProgressResponse:
         self._require_project(owner_id, project_id)

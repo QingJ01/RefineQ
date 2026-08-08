@@ -126,7 +126,79 @@ export interface AnswerResult {
   grading_mode: "ai" | "fallback";
   mastery_updated: boolean;
   next_review_at?: string | null;
+  answer?: string;
+  observed_at?: string | null;
+  learner_note?: string | null;
+  appealed?: boolean;
   replayed: boolean;
+}
+
+export interface MasteryHistoryPoint {
+  attempt_id: string;
+  topic_id: string;
+  mastery: number;
+  observed_at: string;
+}
+
+export interface TopicInsight {
+  topic_id: string;
+  topic_name: string;
+  mastery: number;
+  attempt_count: number;
+  error_count: number;
+  last_practiced_at: string | null;
+}
+
+export interface DueReviewInsight {
+  session_id: string;
+  topic_id: string;
+  topic_name: string;
+  due_at: string;
+  minutes: number;
+  overdue: boolean;
+}
+
+export interface AttemptInsight {
+  attempt_id: string;
+  question_id: string;
+  topic_id: string;
+  topic_name: string;
+  question_prompt: string;
+  answer: string;
+  is_correct: boolean;
+  mastery: number;
+  score: number;
+  feedback: string;
+  strengths: string[];
+  gaps: string[];
+  misconceptions: string[];
+  citations: string[];
+  sources: SearchSource[];
+  grounding: "material" | "general";
+  grading_mode: string;
+  mastery_updated: boolean;
+  observed_at: string;
+  learner_note: string | null;
+  appealed: boolean;
+}
+
+export interface LearningInsights {
+  workspace_id: string;
+  mastery_history: MasteryHistoryPoint[];
+  topics: TopicInsight[];
+  due_reviews: DueReviewInsight[];
+  attempts: AttemptInsight[];
+}
+
+export interface AttemptFeedbackInput {
+  learner_note?: string | null;
+  appealed?: boolean;
+}
+
+export interface AttemptFeedbackResponse {
+  attempt_id: string;
+  learner_note: string | null;
+  appealed: boolean;
 }
 
 export interface AgentSessionContext {

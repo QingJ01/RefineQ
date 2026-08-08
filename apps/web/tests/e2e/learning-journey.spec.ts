@@ -210,11 +210,28 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page).toHaveURL(/\/progress$/);
     await expect(page.locator(".evidence-timeline li")).toHaveCount(2);
     await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
+    await expect(page.getByTestId("review-queue-empty")).toBeVisible();
+
+    await page.locator('[data-testid^="progress-topic-"]').first().click();
+    await expect(page.getByTestId("progress-topic-detail")).toBeVisible();
+    const rubric = page.locator('[data-testid^="attempt-rubric-"]').first();
+    await rubric.locator("summary").click();
+    await expect(rubric).toContainText("user-interview.txt");
+    const note = rubric.locator('[data-testid^="attempt-note-"]');
+    await note.fill("Please review how the evidence was weighed.");
+    await rubric.locator('[data-testid^="save-attempt-note-"]').click();
+    const appeal = rubric.locator('[data-testid^="appeal-attempt-"]');
+    await appeal.click();
+    await expect(appeal).toHaveAttribute("aria-pressed", "true");
+    const retryPrompt = await rubric.locator('[data-testid^="attempt-question-"]').innerText();
+    await rubric.locator('[data-testid^="retry-attempt-"]').click();
+    await expect(page).toHaveURL(/\/today$/);
+    await expect(page.getByTestId("session-practice-stage")).toContainText(retryPrompt);
   });
 
   await test.step("restore sources and keep the session usable when the coach is unavailable", async () => {
     await page.reload();
-    await expect(page.locator(".workspace-header h1")).toHaveText(workspaceTitle);
+    await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
     await page.getByTestId("nav-materials").click();
     await expect(page.locator(".material-list").getByText("user-interview.txt")).toBeVisible();
     await page.getByTestId("nav-today").click();

@@ -5,8 +5,11 @@ import type {
   AgentSessionSummary,
   AdminOverview,
   AnswerResult,
+  AttemptFeedbackInput,
+  AttemptFeedbackResponse,
   AuthResponse,
   LearningWorkspace,
+  LearningInsights,
   IntegrationKind,
   IntegrationTestResult,
   IntegrationUpdateInput,
@@ -290,6 +293,35 @@ export class ApiClient {
     return this.request<StudyPlan>(
       `/workspaces/${workspaceId}/learning/plan`,
       { method: "PUT", body: JSON.stringify(input) },
+      token,
+    );
+  }
+
+  getWorkspaceInsights(token: string, workspaceId: string): Promise<LearningInsights> {
+    return this.request(`/workspaces/${workspaceId}/learning/insights`, {}, token);
+  }
+
+  retryWorkspaceQuestion(
+    token: string,
+    workspaceId: string,
+    questionId: string,
+  ): Promise<PracticeQuestion> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/questions/${questionId}/retry`,
+      { method: "POST" },
+      token,
+    );
+  }
+
+  updateWorkspaceAttemptFeedback(
+    token: string,
+    workspaceId: string,
+    attemptId: string,
+    input: AttemptFeedbackInput,
+  ): Promise<AttemptFeedbackResponse> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/attempts/${attemptId}/feedback`,
+      { method: "PATCH", body: JSON.stringify(input) },
       token,
     );
   }

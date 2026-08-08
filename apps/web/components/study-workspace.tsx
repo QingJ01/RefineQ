@@ -24,6 +24,8 @@ import { MaterialDropzone } from "@/components/material-dropzone";
 import { PlanSettings } from "@/components/plan-settings";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { ProgressInsights } from "@/components/progress-insights";
+import { ProgressTopicDetail } from "@/components/progress-topic-detail";
+import { ReviewQueue } from "@/components/review-queue";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
@@ -40,8 +42,11 @@ import {
 } from "@/lib/session";
 import type {
   AnswerResult,
+  AttemptFeedbackInput,
+  AttemptInsight,
   AuthResponse,
   LearningEvidence,
+  LearningInsights,
   LearningMode,
   LearningWorkspace,
   Locale,
@@ -80,6 +85,8 @@ export function StudyWorkspace({
   const [plan, setPlan] = useState<StudyPlan | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [evidence, setEvidence] = useState<LearningEvidence[]>([]);
+  const [insights, setInsights] = useState<LearningInsights | null>(null);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [materials, setMaterials] = useState<MaterialRecord[]>([]);
   const [question, setQuestion] = useState<PracticeQuestion | null>(null);
   const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
@@ -108,6 +115,8 @@ export function StudyWorkspace({
     setProgress(snapshot.progress);
     setPlan(snapshot.plan);
     setEvidence(snapshot.evidence);
+    setInsights(null);
+    setSelectedTopicId(null);
     setMaterials(snapshot.materials);
     setSavedQuestions(snapshot.saved_questions ?? []);
     const activeQuestion = snapshot.active_question ?? null;
@@ -129,6 +138,21 @@ export function StudyWorkspace({
     questionRequestIdRef.current = null;
     attemptIdRef.current = null;
   }
+
+  useEffect(() => {
+    const token = auth?.access_token;
+    const workspaceId = workspace?.id;
+    if (section !== "progress" || !token || !workspaceId) return;
+    let active = true;
+    void api.getWorkspaceInsights(token, workspaceId)
+      .then((loaded) => {
+        if (active) setInsights(loaded);
+      })
+      .catch((caught) => {
+        if (active) setError(localizeApiError(caught, locale));
+      });
+    return () => { active = false; };
+  }, [auth?.access_token, locale, section, workspace?.id]);
 
   const redirectUnavailableWorkspace = useCallback(() => {
     window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
@@ -420,6 +444,54 @@ export function StudyWorkspace({
         block: "start",
       });
     });
+  }
+
+  async function retryAttempt(attempt: AttemptInsight) {
+    if (!auth || !workspace) return;
+    setPracticeBusy(true);
+    setError("");
+    try {
+      const retried = await api.retryWorkspaceQuestion(
+        auth.access_token,
+        workspace.id,
+        attempt.question_id,
+      );
+      setQuestion(retried);
+      setResult(null);
+      setAnswer("");
+      questionRequestIdRef.current = null;
+      attemptIdRef.current = null;
+      router.push(learningPath(workspace.id, "today"));
+    } catch (caught) {
+      reportError(caught);
+    } finally {
+      setPracticeBusy(false);
+    }
+  }
+
+  async function updateAttemptFeedback(
+    attempt: AttemptInsight,
+    input: AttemptFeedbackInput,
+  ) {
+    if (!auth || !workspace) return;
+    setError("");
+    try {
+      const updated = await api.updateWorkspaceAttemptFeedback(
+        auth.access_token,
+        workspace.id,
+        attempt.attempt_id,
+        input,
+      );
+      setInsights((current) => current ? {
+        ...current,
+        attempts: current.attempts.map((item) => item.attempt_id === updated.attempt_id
+          ? { ...item, learner_note: updated.learner_note, appealed: updated.appealed }
+          : item),
+      } : current);
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    }
   }
 
   async function uploadMaterials(files: File[], signal?: AbortSignal): Promise<MaterialRecord[]> {
@@ -715,6 +787,7 @@ export function StudyWorkspace({
   const masteryValues = progress ? Object.values(progress.mastery) : [];
   const averageMastery = masteryValues.reduce((sum, value) => sum + value, 0)
     / Math.max(1, masteryValues.length);
+  const selectedTopic = insights?.topics.find((item) => item.topic_id === selectedTopicId);
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
     { id: "path", icon: CalendarDays },
@@ -892,13 +965,35 @@ export function StudyWorkspace({
                 <h2>{t("progress")}</h2>
                 <p>{locale === "zh" ? "把能力变化、实践反馈和下一步安排放在一起。" : "Capability change, task feedback, and next actions in one place."}</p>
               </div>
+              <ReviewQueue
+                locale={locale}
+                reviews={insights?.due_reviews ?? []}
+                onStartReview={(review) => practiceTopic(review.topic_id)}
+              />
               <ProgressInsights
                 progress={progress}
                 t={t}
                 onPracticeTopic={practiceTopic}
                 topicLabels={progress?.topics}
+                insights={insights}
+                onSelectTopic={setSelectedTopicId}
               />
-              <EvidenceLedger evidence={evidence} locale={locale} t={t} />
+              {selectedTopic && (
+                <ProgressTopicDetail
+                  locale={locale}
+                  topic={selectedTopic}
+                  history={insights?.mastery_history ?? []}
+                  onClose={() => setSelectedTopicId(null)}
+                />
+              )}
+              <EvidenceLedger
+                evidence={evidence}
+                locale={locale}
+                t={t}
+                attempts={insights?.attempts}
+                onRetryAttempt={retryAttempt}
+                onUpdateFeedback={updateAttemptFeedback}
+              />
             </div>
           )}
         </section>

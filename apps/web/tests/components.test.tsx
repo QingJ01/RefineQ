@@ -12,6 +12,8 @@ import { PlanTimeline } from "../components/plan-timeline";
 import { PlanSettings } from "../components/plan-settings";
 import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
+import { ProgressTopicDetail } from "../components/progress-topic-detail";
+import { ReviewQueue } from "../components/review-queue";
 import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { SessionCoach } from "../components/session-coach";
@@ -564,6 +566,109 @@ describe("focused learning components", () => {
     expect(html).toContain("34%");
     expect(html).toContain('data-testid="progress-recommendation"');
     expect(html).toContain('data-testid="practice-recommended-topic"');
+  });
+
+  it("renders due reviews and a topic drill-down with stable empty states", () => {
+    const reviewHtml = renderToStaticMarkup(
+      <ReviewQueue
+        locale="en"
+        reviews={[{
+          session_id: "review-1",
+          topic_id: "limits",
+          topic_name: "Limits",
+          due_at: "2026-08-08T08:00:00Z",
+          minutes: 20,
+          overdue: true,
+        }]}
+        onStartReview={() => undefined}
+      />,
+    );
+    const detailHtml = renderToStaticMarkup(
+      <ProgressTopicDetail
+        locale="en"
+        topic={{
+          topic_id: "limits",
+          topic_name: "Limits",
+          mastery: 0.42,
+          attempt_count: 2,
+          error_count: 1,
+          last_practiced_at: "2026-08-08T08:00:00Z",
+        }}
+        history={[{
+          attempt_id: "attempt-1",
+          topic_id: "limits",
+          mastery: 0.42,
+          observed_at: "2026-08-08T08:00:00Z",
+        }]}
+        onClose={() => undefined}
+      />,
+    );
+    const emptyHtml = renderToStaticMarkup(
+      <ReviewQueue locale="en" reviews={[]} onStartReview={() => undefined} />,
+    );
+
+    expect(reviewHtml).toContain('data-testid="review-queue"');
+    expect(reviewHtml).toContain('data-testid="start-review-review-1"');
+    expect(detailHtml).toContain('data-testid="progress-topic-detail"');
+    expect(detailHtml).toContain("42%");
+    expect(detailHtml).toContain("1 error");
+    expect(emptyHtml).toContain('data-testid="review-queue-empty"');
+  });
+
+  it("adds rubric, source, retry, note, and appeal actions to attempt evidence", () => {
+    const html = renderToStaticMarkup(
+      <EvidenceLedger
+        locale="en"
+        t={t}
+        evidence={[{
+          id: "evidence-1",
+          kind: "attempt",
+          source_id: "attempt-1",
+          summary: "Completed a task for Limits.",
+          observed_at: "2026-08-08T08:00:00Z",
+          details: { score: 72, feedback: "Good structure" },
+        }]}
+        attempts={[{
+          attempt_id: "attempt-1",
+          question_id: "question-1",
+          topic_id: "limits",
+          topic_name: "Limits",
+          question_prompt: "Explain a limit.",
+          answer: "A limit describes an approached value.",
+          is_correct: true,
+          mastery: 0.42,
+          score: 72,
+          feedback: "Good structure",
+          strengths: ["Clear definition"],
+          gaps: ["Add an example"],
+          misconceptions: [],
+          citations: ["source-1"],
+          sources: [{
+            citation_id: "source-1",
+            material_id: "material-1",
+            filename: "limits.pdf",
+            chunk_index: 0,
+            text: "Formal definition of a limit.",
+            score: 0.9,
+          }],
+          grounding: "material",
+          grading_mode: "fallback",
+          mastery_updated: true,
+          observed_at: "2026-08-08T08:00:00Z",
+          learner_note: null,
+          appealed: false,
+        }]}
+        onRetryAttempt={() => undefined}
+        onUpdateFeedback={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Explain a limit.");
+    expect(html).toContain("Clear definition");
+    expect(html).toContain("limits.pdf");
+    expect(html).toContain('data-testid="retry-attempt-attempt-1"');
+    expect(html).toContain('data-testid="attempt-note-attempt-1"');
+    expect(html).toContain('data-testid="appeal-attempt-attempt-1"');
   });
 
   it("renders source evidence in a focused disclosure drawer", () => {

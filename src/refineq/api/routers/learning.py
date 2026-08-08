@@ -9,8 +9,12 @@ from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
 from refineq.learning.service import (
     AnswerRequest,
     AnswerResponse,
+    AttemptFeedbackRequest,
+    AttemptFeedbackResponse,
+    AttemptNotFoundError,
     DiagnosticRequest,
     LearningConflictError,
+    LearningInsightsResponse,
     LearningNotSeededError,
     LearningServiceError,
     PlanSessionUpdate,
@@ -34,7 +38,7 @@ workspace_router = APIRouter(
 
 
 def _raise_api_error(error: LearningServiceError) -> None:
-    if isinstance(error, (ProjectNotFoundError, QuestionNotFoundError)):
+    if isinstance(error, (ProjectNotFoundError, QuestionNotFoundError, AttemptNotFoundError)):
         status_code = status.HTTP_404_NOT_FOUND
     elif isinstance(error, (LearningNotSeededError, LearningConflictError)):
         status_code = status.HTTP_409_CONFLICT
@@ -191,6 +195,63 @@ def saved_workspace_questions(
 ) -> list[SavedQuestionResponse]:
     try:
         return request.app.state.workspace_learning_service.saved_questions(
+            user.id,
+            workspace_id,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.post(
+    "/questions/{question_id}/retry",
+    response_model=QuestionResponse,
+)
+def retry_workspace_question(
+    workspace_id: str,
+    question_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> QuestionResponse:
+    try:
+        return request.app.state.workspace_learning_service.retry_question(
+            user.id,
+            workspace_id,
+            question_id,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.patch(
+    "/attempts/{attempt_id}/feedback",
+    response_model=AttemptFeedbackResponse,
+)
+def update_workspace_attempt_feedback(
+    workspace_id: str,
+    attempt_id: str,
+    payload: AttemptFeedbackRequest,
+    request: Request,
+    user: CurrentUser,
+) -> AttemptFeedbackResponse:
+    try:
+        return request.app.state.workspace_learning_service.update_attempt_feedback(
+            user.id,
+            workspace_id,
+            attempt_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.get("/insights", response_model=LearningInsightsResponse)
+def workspace_insights(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> LearningInsightsResponse:
+    try:
+        return request.app.state.workspace_learning_service.insights(
             user.id,
             workspace_id,
         )
