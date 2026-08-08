@@ -135,7 +135,7 @@ def seed_demo(
             user.id,
             DEMO_WORKSPACE_ID,
             DiagnosticRequest(
-                diagnostic_id="demo-diagnostic",
+                diagnostic_id="initial",
                 results=[
                     DiagnosticResultInput(topic_id="pipeline", is_correct=True),
                     DiagnosticResultInput(topic_id="cache", is_correct=False),
