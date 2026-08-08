@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     max_agent_sessions_per_user: int = Field(default=200, ge=1, le=100_000)
     password_reset_expose_token: bool = False
     password_reset_ttl_minutes: int = Field(default=20, ge=5, le=120)
+    demo_email: str = "learner@refineq.local"
+    demo_password: SecretStr | None = None
     auth_rate_limit_requests: int = Field(default=30, ge=1, le=100_000)
     mutation_rate_limit_requests: int = Field(default=240, ge=1, le=1_000_000)
     rate_limit_window_seconds: float = Field(default=60.0, gt=0.0, le=3_600.0)

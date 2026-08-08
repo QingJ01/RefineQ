@@ -26,8 +26,6 @@ from refineq.storage.learning import LearningRepository
 from refineq.storage.sql_store import SqlRecordStore
 from refineq.storage.workspaces import WorkspaceRepository
 
-DEMO_EMAIL = "learner@refineq.local"
-DEMO_PASSWORD = "learn-with-refineq"
 DEMO_WORKSPACE_ID = "refineq-demo"
 DEMO_MATERIAL_ID = "demo-material"
 
@@ -37,7 +35,6 @@ class DemoResult:
     owner_id: str
     workspace_id: str
     email: str
-    password: str
 
 
 def _write_once(path: Path, payload: bytes) -> None:
@@ -61,22 +58,25 @@ def _write_once(path: Path, payload: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def seed_demo(data_root: Path) -> DemoResult:
+def seed_demo(
+    database: Database,
+    data_root: Path,
+    *,
+    email: str,
+    password: str,
+) -> DemoResult:
     """Create one presentation-ready learner without resetting an existing run."""
 
     root = data_root.expanduser().resolve()
-    database_path = root / "system" / "refineq.sqlite3"
-    database = Database(f"sqlite+pysqlite:///{database_path.as_posix()}")
-    database.initialize()
     identity = IdentityService(database)
     try:
         user = identity.register(
-            email=DEMO_EMAIL,
-            password=DEMO_PASSWORD,
+            email=email,
+            password=password,
             display_name="RefineQ Learner",
         )
     except AccountExistsError:
-        user = identity.authenticate(email=DEMO_EMAIL, password=DEMO_PASSWORD)
+        user = identity.authenticate(email=email, password=password)
 
     store = SqlRecordStore(database)
     workspaces = WorkspaceRepository(store)
@@ -186,8 +186,6 @@ def seed_demo(data_root: Path) -> DemoResult:
     result = DemoResult(
         owner_id=user.id,
         workspace_id=DEMO_WORKSPACE_ID,
-        email=DEMO_EMAIL,
-        password=DEMO_PASSWORD,
+        email=email,
     )
-    database.close()
     return result
