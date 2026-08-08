@@ -657,7 +657,6 @@ export function StudyWorkspace({
         {error && <div className="error-banner" role="alert"><strong>{t("error")}</strong><span>{error}</span></div>}
         <LearningHome
           t={t}
-          locale={locale}
           busy={homeBusy}
           workspaces={workspaces}
           onResolve={resolveIntent}

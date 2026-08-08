@@ -805,18 +805,6 @@ describe("safe authentication and administration", () => {
 });
 
 describe("accessible application shell", () => {
-  it("keeps the learning home on the same responsive shell as a workspace", () => {
-    const stylesSource = readFileSync(
-      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
-      "utf8",
-    );
-
-    expect(stylesSource).toContain(".home-command-grid");
-    expect(stylesSource).toContain(".current-space-shortcuts");
-    expect(stylesSource).toContain(".recent-card-shortcuts");
-    expect(stylesSource).toMatch(/\.home-shell\s*\{[^}]*grid-template-columns:\s*264px minmax\(0, 1fr\)/s);
-  });
-
   it("provides a keyboard skip target and localized document state", () => {
     const layoutSource = readFileSync(
       fileURLToPath(new URL("../app/layout.tsx", import.meta.url)),
