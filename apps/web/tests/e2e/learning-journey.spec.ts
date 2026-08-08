@@ -65,6 +65,11 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   await expect(page.locator(".session-steps li")).toHaveCount(4);
+  const initialExamDays = Number.parseInt(
+    await page.getByTestId("exam-countdown").innerText(),
+    10,
+  );
+  expect(initialExamDays).toBeGreaterThan(30);
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
   await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
@@ -118,7 +123,14 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("nav-path").click();
     await expect(page).toHaveURL(/\/path$/);
     await expect(page.locator(".plan-session")).toHaveCount(7);
-    await expect(page.locator(".plan-activity")).toHaveCount(7);
+    await page.getByTestId("toggle-plan-sessions").click();
+    await expect(page.getByTestId("toggle-plan-sessions")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const planSessionCount = await page.locator(".plan-session").count();
+    expect(planSessionCount).toBeGreaterThan(30);
+    await expect(page.locator(".plan-activity")).toHaveCount(planSessionCount);
     const firstSession = page.locator(".plan-session").first();
     await expect(firstSession.locator(".plan-topic strong")).not.toContainText("topic_");
     await firstSession.locator('[data-testid^="complete-session-"]').click();
@@ -150,7 +162,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("plan-settings-regenerate").click();
     await page.getByTestId("confirm-dialog-confirm").click();
     await expect(page.getByTestId("confirm-dialog")).toBeHidden();
-    await expect(page.locator(".plan-session")).toHaveCount(7);
+    await expect(page.locator(".plan-session")).toHaveCount(planSessionCount);
   });
 
   await test.step("keep mobile navigation accessible", async () => {
