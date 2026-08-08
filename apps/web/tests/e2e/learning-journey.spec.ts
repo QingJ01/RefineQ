@@ -145,6 +145,9 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await expect(page.getByTestId("workspace-switcher")).toBeFocused();
     await expect(page.getByTestId("workspace-switcher")).toBeVisible();
     expect((await page.getByTestId("workspace-switcher").boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    expect(await page.getByTestId("workspace-switcher").locator("strong").evaluate(
+      (element) => Number.parseFloat(getComputedStyle(element).fontSize),
+    )).toBeGreaterThanOrEqual(12);
     await expect(page.getByTestId("workspace-switcher")).toHaveAccessibleName(
       new RegExp(workspaceTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
