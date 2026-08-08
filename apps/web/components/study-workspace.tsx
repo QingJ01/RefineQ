@@ -62,6 +62,7 @@ import type {
   PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
+  SavedPracticeQuestion,
   SearchSource,
   StudySession,
   WorkspaceRoute,
@@ -148,6 +149,7 @@ export function StudyWorkspace({
   const [homeBusy, setHomeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
+  const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
   const appliedActionIdsRef = useRef(new Set<string>());
@@ -419,6 +421,7 @@ export function StudyWorkspace({
           }
           setQuestion(nextQuestion);
           setResult(null);
+          setMasteryBefore(null);
           setAnswer("");
           questionRequestIdRef.current = null;
           attemptIdRef.current = null;
@@ -437,6 +440,7 @@ export function StudyWorkspace({
     if (!auth || !workspace || !question) return;
     const generation = capturePracticeGeneration();
     setPracticeBusy(true);
+    setMasteryBefore(progress?.mastery?.[question.topic_id] ?? null);
     attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     const attemptId = attemptIdRef.current;
     try {
@@ -541,10 +545,48 @@ export function StudyWorkspace({
       if (!isPracticeGenerationCurrent(generation)) return;
       setQuestion(retried);
       setResult(null);
+      setMasteryBefore(null);
       setAnswer("");
       questionRequestIdRef.current = null;
       attemptIdRef.current = null;
       router.push(learningPath(workspace.id, "today"));
+    } catch (caught) {
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
+    } finally {
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+    }
+  }
+
+  async function practiceSavedQuestion(saved: SavedPracticeQuestion) {
+    if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
+    setPracticeBusy(true);
+    setError("");
+    try {
+      const retried = await api.retryWorkspaceQuestion(
+        auth.access_token,
+        workspace.id,
+        saved.id,
+      );
+      if (!isPracticeGenerationCurrent(generation)) return;
+      if (question) {
+        window.sessionStorage.removeItem(
+          `refineq.practice-draft:${workspace.id}:${question.id}`,
+        );
+      }
+      setQuestion(retried);
+      setResult(null);
+      setMasteryBefore(null);
+      setAnswer("");
+      questionRequestIdRef.current = null;
+      attemptIdRef.current = null;
+      router.push(learningPath(workspace.id, "today"));
+      window.requestAnimationFrame(() => {
+        document.getElementById("active-practice")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
@@ -1095,6 +1137,7 @@ export function StudyWorkspace({
               question={question}
               answer={answer}
               result={result}
+              masteryBefore={masteryBefore}
               busy={practiceBusy}
               learningMode={learningMode}
               savedQuestions={savedQuestions}
@@ -1117,6 +1160,7 @@ export function StudyWorkspace({
               onSubmit={submitAnswer}
               onNextTask={() => { void getQuestion({ learningMode, replace: true }); }}
               onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
+              onPracticeSaved={(saved) => { void practiceSavedQuestion(saved); }}
               onOpenLibrary={() => router.push(learningPath(workspace.id, "materials"))}
               onAskCoach={askSessionCoach}
               onApplyCoachAction={applyCoachAction}

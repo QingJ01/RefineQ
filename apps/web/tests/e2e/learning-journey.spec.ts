@@ -236,6 +236,7 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await page.getByTestId("practice-sources").click();
     await expect(page.getByRole("dialog")).toContainText("user-interview.txt");
     await page.keyboard.press("Escape");
+    const savedPrompt = await page.getByTestId("session-practice-stage").locator("h2").innerText();
     await page.getByTestId("save-question").click();
     await expect(page.getByTestId("save-question")).toHaveAttribute("aria-pressed", "true");
     await page.getByTestId("skip-question").click();
@@ -243,6 +244,14 @@ test("learner completes and restores a capability learning journey", async ({ pa
       "data-question-id",
       firstQuestionId!,
     );
+    await expect(page.getByTestId("saved-question-list")).toContainText(savedPrompt);
+    await page.getByTestId("practice-saved-question").first().click();
+    await expect(page.getByTestId("session-practice-stage")).toHaveAttribute(
+      "data-question-id",
+      firstQuestionId!,
+    );
+    await expect(page.getByTestId("session-practice-stage").locator("h2")).toHaveText(savedPrompt);
+    await page.getByTestId("skip-question").click();
 
     await page.getByTestId("practice-answer").fill(
       "The stated request is export, but the recurring job is reliable weekly reporting. I would interview five similar users, compare their current workaround, and test a lightweight report prototype before committing to an export feature.",

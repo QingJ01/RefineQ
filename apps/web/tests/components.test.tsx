@@ -171,7 +171,14 @@ describe("focused learning components", () => {
         result={null}
         busy={false}
         learningMode="case"
-        savedQuestions={[]}
+        savedQuestions={[{
+          id: "saved-question-1",
+          topic_id: "user-needs",
+          prompt: "分析已收藏的用户访谈原题",
+          difficulty_level: 2,
+          saved: true,
+          saved_at: "2026-08-08T00:00:00Z",
+        }]}
         onLearningModeChange={() => undefined}
         onAnswerChange={() => undefined}
         onStartTask={() => undefined}
@@ -197,6 +204,9 @@ describe("focused learning components", () => {
     expect(html).toContain("反馈复盘");
     expect(html).toContain("用户访谈原文.md");
     expect(html).toContain('data-testid="session-coach"');
+    expect(html).toContain('data-testid="saved-question-list"');
+    expect(html).toContain("分析已收藏的用户访谈原题");
+    expect(html).toContain('data-testid="practice-saved-question"');
     expect(html).not.toContain('data-testid="session-upload-prompt"');
     expect(html).not.toContain("证据账本");
   });
@@ -261,6 +271,7 @@ describe("focused learning components", () => {
           mastery_updated: true,
           replayed: false,
         } : null}
+        masteryBefore={0.42}
         busy={false}
         learningMode="case"
         savedQuestions={[]}
@@ -288,6 +299,8 @@ describe("focused learning components", () => {
     expect(feedbackHtml).toContain("材料依据");
     expect(feedbackHtml).toContain('data-testid="feedback-sources"');
     expect(feedbackHtml).toContain("用户访谈原文.md");
+    expect(feedbackHtml).toContain("42%");
+    expect(feedbackHtml).toContain("60%");
   });
 
   it("keeps empty grading dimensions explicit instead of rendering blank cards", () => {
@@ -330,6 +343,7 @@ describe("focused learning components", () => {
           mastery_updated: false,
           replayed: false,
         }}
+        masteryBefore={0.42}
         busy={false}
         learningMode="concept"
         savedQuestions={[]}
@@ -346,6 +360,7 @@ describe("focused learning components", () => {
 
     expect(html).toContain("这次还没有识别到明确亮点");
     expect(html).toContain("请先补充完整回答，再生成针对性改进建议");
+    expect(html).toContain('data-testid="mastery-unchanged"');
   });
 
   it("renders a reusable accessible confirmation dialog", () => {
@@ -1171,5 +1186,6 @@ describe("focused learning components", () => {
     expect(html).toContain("The learning Agent has not been configured");
     expect(html).toContain('data-testid="coach-configure-model"');
     expect(html).toContain('data-testid="session-upload-prompt"');
+    expect(html).toContain('data-testid="saved-question-empty"');
   });
 });

@@ -137,6 +137,7 @@ export function LearningSessionCanvas({
   question,
   answer,
   result,
+  masteryBefore = null,
   busy,
   learningMode,
   savedQuestions,
@@ -151,6 +152,7 @@ export function LearningSessionCanvas({
   onSubmit,
   onNextTask,
   onToggleSaved,
+  onPracticeSaved,
   onOpenLibrary,
   onAskCoach,
   onApplyCoachAction,
@@ -165,6 +167,7 @@ export function LearningSessionCanvas({
   question: PracticeQuestion | null;
   answer: string;
   result: AnswerResult | null;
+  masteryBefore?: number | null;
   busy: boolean;
   learningMode: LearningMode;
   savedQuestions: SavedPracticeQuestion[];
@@ -179,6 +182,7 @@ export function LearningSessionCanvas({
   onSubmit: () => void | Promise<void>;
   onNextTask: () => void | Promise<void>;
   onToggleSaved: (question: PracticeQuestion, saved: boolean) => void | Promise<void>;
+  onPracticeSaved?: (question: SavedPracticeQuestion) => void | Promise<void>;
   onOpenLibrary: () => void;
   onAskCoach: (message: string) => Promise<AgentReply>;
   onApplyCoachAction?: (
@@ -394,6 +398,18 @@ export function LearningSessionCanvas({
                     : <p className="feedback-empty">{text.noGaps}</p>}
                 </section>
               </div>
+              {result.mastery_updated && masteryBefore !== null ? (
+                <div className="session-mastery-change" data-testid="mastery-change">
+                  <span>{locale === "zh" ? "掌握度" : "Mastery"}</span>
+                  <strong>{Math.round(masteryBefore * 100)}%</strong>
+                  <ArrowRight size={16} />
+                  <strong>{Math.round(result.mastery * 100)}%</strong>
+                </div>
+              ) : !result.mastery_updated ? (
+                <p className="session-mastery-unchanged" data-testid="mastery-unchanged">
+                  {t("masteryNotUpdated")}
+                </p>
+              ) : null}
               <div className="session-review-note">
                 <Clock3 size={17} />
                 <div>
@@ -413,6 +429,37 @@ export function LearningSessionCanvas({
               </div>
             </article>
           )}
+          <section className="session-saved-questions" aria-labelledby="saved-question-heading">
+            <div className="session-saved-heading">
+              <h2 id="saved-question-heading">{t("savedQuestions")}</h2>
+              <span>{savedQuestions.length}</span>
+            </div>
+            {savedQuestions.length > 0 ? (
+              <ul data-testid="saved-question-list">
+                {savedQuestions.map((saved) => (
+                  <li key={saved.id}>
+                    <div>
+                      <span>{progress?.topics?.[saved.topic_id] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")}</span>
+                      <strong>{saved.prompt}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      data-testid="practice-saved-question"
+                      disabled={busy || !onPracticeSaved}
+                      onClick={() => void onPracticeSaved?.(saved)}
+                    >
+                      {t("practiceSavedTopic")} <ArrowRight size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="context-empty" data-testid="saved-question-empty">
+                {t("savedQuestionsEmpty")}
+              </p>
+            )}
+          </section>
         </main>
 
         <aside className="session-context">

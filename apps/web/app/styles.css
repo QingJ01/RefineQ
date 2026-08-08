@@ -646,6 +646,105 @@
   flex: 0 0 auto;
 }
 
+.session-mastery-change,
+.session-mastery-unchanged {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.session-mastery-change {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.session-mastery-change strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.session-mastery-unchanged {
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.session-saved-questions {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.session-saved-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-saved-heading h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.session-saved-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.session-saved-questions ul {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-saved-questions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+}
+
+.session-saved-questions li div {
+  min-width: 0;
+}
+
+.session-saved-questions li span,
+.session-saved-questions li strong {
+  display: block;
+}
+
+.session-saved-questions li span {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.session-saved-questions li strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-saved-questions li button {
+  flex: 0 1 132px;
+  max-width: 132px;
+  min-height: 38px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
 .session-task > label {
   display: block;
   margin: 18px 0 9px;
