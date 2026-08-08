@@ -13,12 +13,67 @@ import { PracticeCard } from "../components/practice-card";
 import { ProgressInsights } from "../components/progress-insights";
 import { SourceDrawer } from "../components/source-drawer";
 import { ConfirmDialog } from "../components/confirm-dialog";
+import { CoachActionCard } from "../components/session-coach";
 import { translator } from "../lib/i18n";
 
 
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it.each([
+    ["applied", "coach-action-applied"],
+    ["confirmation_required", "coach-action-confirmation_required"],
+    ["failed", "coach-action-failed"],
+    ["executing", "coach-action-executing"],
+  ] as const)("renders the %s coach action card state", (status, testId) => {
+    const html = renderToStaticMarkup(
+      <CoachActionCard
+        locale="en"
+        state={{
+          status,
+          proposal: {
+            type: "adjust_practice",
+            action_id: "action-1",
+            topic_id: "limits",
+            topic_name: "Limits",
+            difficulty: 2,
+            learning_mode: "concept",
+            destructive: true,
+          },
+        }}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain(`data-testid="${testId}"`);
+  });
+
+  it("renders rejected proposals as explanations, never as success", () => {
+    const html = renderToStaticMarkup(
+      <CoachActionCard
+        locale="en"
+        state={{
+          status: "rejected",
+          proposal: {
+            type: "rejected",
+            reason_code: "unknown_topic",
+            summary: "This workspace has no topic named Operating systems.",
+            candidates: [],
+          },
+        }}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="coach-action-rejected"');
+    expect(html).toContain("This workspace has no topic named Operating systems.");
+    expect(html).not.toContain('data-testid="coach-action-applied"');
+  });
+
   it("renders one coherent capability session with contextual sources and coach", () => {
     const html = renderToStaticMarkup(
       <LearningSessionCanvas

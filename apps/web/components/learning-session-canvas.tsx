@@ -18,11 +18,13 @@ import { useMemo, useState } from "react";
 
 import { SessionCoach } from "@/components/session-coach";
 import { SourceDrawer } from "@/components/source-drawer";
+import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type { Translator } from "@/lib/i18n";
 import { buildSessionSteps, sessionStage } from "@/lib/learning-session";
 import type {
   AgentReply,
   AnswerResult,
+  ExecutableActionProposal,
   LearningMode,
   LearningWorkspace,
   Locale,
@@ -141,6 +143,8 @@ export function LearningSessionCanvas({
   onToggleSaved,
   onOpenLibrary,
   onAskCoach,
+  onApplyCoachAction,
+  onCoachTurnHandled,
 }: {
   locale: Locale;
   t: Translator;
@@ -162,6 +166,11 @@ export function LearningSessionCanvas({
   onToggleSaved: (question: PracticeQuestion, saved: boolean) => void | Promise<void>;
   onOpenLibrary: () => void;
   onAskCoach: (message: string) => Promise<AgentReply>;
+  onApplyCoachAction?: (
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean; historical?: boolean },
+  ) => Promise<CoachActionOutcome>;
+  onCoachTurnHandled?: () => void;
 }) {
   const text = interfaceCopy[locale];
   const steps = buildSessionSteps(learningMode, locale);
@@ -357,7 +366,12 @@ export function LearningSessionCanvas({
             <strong>{modeCopy[locale][learningMode]}</strong>
             <p>{locale === "zh" ? "Agent 会按当前方式组织内容、任务与反馈。" : "The Agent adapts content, tasks, and feedback to this method."}</p>
           </section>
-          <SessionCoach locale={locale} onAsk={onAskCoach} />
+          <SessionCoach
+            locale={locale}
+            onAsk={onAskCoach}
+            onApplyAction={onApplyCoachAction}
+            onTurnHandled={onCoachTurnHandled}
+          />
           <section className="session-next-review">
             <Clock3 size={18} />
             <div><span>{text.review}</span><strong>{nextReview ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", weekday: "short" }).format(new Date(nextReview)) : text.reviewHint}</strong></div>
