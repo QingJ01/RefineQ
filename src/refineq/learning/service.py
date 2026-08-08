@@ -133,6 +133,10 @@ class QuestionRequest(BaseModel):
     difficulty: int | None = Field(default=None, ge=1, le=5)
     mode: LearningMode = LearningMode.CONCEPT
     replace: bool = False
+    review_session_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+    )
 
 
 class AnswerRequest(BaseModel):
@@ -168,6 +172,8 @@ class AnswerResponse(BaseModel):
     observed_at: datetime | None = None
     learner_note: str | None = None
     appealed: bool = False
+    completed_review_session_id: str | None = None
+    question_snapshot: dict[str, Any] | None = Field(default=None, exclude=True)
     replayed: bool = False
 
 
@@ -473,7 +479,8 @@ class LearningService:
                 return data
             raise LearningConflictError("Study session not found")
 
-        self._learning.mutate(owner_id, project_id, apply)
+        with self._learning.plan_transaction(owner_id, project_id):
+            self._learning.mutate(owner_id, project_id, apply)
         if updated is None:
             raise LearningServiceError("Study session update failed")
         return StudySession.model_validate(updated)
@@ -611,6 +618,7 @@ class LearningService:
         learning_mode: LearningMode = LearningMode.CONCEPT,
         replace_pending: bool = False,
         request_id: str | None = None,
+        review_session_id: str | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
         with self._learning.question_transaction(owner_id, project_id):
@@ -631,9 +639,32 @@ class LearningService:
                     pending,
                     saved_at=progress.get("saved_questions", {}).get(pending["id"]),
                 )
+            review_topic_id: str | None = None
+            if review_session_id is not None:
+                raw_plan = progress.get("plan")
+                review_session = next(
+                    (
+                        session
+                        for session in (raw_plan or {}).get("sessions", [])
+                        if session.get("id") == review_session_id
+                    ),
+                    None,
+                )
+                if review_session is None:
+                    raise LearningConflictError("Review session not found")
+                parsed_review = StudySession.model_validate(review_session)
+                if (
+                    parsed_review.activity != "review"
+                    or parsed_review.status == "completed"
+                    or parsed_review.planned_at > datetime.now(UTC)
+                ):
+                    raise LearningConflictError("Review session is not due")
+                review_topic_id = parsed_review.topic_id
+                if topic_id is not None and topic_id != review_topic_id:
+                    raise LearningConflictError("Review session topic does not match")
             if topic_id is not None and topic_id not in progress["topics"]:
                 raise LearningConflictError("Unknown practice topic")
-            selected_topic_id = topic_id or min(
+            selected_topic_id = review_topic_id or topic_id or min(
                 progress["topics"],
                 key=lambda candidate: (
                     BKTState.model_validate(progress["bkt_states"][candidate]).p_mastery,
@@ -676,6 +707,7 @@ class LearningService:
                 "grounding": generated.grounding.value,
                 "mode": generated.mode,
                 "grading": generated.model_dump(mode="json"),
+                "review_session_id": review_session_id,
             }
             selected: dict[str, Any] | None = None
 
@@ -743,9 +775,21 @@ class LearningService:
         def restore(data: dict[str, Any]) -> dict[str, Any]:
             nonlocal saved_at, selected
             progress = self._progress(data)
-            selected = progress.setdefault("question_history", {}).get(question_id)
+            history = progress.setdefault("question_history", {})
+            selected = history.get(question_id)
+            if selected is None:
+                selected = next(
+                    (
+                        deepcopy(attempt["question_snapshot"])
+                        for attempt in data.get("attempts", {}).values()
+                        if attempt.get("question_id") == question_id
+                        and attempt.get("question_snapshot") is not None
+                    ),
+                    None,
+                )
             if selected is None:
                 raise QuestionNotFoundError("Practice question not found")
+            history[question_id] = deepcopy(selected)
             progress["pending_question"] = deepcopy(selected)
             saved_at = progress.get("saved_questions", {}).get(question_id)
             return data
@@ -868,9 +912,10 @@ class LearningService:
         result: dict[str, Any] | None = None
         replayed = False
         next_review_at: datetime | None = None
+        completed_review_session_id: str | None = None
 
         def grade_once(data: dict[str, Any]) -> dict[str, Any]:
-            nonlocal next_review_at, replayed, result
+            nonlocal completed_review_session_id, next_review_at, replayed, result
             progress = self._progress(data)
             if payload.attempt_id in data["attempts"]:
                 replayed = True
@@ -927,6 +972,20 @@ class LearningService:
             )
             raw_plan = progress.get("plan")
             if raw_plan:
+                review_session_id = question.get("review_session_id")
+                if review_session_id is not None:
+                    review_session = next(
+                        (
+                            session
+                            for session in raw_plan["sessions"]
+                            if session.get("id") == review_session_id
+                        ),
+                        None,
+                    )
+                    if review_session is None:
+                        raise LearningConflictError("Review session not found")
+                    review_session["status"] = "completed"
+                    completed_review_session_id = review_session_id
                 candidate_review_at = observed_at + timedelta(days=3 if is_correct else 1)
                 exam_at = datetime.fromisoformat(progress["exam_at"])
                 if candidate_review_at < exam_at:
@@ -968,6 +1027,8 @@ class LearningService:
                 ),
                 "answer": payload.answer,
                 "observed_at": observed_at.isoformat(),
+                "completed_review_session_id": completed_review_session_id,
+                "question_snapshot": deepcopy(question),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")
@@ -976,7 +1037,8 @@ class LearningService:
             progress["pending_question"] = None
             return data
 
-        self._learning.mutate(owner_id, project_id, grade_once)
+        with self._learning.plan_transaction(owner_id, project_id):
+            self._learning.mutate(owner_id, project_id, grade_once)
         if result is None:
             raise LearningServiceError("Answer grading failed")
         return AnswerResponse.model_validate({**result, "replayed": replayed})
@@ -1031,7 +1093,9 @@ class LearningService:
         }
         attempts: list[AttemptInsight] = []
         for attempt_id, attempt in record.data.get("attempts", {}).items():
-            question = history.get(attempt.get("question_id"), {})
+            question = history.get(attempt.get("question_id")) or attempt.get(
+                "question_snapshot"
+            ) or {}
             attempt_time = datetime.fromisoformat(attempt["observed_at"]) if attempt.get(
                 "observed_at"
             ) else evidence_times.get(attempt_id, observed_at)

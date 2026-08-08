@@ -6,12 +6,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
 
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.learning.service import AnswerRequest, PlanUpdateRequest
 from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
 
 
@@ -626,29 +628,61 @@ def test_workspace_plan_update_rolls_back_when_goal_sync_fails(
             headers=headers,
             json={"intent": "Prepare calculus"},
         ).json()["workspace"]["id"]
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "rollback-question"},
+        ).json()
         before = app.state.workspace_service.snapshot(owner_id, workspace_id)
+        entered = Event()
+        release = Event()
 
         def fail_update(*args, **kwargs):
             del args, kwargs
+            entered.set()
+            assert release.wait(timeout=5)
             raise RuntimeError("simulated workspace write failure")
 
         monkeypatch.setattr(app.state.workspaces, "update", fail_update)
-        with pytest.raises(RuntimeError, match="simulated workspace write failure"):
-            client.put(
-                f"/workspaces/{workspace_id}/learning/plan",
-                headers=headers,
-                json={
-                    "goal": "A goal that must roll back",
-                    "exam_at": (datetime.now(UTC) + timedelta(days=5)).isoformat(),
-                    "daily_minutes": 30,
-                    "topic_order": list(before.progress.topics),
-                    "regenerate": True,
-                },
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            plan_future = executor.submit(
+                app.state.workspace_service.update_plan,
+                owner_id,
+                workspace_id,
+                PlanUpdateRequest(
+                    goal="A goal that must roll back",
+                    exam_at=datetime.now(UTC) + timedelta(days=5),
+                    daily_minutes=30,
+                    topic_order=list(before.progress.topics),
+                    regenerate=True,
+                ),
             )
+            assert entered.wait(timeout=5)
+            answer_future = executor.submit(
+                app.state.workspace_learning_service.submit_answer,
+                owner_id,
+                workspace_id,
+                AnswerRequest(
+                    attempt_id="rollback-attempt",
+                    question_id=question["id"],
+                    answer="A complete explanation with a concrete example and reasoning.",
+                ),
+            )
+            time.sleep(0.05)
+            assert not answer_future.done()
+            release.set()
+            with pytest.raises(RuntimeError, match="simulated workspace write failure"):
+                plan_future.result(timeout=5)
+            answer_future.result(timeout=5)
         after = app.state.workspace_service.snapshot(owner_id, workspace_id)
 
-    assert after.progress == before.progress
-    assert after.plan == before.plan
+    assert after.progress.attempt_count == before.progress.attempt_count + 1
+    assert len(after.evidence) == len(before.evidence) + 1
+    assert after.plan is not None and before.plan is not None
+    assert after.plan.id == before.plan.id
+    assert {session.id for session in before.plan.sessions}.issubset(
+        {session.id for session in after.plan.sessions}
+    )
     assert after.workspace == before.workspace
 
 

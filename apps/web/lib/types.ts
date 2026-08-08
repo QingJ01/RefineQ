@@ -105,6 +105,7 @@ export interface PracticeRequest {
   learningMode?: LearningMode;
   difficulty?: number;
   replace?: boolean;
+  reviewSessionId?: string;
 }
 
 export interface AnswerResult {
@@ -126,6 +127,7 @@ export interface AnswerResult {
   grading_mode: "ai" | "fallback";
   mastery_updated: boolean;
   next_review_at?: string | null;
+  completed_review_session_id?: string | null;
   answer?: string;
   observed_at?: string | null;
   learner_note?: string | null;

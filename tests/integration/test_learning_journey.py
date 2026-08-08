@@ -300,6 +300,36 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             not item["is_correct"] for item in body["attempts"]
         )
 
+        due_review = body["due_reviews"][0]
+        review_question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=alice_headers,
+            json={
+                "request_id": "due-review-question",
+                "topic_id": due_review["topic_id"],
+                "review_session_id": due_review["session_id"],
+                "replace": True,
+            },
+        )
+        assert review_question.status_code == 200
+        completed_review = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=alice_headers,
+            json={
+                "attempt_id": "due-review-attempt",
+                "question_id": review_question.json()["id"],
+                "answer": "A review answer with enough explanation to evaluate the concept.",
+            },
+        )
+        assert completed_review.status_code == 200
+        after_review = client.get(
+            f"/workspaces/{workspace_id}/learning/insights",
+            headers=alice_headers,
+        ).json()
+        assert due_review["session_id"] not in {
+            item["session_id"] for item in after_review["due_reviews"]
+        }
+
         forbidden_insights = client.get(
             f"/workspaces/{workspace_id}/learning/insights",
             headers=bob_headers,
@@ -317,3 +347,60 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
     assert forbidden_insights.status_code == 404
     assert forbidden_feedback.status_code == 404
     assert forbidden_retry.status_code == 404
+
+
+def test_attempt_question_snapshot_survives_history_pruning(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("refineq.learning.service.MAX_QUESTION_HISTORY", 2)
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "history-learner@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Prepare calculus"},
+        ).json()["workspace"]["id"]
+        first_question: dict | None = None
+        for index in range(3):
+            question = client.post(
+                f"/workspaces/{workspace_id}/learning/question",
+                headers=headers,
+                json={"request_id": f"history-question-{index}"},
+            ).json()
+            first_question = first_question or question
+            answer = client.post(
+                f"/workspaces/{workspace_id}/learning/answer",
+                headers=headers,
+                json={
+                    "attempt_id": f"history-attempt-{index}",
+                    "question_id": question["id"],
+                    "answer": "A complete explanation with an example and a clear reasoning chain.",
+                },
+            )
+            assert answer.status_code == 200
+            assert "question_snapshot" not in answer.json()
+            assert "expected_answer" not in answer.text
+
+        assert first_question is not None
+        stored = app.state.learning.get(learner["user_id"], workspace_id).data
+        assert first_question["id"] not in stored["progress"]["question_history"]
+        insights = client.get(
+            f"/workspaces/{workspace_id}/learning/insights",
+            headers=headers,
+        )
+        restored_attempt = next(
+            item for item in insights.json()["attempts"]
+            if item["question_id"] == first_question["id"]
+        )
+        retried = client.post(
+            f"/workspaces/{workspace_id}/learning/questions/{first_question['id']}/retry",
+            headers=headers,
+        )
+
+    assert restored_attempt["question_prompt"] == first_question["prompt"]
+    assert retried.status_code == 200
+    assert retried.json()["prompt"] == first_question["prompt"]

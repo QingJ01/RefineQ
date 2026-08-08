@@ -65,6 +65,12 @@ class LearningRepository:
         project_id = validate_identifier(project_id, field="project_id")
         return self._store.owner_transaction(owner_id, f"question-{project_id}")
 
+    def plan_transaction(self, owner_id: str, project_id: str):
+        """Serialize plan changes with learning writes that also update the plan."""
+
+        project_id = validate_identifier(project_id, field="project_id")
+        return self._store.owner_transaction(owner_id, f"learning-plan-{project_id}")
+
     def record_attempt(
         self,
         owner_id: str,

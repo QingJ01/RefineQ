@@ -40,6 +40,7 @@ export function WorkspaceSwitcher({
 }) {
   const text = copy[locale];
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -51,8 +52,8 @@ export function WorkspaceSwitcher({
 
   useEffect(() => {
     if (!open) return;
-    itemRefs.current[0]?.focus();
-  }, [open]);
+    itemRefs.current[activeIndex]?.focus();
+  }, [activeIndex, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -70,21 +71,26 @@ export function WorkspaceSwitcher({
 
   function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
     const items = itemRefs.current.filter((item): item is HTMLButtonElement => item !== null);
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "Escape") {
       event.preventDefault();
       closeAndRestoreFocus();
       return;
     }
+    if (event.key === "Tab") {
+      setOpen(false);
+      return;
+    }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    if (event.key === "Home") items[0]?.focus();
-    else if (event.key === "End") items.at(-1)?.focus();
+    let nextIndex: number;
+    if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = items.length - 1;
     else {
       const direction = event.key === "ArrowDown" ? 1 : -1;
-      const nextIndex = (Math.max(0, currentIndex) + direction + items.length) % items.length;
-      items[nextIndex]?.focus();
+      nextIndex = (activeIndex + direction + items.length) % items.length;
     }
+    setActiveIndex(nextIndex);
+    items[nextIndex]?.focus();
   }
 
   function select(workspace: LearningWorkspace) {
@@ -103,10 +109,14 @@ export function WorkspaceSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls="workspace-switcher-menu"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setActiveIndex(0);
+          setOpen((value) => !value);
+        }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
+            setActiveIndex(event.key === "ArrowUp" ? options.length : 0);
             setOpen(true);
           }
         }}
@@ -138,10 +148,12 @@ export function WorkspaceSwitcher({
               ref={(node) => { itemRefs.current[index] = node; }}
               type="button"
               role="menuitem"
+              tabIndex={activeIndex === index ? 0 : -1}
               data-testid={`workspace-switcher-option-${workspace.id}`}
               className={workspace.id === current.id ? "active" : ""}
               aria-current={workspace.id === current.id ? "true" : undefined}
               aria-label={`${workspace.title}: ${workspace.goal}`}
+              onFocus={() => setActiveIndex(index)}
               onClick={() => select(workspace)}
             >
               <Layers3 size={16} />
@@ -153,8 +165,10 @@ export function WorkspaceSwitcher({
             ref={(node) => { itemRefs.current[options.length] = node; }}
             type="button"
             role="menuitem"
+            tabIndex={activeIndex === options.length ? 0 : -1}
             className="workspace-switcher-all"
             data-testid="workspace-switcher-all"
+            onFocus={() => setActiveIndex(options.length)}
             onClick={() => {
               setOpen(false);
               onAllSpaces();

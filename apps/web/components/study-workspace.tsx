@@ -45,6 +45,7 @@ import type {
   AttemptFeedbackInput,
   AttemptInsight,
   AuthResponse,
+  DueReviewInsight,
   LearningEvidence,
   LearningInsights,
   LearningMode,
@@ -435,6 +436,23 @@ export function StudyWorkspace({
     await getQuestion({
       topicId,
       difficulty,
+      learningMode,
+      replace: question !== null,
+    });
+    window.requestAnimationFrame(() => {
+      document.getElementById("active-practice")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+
+  async function startReview(review: DueReviewInsight) {
+    if (!workspace) return;
+    router.push(learningPath(workspace.id, "today"));
+    await getQuestion({
+      topicId: review.topic_id,
+      reviewSessionId: review.session_id,
       learningMode,
       replace: question !== null,
     });
@@ -968,7 +986,7 @@ export function StudyWorkspace({
               <ReviewQueue
                 locale={locale}
                 reviews={insights?.due_reviews ?? []}
-                onStartReview={(review) => practiceTopic(review.topic_id)}
+                onStartReview={startReview}
               />
               <ProgressInsights
                 progress={progress}

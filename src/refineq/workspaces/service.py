@@ -243,25 +243,34 @@ class WorkspaceService:
         workspace_id: str,
         payload: PlanUpdateRequest,
     ) -> StudyPlan:
+        plan_fields = ("goal", "exam_at", "daily_minutes", "topic_order", "plan")
         try:
-            self._workspaces.get(owner_id, workspace_id)
-            original_progress = deepcopy(
-                self._learning.get(owner_id, workspace_id).data["progress"]
-            )
+            with self._learning.plan_transaction(owner_id, workspace_id):
+                self._workspaces.get(owner_id, workspace_id)
+                progress = self._learning.get(owner_id, workspace_id).data["progress"]
+                original_plan_fields = {
+                    field: deepcopy(progress[field])
+                    for field in plan_fields
+                    if field in progress
+                }
+                plan = self._learning_service.update_plan(owner_id, workspace_id, payload)
+                try:
+                    self._workspaces.update(owner_id, workspace_id, goal=payload.goal)
+                except Exception:
+                    def restore(data: dict) -> dict:
+                        current_progress = data["progress"]
+                        for field in plan_fields:
+                            if field in original_plan_fields:
+                                current_progress[field] = deepcopy(original_plan_fields[field])
+                            else:
+                                current_progress.pop(field, None)
+                        return data
+
+                    self._learning.mutate(owner_id, workspace_id, restore)
+                    raise
+                return plan
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
-
-        plan = self._learning_service.update_plan(owner_id, workspace_id, payload)
-        try:
-            self._workspaces.update(owner_id, workspace_id, goal=payload.goal)
-        except Exception:
-            def restore(data: dict) -> dict:
-                data["progress"] = deepcopy(original_progress)
-                return data
-
-            self._learning.mutate(owner_id, workspace_id, restore)
-            raise
-        return plan
 
     def delete(self, owner_id: str, workspace_id: str) -> None:
         try:

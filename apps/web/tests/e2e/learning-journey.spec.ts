@@ -79,6 +79,14 @@ test("learner completes and restores a capability learning journey", async ({ pa
     await trigger.click();
     await expect(page.getByTestId("workspace-switcher-menu")).toBeVisible();
     await expect(page.getByTestId("workspace-switcher-all")).toBeVisible();
+    const menuItems = page.getByRole("menuitem");
+    await expect(menuItems.first()).toBeFocused();
+    await expect(menuItems.first()).toHaveAttribute("tabindex", "0");
+    await expect(menuItems.nth(1)).toHaveAttribute("tabindex", "-1");
+    await page.keyboard.press("ArrowDown");
+    await expect(menuItems.nth(1)).toBeFocused();
+    await expect(menuItems.first()).toHaveAttribute("tabindex", "-1");
+    await expect(menuItems.nth(1)).toHaveAttribute("tabindex", "0");
     await page.keyboard.press("Escape");
     await expect(trigger).toBeFocused();
 
