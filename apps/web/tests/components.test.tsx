@@ -197,6 +197,7 @@ describe("focused learning components", () => {
     expect(html).toContain("反馈复盘");
     expect(html).toContain("用户访谈原文.md");
     expect(html).toContain('data-testid="session-coach"');
+    expect(html).not.toContain('data-testid="session-upload-prompt"');
     expect(html).not.toContain("证据账本");
   });
 
@@ -1169,5 +1170,6 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="agent-new-conversation"');
     expect(html).toContain("The learning Agent has not been configured");
     expect(html).toContain('data-testid="coach-configure-model"');
+    expect(html).toContain('data-testid="session-upload-prompt"');
   });
 });

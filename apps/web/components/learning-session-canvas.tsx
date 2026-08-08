@@ -276,6 +276,17 @@ export function LearningSessionCanvas({
                 <div><Target size={17} /><span>{text.capability}</span><strong>{workspace.goal}</strong></div>
                 <div><Layers3 size={17} /><span>{text.currentOutput}</span><strong>{text.outputHint}</strong></div>
               </section>
+              {materials.length === 0 && (
+                <div className="session-upload-prompt" data-testid="session-upload-prompt">
+                  <div>
+                    <strong>{t("uploadFirstSourceTitle")}</strong>
+                    <p>{t("uploadFirstSourceHint")}</p>
+                  </div>
+                  <button type="button" className="secondary-action" onClick={onOpenLibrary}>
+                    {t("uploadFirstSourceAction")} <ArrowRight size={16} />
+                  </button>
+                </div>
+              )}
               <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
                 <button
                   type="button"

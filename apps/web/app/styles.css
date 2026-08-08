@@ -619,6 +619,33 @@
   margin-top: 24px;
 }
 
+.session-upload-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 22px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.session-upload-prompt strong {
+  display: block;
+  font-size: 13px;
+}
+
+.session-upload-prompt p {
+  margin: 4px 0 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.session-upload-prompt button {
+  flex: 0 0 auto;
+}
+
 .session-task > label {
   display: block;
   margin: 18px 0 9px;

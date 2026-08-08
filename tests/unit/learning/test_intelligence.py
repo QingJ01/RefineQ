@@ -13,7 +13,7 @@ from refineq.learning.intelligence import (
     fallback_grade,
     fallback_question,
 )
-from refineq.learning.models import LearningMode
+from refineq.learning.models import Grounding, LearningMode
 
 
 class FakeStructuredTransport:
@@ -158,6 +158,56 @@ def test_question_generation_falls_back_when_model_is_not_configured(
     assert question.mode == "fallback"
     assert question.prompt
     assert question.expected_answer
+    assert transport.calls == []
+
+
+def test_generates_ai_question_without_sources_when_model_configured(tmp_path: Path) -> None:
+    knowledge = KnowledgeIndex(tmp_path / "knowledge")
+    settings = ModelSettingsRepository(tmp_path / "settings")
+    settings.save(
+        "owner",
+        ModelSettings(
+            base_url="https://api.openai.com/v1",
+            model="study-model",
+            api_key="secret-key-1234",
+        ),
+    )
+    transport = FakeStructuredTransport()
+    service = LearningIntelligenceService(knowledge, settings, transport)
+
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="empty-workspace",
+        topic_id="cache",
+        topic_name="缓存一致性",
+        mastery=0.3,
+        difficulty_level=2,
+    )
+
+    assert question.mode == "ai"
+    assert question.citations == []
+    assert question.sources == []
+    assert question.grounding is Grounding.GENERAL
+    assert transport.calls == ["QuestionModelOutput"]
+
+
+def test_falls_back_without_sources_when_model_is_not_configured(tmp_path: Path) -> None:
+    knowledge = KnowledgeIndex(tmp_path / "knowledge")
+    settings = ModelSettingsRepository(tmp_path / "settings")
+    transport = FakeStructuredTransport()
+    service = LearningIntelligenceService(knowledge, settings, transport)
+
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="empty-workspace",
+        topic_id="cache",
+        topic_name="缓存一致性",
+        mastery=0.3,
+        difficulty_level=2,
+    )
+
+    assert question.mode == "fallback"
+    assert question.citations == []
     assert transport.calls == []
 
 
