@@ -15,6 +15,13 @@ export interface AuthResponse {
   user: User;
 }
 
+export interface AccountExport {
+  exported_at: string;
+  user: User;
+  records: Array<Record<string, unknown>>;
+  materials: Array<Record<string, unknown>>;
+}
+
 export interface LearningWorkspace {
   id: string;
   title: string;

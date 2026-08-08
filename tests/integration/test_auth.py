@@ -9,10 +9,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from refineq.api.app import create_app
 from refineq.api.routers.projects import ProjectCreateRequest, create_project
 from refineq.config import Settings
+from refineq.database.schema import records
 from refineq.identity.service import IdentityService, InvalidTokenError, TokenExpiredError
 from refineq.storage.json_store import RecordNotFoundError
 
@@ -374,3 +376,207 @@ def test_password_reset_token_expires(tmp_path: Path) -> None:
             "a-brand-new-secure-password",
             now=issued_at + timedelta(minutes=6),
         )
+
+
+def test_profile_and_password_can_be_updated_with_current_password(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    with TestClient(app) as client:
+        registered = _register(client, "account-profile@example.com")
+        token = registered["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        profile = client.patch(
+            "/auth/profile",
+            headers=headers,
+            json={"display_name": "Focused Learner"},
+        )
+        wrong_password = client.put(
+            "/auth/password",
+            headers=headers,
+            json={
+                "current_password": "not-the-current-password",
+                "new_password": "a-brand-new-secure-password",
+            },
+        )
+        changed = client.put(
+            "/auth/password",
+            headers=headers,
+            json={
+                "current_password": "correct-horse-battery-staple",
+                "new_password": "a-brand-new-secure-password",
+            },
+        )
+        stale = client.get("/auth/me", headers=headers)
+        old_login = client.post(
+            "/auth/login",
+            json={
+                "email": "account-profile@example.com",
+                "password": "correct-horse-battery-staple",
+            },
+        )
+        new_login = client.post(
+            "/auth/login",
+            json={
+                "email": "account-profile@example.com",
+                "password": "a-brand-new-secure-password",
+            },
+        )
+
+    assert profile.status_code == 200
+    assert profile.json()["display_name"] == "Focused Learner"
+    assert wrong_password.status_code == 401
+    assert wrong_password.json()["error"]["code"] == "invalid_credentials"
+    assert changed.status_code == 204
+    assert stale.status_code == 401
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200
+    assert new_login.json()["user"]["display_name"] == "Focused Learner"
+
+
+def test_logout_all_revokes_every_existing_token(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    with TestClient(app) as client:
+        registered = _register(client, "sessions@example.com")
+        first_token = registered["access_token"]
+        second_token = client.post(
+            "/auth/login",
+            json={
+                "email": "sessions@example.com",
+                "password": "correct-horse-battery-staple",
+            },
+        ).json()["access_token"]
+        revoked = client.delete(
+            "/auth/sessions",
+            headers={"Authorization": f"Bearer {first_token}"},
+        )
+        first_stale = client.get(
+            "/auth/me",
+            headers={"Authorization": f"Bearer {first_token}"},
+        )
+        second_stale = client.get(
+            "/auth/me",
+            headers={"Authorization": f"Bearer {second_token}"},
+        )
+        fresh_login = client.post(
+            "/auth/login",
+            json={
+                "email": "sessions@example.com",
+                "password": "correct-horse-battery-staple",
+            },
+        )
+
+    assert revoked.status_code == 204
+    assert first_stale.status_code == 401
+    assert second_stale.status_code == 401
+    assert fresh_login.status_code == 200
+
+
+def test_account_export_contains_only_the_authenticated_owner_data(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    with TestClient(app) as client:
+        alice = _register(client, "export-alice@example.com")
+        bob = _register(client, "export-bob@example.com")
+        alice_headers = {"Authorization": f"Bearer {alice['access_token']}"}
+        bob_headers = {"Authorization": f"Bearer {bob['access_token']}"}
+        alice_workspace = client.post(
+            "/workspaces/resolve",
+            headers=alice_headers,
+            json={"intent": "Alice private calculus goal"},
+        ).json()["workspace"]
+        bob_workspace = client.post(
+            "/workspaces/resolve",
+            headers=bob_headers,
+            json={"intent": "Bob private physics goal"},
+        ).json()["workspace"]
+
+        exported = client.get("/auth/export", headers=alice_headers)
+
+    assert exported.status_code == 200
+    assert exported.headers["content-disposition"].startswith("attachment;")
+    body = exported.json()
+    assert body["user"]["email"] == "export-alice@example.com"
+    serialized = exported.text
+    assert alice_workspace["id"] in serialized
+    assert bob_workspace["id"] not in serialized
+    assert "export-bob@example.com" not in serialized
+    assert all(record["owner_id"] == alice["user"]["id"] for record in body["records"])
+
+
+def test_account_deletion_is_fail_safe_when_object_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app(tmp_path)
+    monkeypatch.setattr(
+        app.state.identity,
+        "account_storage_keys",
+        lambda owner_id: [f"materials/{owner_id}/unavailable.pdf"],
+        raising=False,
+    )
+
+    def fail_delete(storage_key: str) -> None:
+        raise RuntimeError(f"cannot delete {storage_key}")
+
+    monkeypatch.setattr(app.state.object_storage, "delete", fail_delete)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        registered = _register(client, "delete-fails@example.com")
+        token = registered["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        failed = client.request(
+            "DELETE",
+            "/auth/account",
+            headers=headers,
+            json={
+                "current_password": "correct-horse-battery-staple",
+                "confirmation": "delete-fails@example.com",
+            },
+        )
+        still_authenticated = client.get("/auth/me", headers=headers)
+
+    assert failed.status_code == 503
+    assert failed.json()["error"]["code"] == "account_deletion_failed"
+    assert still_authenticated.status_code == 200
+
+
+def test_account_deletion_removes_identity_and_owner_records(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    with TestClient(app) as client:
+        registered = _register(client, "delete-account@example.com")
+        owner_id = registered["user"]["id"]
+        token = registered["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Data that must be deleted"},
+        )
+        deleted = client.request(
+            "DELETE",
+            "/auth/account",
+            headers=headers,
+            json={
+                "current_password": "correct-horse-battery-staple",
+                "confirmation": "delete-account@example.com",
+            },
+        )
+        stale = client.get("/auth/me", headers=headers)
+        login = client.post(
+            "/auth/login",
+            json={
+                "email": "delete-account@example.com",
+                "password": "correct-horse-battery-staple",
+            },
+        )
+
+    with app.state.database.session() as session:
+        remaining = session.scalar(
+            select(func.count()).select_from(records).where(records.c.owner_id == owner_id)
+        )
+    assert deleted.status_code == 204
+    assert stale.status_code == 401
+    assert login.status_code == 401
+    assert remaining == 0

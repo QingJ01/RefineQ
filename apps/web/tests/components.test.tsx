@@ -5,6 +5,7 @@ import { EvidenceLedger } from "../components/evidence-ledger";
 import { AuthPanel } from "../components/auth-panel";
 import { AgentPanel } from "../components/agent-panel";
 import { AdminConsole } from "../components/admin-console";
+import { AccountCenter } from "../components/account-center";
 import { LearningHome } from "../components/learning-home";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
@@ -25,6 +26,36 @@ import type { SearchSource } from "../lib/types";
 const t = translator("en");
 
 describe("focused learning components", () => {
+  it("renders a complete account and security center with an explicit danger zone", () => {
+    const html = renderToStaticMarkup(
+      <AccountCenter
+        locale="en"
+        user={{
+          id: "user-1",
+          email: "learner@example.com",
+          display_name: "Learner",
+          role: "learner",
+          created_at: "2026-08-08T00:00:00Z",
+        }}
+        busy={false}
+        onUpdateProfile={async () => undefined}
+        onChangePassword={async () => undefined}
+        onExport={async () => undefined}
+        onLogoutAll={async () => undefined}
+        onDeleteAccount={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="account-center"');
+    expect(html).toContain('data-testid="account-profile-form"');
+    expect(html).toContain('data-testid="account-password-form"');
+    expect(html).toContain('data-testid="account-export"');
+    expect(html).toContain('data-testid="account-logout-all"');
+    expect(html).toContain('data-testid="account-delete-confirmation"');
+    expect(html).toContain("Type learner@example.com to confirm");
+    expect(html).toContain("Delete account permanently");
+  });
+
   it("renders one coherent capability session with contextual sources and coach", () => {
     const html = renderToStaticMarkup(
       <LearningSessionCanvas

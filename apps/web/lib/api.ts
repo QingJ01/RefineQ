@@ -1,4 +1,5 @@
 import type {
+  AccountExport,
   AgentReply,
   AgentSessionContext,
   AgentSessionDetail,
@@ -152,6 +153,54 @@ export class ApiClient {
 
   getProfile(token: string): Promise<User> {
     return this.request("/auth/me", {}, token);
+  }
+
+  updateProfile(token: string, displayName: string): Promise<User> {
+    return this.request(
+      "/auth/profile",
+      { method: "PATCH", body: JSON.stringify({ display_name: displayName }) },
+      token,
+    );
+  }
+
+  changePassword(token: string, currentPassword: string, newPassword: string): Promise<void> {
+    return this.request(
+      "/auth/password",
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      },
+      token,
+    );
+  }
+
+  exportAccount(token: string): Promise<AccountExport> {
+    return this.request("/auth/export", {}, token);
+  }
+
+  revokeSessions(token: string): Promise<void> {
+    return this.request("/auth/sessions", { method: "DELETE" }, token);
+  }
+
+  deleteAccount(
+    token: string,
+    currentPassword: string,
+    confirmation: string,
+  ): Promise<void> {
+    return this.request(
+      "/auth/account",
+      {
+        method: "DELETE",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          confirmation,
+        }),
+      },
+      token,
+    );
   }
 
   listWorkspaces(token: string, includeArchived = false): Promise<LearningWorkspace[]> {

@@ -10,6 +10,7 @@ import {
   LogOut,
   Settings2,
   Sparkles,
+  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -863,6 +864,14 @@ export function StudyWorkspace({
               <span>{t("administration")}</span>
             </Link>
           )}
+          <Link
+            data-testid="nav-account"
+            href="/account"
+            aria-label={t("account")}
+          >
+            <UserRound size={19} />
+            <span>{t("account")}</span>
+          </Link>
         </nav>
         <div className="sidebar-actions">
           <button className="quiet-button" onClick={toggleLocale}><Languages size={16} /> {t("language")}</button>

@@ -214,6 +214,67 @@ describe("responsive learning workspace layout", () => {
 
 
 describe("authentication and API errors", () => {
+  it("uses the authenticated account management contracts", async () => {
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      const path = String(input);
+      requests.push({
+        path,
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      if (path.endsWith("/profile")) {
+        return new Response(JSON.stringify({
+          id: "user-1",
+          email: "learner@example.com",
+          display_name: "Focused Learner",
+          role: "learner",
+          created_at: "2026-08-08T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path.endsWith("/export")) {
+        return new Response(JSON.stringify({
+          exported_at: "2026-08-08T00:00:00Z",
+          user: { id: "user-1", email: "learner@example.com", display_name: "Learner", role: "learner", created_at: "2026-08-08T00:00:00Z" },
+          records: [],
+          materials: [],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(null, { status: 204 });
+    });
+
+    await client.updateProfile("token", "Focused Learner");
+    await client.changePassword("token", "current-password", "new-secure-password");
+    await client.exportAccount("token");
+    await client.revokeSessions("token");
+    await client.deleteAccount("token", "current-password", "learner@example.com");
+
+    expect(requests).toEqual([
+      { path: "/api/auth/profile", method: "PATCH", body: { display_name: "Focused Learner" } },
+      { path: "/api/auth/password", method: "PUT", body: { current_password: "current-password", new_password: "new-secure-password" } },
+      { path: "/api/auth/export", method: "GET", body: undefined },
+      { path: "/api/auth/sessions", method: "DELETE", body: undefined },
+      { path: "/api/auth/account", method: "DELETE", body: { current_password: "current-password", confirmation: "learner@example.com" } },
+    ]);
+  });
+
+  it("keeps the account route reachable from home and a learning workspace", () => {
+    const accountPage = fileURLToPath(new URL("../app/account/page.tsx", import.meta.url));
+    const homeSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-home.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(accountPage)).toBe(true);
+    expect(homeSource).toContain('data-testid="home-account"');
+    expect(workspaceSource).toContain('data-testid="nav-account"');
+    expect(workspaceSource).toContain('href="/account"');
+  });
+
   it("sends platform integration changes only to administrator endpoints", async () => {
     let requestedPath = "";
     let requestedInit: RequestInit | undefined;
