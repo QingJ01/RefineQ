@@ -27,7 +27,7 @@ export function ProgressInsights({
 }) {
   const labels = { ...(progress?.topics ?? {}), ...topicLabels };
   const topics = Object.entries(progress?.mastery ?? {})
-    .sort((left, right) => left[1] - right[1]);
+    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]));
   const recommended = topics[0];
   const topicLabel = (topic: string) => labels[topic]
     ?? (locale === "zh" ? "未命名主题" : "Untitled topic");

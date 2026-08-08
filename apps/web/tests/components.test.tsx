@@ -848,6 +848,26 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="practice-recommended-topic"');
   });
 
+  it("breaks equal-mastery recommendation ties by topic id", () => {
+    const html = renderToStaticMarkup(
+      <ProgressInsights
+        t={t}
+        progress={{
+          goal: "Pass calculus",
+          mastery: { topic_z: 0.2, topic_a: 0.2 },
+          topics: { topic_z: "Zeta", topic_a: "Alpha" },
+          topic_order: ["topic_z", "topic_a"],
+          diagnostic_count: 0,
+          attempt_count: 0,
+          plan_id: "plan-1",
+        }}
+        onPracticeTopic={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/progress-recommendation[\s\S]*<strong>Alpha<\/strong>/);
+  });
+
   it("renders due reviews and a topic drill-down with stable empty states", () => {
     const reviewHtml = renderToStaticMarkup(
       <ReviewQueue
