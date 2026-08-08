@@ -1,4 +1,4 @@
-import type { WorkspaceSnapshot } from "./types";
+import type { LearningMode, WorkspaceSnapshot } from "./types";
 
 
 interface SnapshotStorage {
@@ -13,6 +13,21 @@ interface EnumerableSnapshotStorage extends SnapshotStorage {
 }
 
 const SNAPSHOT_PREFIX = "refineq.workspace-snapshot:";
+const SNAPSHOT_VERSION = 1;
+export const WORKSPACE_SNAPSHOT_TTL_MS = 5 * 60 * 1_000;
+
+export interface WorkspaceSnapshotHandoff extends WorkspaceSnapshot {
+  client_state?: {
+    learningMode: LearningMode;
+    masteryBefore: number | null;
+  };
+}
+
+interface SnapshotEnvelope {
+  version: typeof SNAPSHOT_VERSION;
+  saved_at: number;
+  snapshot: WorkspaceSnapshotHandoff;
+}
 
 function snapshotKey(workspaceId: string) {
   return `${SNAPSHOT_PREFIX}${workspaceId}`;
@@ -20,22 +35,41 @@ function snapshotKey(workspaceId: string) {
 
 export function saveWorkspaceSnapshot(
   storage: SnapshotStorage,
-  snapshot: WorkspaceSnapshot,
-) {
-  storage.setItem(snapshotKey(snapshot.workspace.id), JSON.stringify(snapshot));
+  snapshot: WorkspaceSnapshotHandoff,
+  now = Date.now(),
+): boolean {
+  const envelope: SnapshotEnvelope = {
+    version: SNAPSHOT_VERSION,
+    saved_at: now,
+    snapshot,
+  };
+  try {
+    storage.setItem(snapshotKey(snapshot.workspace.id), JSON.stringify(envelope));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function consumeWorkspaceSnapshot(
   storage: SnapshotStorage,
   workspaceId: string,
-): WorkspaceSnapshot | null {
+  now = Date.now(),
+): WorkspaceSnapshotHandoff | null {
   const key = snapshotKey(workspaceId);
   const raw = storage.getItem(key);
   if (!raw) return null;
   storage.removeItem(key);
   try {
-    const snapshot = JSON.parse(raw) as WorkspaceSnapshot;
-    return snapshot.workspace?.id === workspaceId ? snapshot : null;
+    const envelope = JSON.parse(raw) as Partial<SnapshotEnvelope>;
+    if (
+      envelope.version !== SNAPSHOT_VERSION
+      || typeof envelope.saved_at !== "number"
+      || now - envelope.saved_at > WORKSPACE_SNAPSHOT_TTL_MS
+      || now < envelope.saved_at
+    ) return null;
+    const snapshot = envelope.snapshot;
+    return snapshot?.workspace?.id === workspaceId ? snapshot : null;
   } catch {
     return null;
   }

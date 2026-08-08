@@ -21,12 +21,11 @@ import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
 import { learningPath } from "@/lib/learning-routes";
 import {
-  clearLearningSession,
   loadLearningSession,
   saveLearningLocale,
 } from "@/lib/session";
+import { clearUserScopedSessionState } from "@/lib/client-session-state";
 import type { LearningWorkspace, Locale, User } from "@/lib/types";
-import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
 
 
 const copy = {
@@ -350,8 +349,8 @@ export function AccountRoute() {
       setUser(profile);
     }).catch((caught) => {
       if (shouldClearAccountSession(caught)) {
-        clearWorkspaceSnapshots(window.sessionStorage);
-        clearLearningSession(window.sessionStorage);
+        api.clearReadCache(saved.token);
+        clearUserScopedSessionState(window.sessionStorage);
         router.replace("/");
         return;
       }
@@ -367,8 +366,8 @@ export function AccountRoute() {
   }
 
   function exitAccount() {
-    clearWorkspaceSnapshots(window.sessionStorage);
-    clearLearningSession(window.sessionStorage);
+    api.clearReadCache(token);
+    clearUserScopedSessionState(window.sessionStorage);
     router.replace("/");
   }
 

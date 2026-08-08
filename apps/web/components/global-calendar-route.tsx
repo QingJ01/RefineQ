@@ -10,9 +10,9 @@ import { GlobalCalendar } from "@/components/global-calendar";
 import { api, ApiError } from "@/lib/api";
 import { calendarDateKey, calendarGridRange } from "@/lib/global-calendar";
 import { localizeApiError } from "@/lib/error-messages";
-import { clearLearningSession, loadLearningSession, saveLearningSession } from "@/lib/session";
+import { clearUserScopedSessionState } from "@/lib/client-session-state";
+import { loadLearningSession, saveLearningSession } from "@/lib/session";
 import type { CalendarTask, LearningWorkspace, Locale } from "@/lib/types";
-import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
 
 
 export function GlobalCalendarRoute() {
@@ -49,8 +49,8 @@ export function GlobalCalendarRoute() {
     }).catch((caught: unknown) => {
       if (!active) return;
       if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
-        clearWorkspaceSnapshots(window.sessionStorage);
-        clearLearningSession(window.sessionStorage);
+        api.clearReadCache(session.token);
+        clearUserScopedSessionState(window.sessionStorage);
         router.replace("/");
       } else {
         setLoading(false);
@@ -75,8 +75,8 @@ export function GlobalCalendarRoute() {
     }).catch((caught: unknown) => {
       if (!active) return;
       if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
-        clearWorkspaceSnapshots(window.sessionStorage);
-        clearLearningSession(window.sessionStorage);
+        api.clearReadCache(token);
+        clearUserScopedSessionState(window.sessionStorage);
         router.replace("/");
         return;
       }
@@ -88,8 +88,8 @@ export function GlobalCalendarRoute() {
   }, [includeArchived, month, reload, router, token]);
 
   function logout() {
-    clearWorkspaceSnapshots(window.sessionStorage);
-    clearLearningSession(window.sessionStorage);
+    api.clearReadCache(token);
+    clearUserScopedSessionState(window.sessionStorage);
     router.replace("/");
   }
 

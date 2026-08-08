@@ -27,7 +27,7 @@ import type { CalendarTask, LearningWorkspace, Locale } from "@/lib/types";
 const copy = {
   zh: {
     eyebrow: "跨空间学习安排",
-    title: "总日历",
+    title: "跨空间日程",
     description: "在一处查看所有学习空间的任务；调整和执行仍回到任务所属空间。",
     today: "今天",
     previous: "上个月",
@@ -55,7 +55,7 @@ const copy = {
   },
   en: {
     eyebrow: "Cross-space learning schedule",
-    title: "Global calendar",
+    title: "Cross-space schedule",
     description: "See every learning-space task here; return to its space to adjust or complete it.",
     today: "Today",
     previous: "Previous month",
@@ -281,7 +281,7 @@ export function GlobalCalendar({
                     </div>
                     <h3>{task.topic_label}</h3>
                     <p>{text.activities[task.activity]} · {new Intl.DateTimeFormat(localeCode, { hour: "2-digit", minute: "2-digit" }).format(new Date(task.planned_at))} · {task.minutes} {text.minutes}</p>
-                    <Link href={`${learningPath(task.workspace_id, "calendar")}?session=${encodeURIComponent(task.id)}`}>
+                    <Link href={`${learningPath(task.workspace_id, "today")}?session=${encodeURIComponent(task.id)}`}>
                       {text.open}<ArrowUpRight size={15} />
                     </Link>
                   </li>

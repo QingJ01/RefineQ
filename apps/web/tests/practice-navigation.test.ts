@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   guardPracticeNavigation,
   hasUnsavedPracticeDraft,
+  navigationBlockReason,
 } from "../lib/practice-navigation";
 
 
@@ -31,5 +32,11 @@ describe("practice draft navigation", () => {
     expect(hasUnsavedPracticeDraft("", true, false)).toBe(false);
     expect(hasUnsavedPracticeDraft(" work ", false, false)).toBe(false);
     expect(hasUnsavedPracticeDraft(" work ", true, true)).toBe(false);
+  });
+
+  it("prioritizes an active upload when deciding whether route navigation must pause", () => {
+    expect(navigationBlockReason({ uploadActive: true, unsavedDraft: true })).toBe("upload");
+    expect(navigationBlockReason({ uploadActive: false, unsavedDraft: true })).toBe("draft");
+    expect(navigationBlockReason({ uploadActive: false, unsavedDraft: false })).toBeNull();
   });
 });

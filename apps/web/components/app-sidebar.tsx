@@ -2,15 +2,15 @@
 
 import {
   BookOpen,
-  CalendarDays,
   House,
   Languages,
+  Layers3,
   LogOut,
   Settings2,
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
 import { workspaceColorIndex } from "@/lib/global-calendar";
@@ -24,7 +24,7 @@ const copy = {
   zh: {
     global: "全局导航",
     home: "学习首页",
-    calendar: "总日历",
+    calendar: "跨空间日程",
     spaces: "最近使用",
     otherSpaces: "切换到其他空间",
     account: "账户设置",
@@ -35,7 +35,7 @@ const copy = {
   en: {
     global: "Global navigation",
     home: "Learning home",
-    calendar: "Global calendar",
+    calendar: "Cross-space schedule",
     spaces: "Recent spaces",
     otherSpaces: "Switch to another space",
     account: "Account settings",
@@ -71,8 +71,8 @@ export function AppSidebar({
   contextOwnsActive?: boolean;
   onToggleLocale: () => void;
   onLogout: () => void;
-  onNavigate?: () => void;
-  onHomeNavigate?: () => void;
+  onNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onHomeNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const text = copy[locale];
   // Settings areas own the context slot; stacking the learner space list there
@@ -84,7 +84,12 @@ export function AppSidebar({
 
   return (
     <aside className="app-sidebar" data-testid="app-sidebar">
-      <Link className="app-sidebar-brand wordmark-button" href="/" aria-label="RefineQ">
+      <Link
+        className="app-sidebar-brand wordmark-button"
+        href="/"
+        aria-label="RefineQ"
+        onClick={onHomeNavigate ?? onNavigate}
+      >
         <BrandMark className="brand-mark" size={36} />
         <BrandName />
       </Link>
@@ -107,7 +112,7 @@ export function AppSidebar({
           onClick={onNavigate}
           aria-current={active === "calendar" ? "page" : undefined}
         >
-          <CalendarDays size={19} />
+          <Layers3 size={19} />
           <span>{text.calendar}</span>
         </Link>
       </nav>
