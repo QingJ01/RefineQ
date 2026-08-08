@@ -77,6 +77,7 @@ import type {
   PracticeRequest,
   SearchSource,
   StudySession,
+  TopicSuggestion,
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
@@ -131,6 +132,7 @@ export function StudyWorkspace({
     setEvidence,
     setInsights,
     setMaterials,
+    setTopicSuggestions,
     setPlan,
     setPreviousWorkspaceId,
     setProgress,
@@ -143,6 +145,7 @@ export function StudyWorkspace({
     showArchived,
     workspace,
     workspaces,
+    topicSuggestions,
   } = useWorkspaceState();
   const {
     answer,
@@ -170,6 +173,7 @@ export function StudyWorkspace({
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [snapshotConflict, setSnapshotConflict] = useState(false);
   const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
+  const [acceptingTopicSuggestionId, setAcceptingTopicSuggestionId] = useState<string | null>(null);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const pendingTurnIdRef = useRef<PendingCoachTurn | null>(null);
   const appliedActionIdsRef = useRef(new Set<string>());
@@ -799,11 +803,21 @@ export function StudyWorkspace({
         uploaded.forEach((item) => byId.set(item.id, item));
         return Array.from(byId.values());
       });
+      await refreshTopicSuggestions(auth.access_token, workspace.id);
       return uploaded;
     } catch (caught) {
       if (isAbortError(caught)) return [];
       reportError(caught);
       return [];
+    }
+  }
+
+  async function refreshTopicSuggestions(token: string, workspaceId: string) {
+    try {
+      const suggestions = await api.listWorkspaceTopicSuggestions(token, workspaceId);
+      if (workspaceRef.current?.id === workspaceId) setTopicSuggestions(suggestions);
+    } catch (caught) {
+      if (workspaceRef.current?.id === workspaceId) reportError(caught);
     }
   }
 
@@ -837,6 +851,7 @@ export function StudyWorkspace({
     try {
       await api.deleteWorkspaceMaterial(auth.access_token, workspace.id, material.id);
       setMaterials((current) => current.filter((item) => item.id !== material.id));
+      await refreshTopicSuggestions(auth.access_token, workspace.id);
     } catch (caught) {
       reportError(caught);
     }
@@ -852,9 +867,29 @@ export function StudyWorkspace({
         input,
       );
       setMaterials((current) => current.map((item) => item.id === updated.id ? updated : item));
+      await refreshTopicSuggestions(auth.access_token, workspace.id);
     } catch (caught) {
       reportError(caught);
       throw caught;
+    }
+  }
+
+  async function acceptTopicSuggestion(suggestion: TopicSuggestion) {
+    if (!auth || !workspace || acceptingTopicSuggestionId !== null) return;
+    const workspaceId = workspace.id;
+    setAcceptingTopicSuggestionId(suggestion.id);
+    setError("");
+    try {
+      const snapshot = await api.acceptWorkspaceTopicSuggestion(
+        auth.access_token,
+        workspaceId,
+        suggestion.id,
+      );
+      if (workspaceRef.current?.id === workspaceId) applySnapshot(snapshot);
+    } catch (caught) {
+      if (workspaceRef.current?.id === workspaceId) reportError(caught);
+    } finally {
+      if (workspaceRef.current?.id === workspaceId) setAcceptingTopicSuggestionId(null);
     }
   }
 
@@ -865,6 +900,7 @@ export function StudyWorkspace({
       await api.bulkDeleteWorkspaceMaterials(auth.access_token, workspace.id, ids);
       const removed = new Set(ids);
       setMaterials((current) => current.filter((item) => !removed.has(item.id)));
+      await refreshTopicSuggestions(auth.access_token, workspace.id);
     } catch (caught) {
       reportError(caught);
       throw caught;
@@ -1428,6 +1464,9 @@ export function StudyWorkspace({
               onDelete={deleteMaterial}
               onUpdate={updateMaterial}
               onBulkDelete={bulkDeleteMaterials}
+              topicSuggestions={topicSuggestions}
+              acceptingTopicSuggestionId={acceptingTopicSuggestionId}
+              onAcceptTopicSuggestion={acceptTopicSuggestion}
             />
           )}
           {section === "calendar" && (

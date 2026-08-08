@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   FileStack,
+  ListPlus,
   Pencil,
   RotateCcw,
   Search,
@@ -22,6 +23,7 @@ import type {
   MaterialRecord,
   MaterialUpdateInput,
   SearchSource,
+  TopicSuggestion,
 } from "@/lib/types";
 import {
   clearSelectedFiles,
@@ -108,6 +110,9 @@ export function MaterialDropzone({
   onDelete,
   onUpdate,
   onBulkDelete,
+  topicSuggestions = [],
+  acceptingTopicSuggestionId = null,
+  onAcceptTopicSuggestion,
   materials,
 }: {
   t: Translator;
@@ -118,6 +123,9 @@ export function MaterialDropzone({
   onDelete?: (material: MaterialRecord) => void | Promise<void>;
   onUpdate?: (material: MaterialRecord, input: MaterialUpdateInput) => void | Promise<void>;
   onBulkDelete?: (materials: MaterialRecord[]) => void | Promise<void>;
+  topicSuggestions?: TopicSuggestion[];
+  acceptingTopicSuggestionId?: string | null;
+  onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
   materials: MaterialRecord[];
 }) {
   const copy = organizationCopy[locale];
@@ -388,6 +396,37 @@ export function MaterialDropzone({
             </button>
           )}
         </div>
+      )}
+
+      {topicSuggestions.length > 0 && (
+        <aside className="material-topic-suggestions" data-testid="material-topic-suggestions">
+          <div>
+            <span><ListPlus size={17} /></span>
+            <div>
+              <strong>{locale === "zh" ? "从资料信息发现的主题" : "Topics found in material details"}</strong>
+              <p>{locale === "zh"
+                ? "这些候选只来自标题和标签。确认后才会加入学习路径。"
+                : "These candidates use titles and tags only. Nothing changes until you confirm."}</p>
+            </div>
+          </div>
+          <ul>
+            {topicSuggestions.map((suggestion) => (
+              <li key={suggestion.id}>
+                <span>{suggestion.name}</span>
+                <button
+                  type="button"
+                  data-testid={`accept-topic-${suggestion.id}`}
+                  disabled={acceptingTopicSuggestionId !== null}
+                  onClick={() => void onAcceptTopicSuggestion?.(suggestion)}
+                >
+                  {acceptingTopicSuggestionId === suggestion.id
+                    ? (locale === "zh" ? "正在添加…" : "Adding…")
+                    : (locale === "zh" ? "添加主题" : "Add topic")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
       )}
 
       <form className="material-search" onSubmit={searchMaterials}>

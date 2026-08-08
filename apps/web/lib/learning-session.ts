@@ -9,15 +9,20 @@ export interface LearningSessionStep {
   minutes: number;
 }
 
+const activityModes: Record<
+  NonNullable<StudySession["activity"]>,
+  LearningMode
+> = {
+  learn: "concept",
+  practice: "case",
+  apply: "project",
+  review: "exam",
+};
+
 export function learningModeForActivity(
   activity: NonNullable<StudySession["activity"]>,
 ): LearningMode {
-  return {
-    learn: "concept",
-    practice: "case",
-    apply: "project",
-    review: "exam",
-  }[activity];
+  return activityModes[activity];
 }
 
 const steps: Record<LearningMode, Record<Locale, LearningSessionStep[]>> = {

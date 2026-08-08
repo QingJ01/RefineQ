@@ -538,6 +538,81 @@ class LearningService:
         record = self._learning.mutate(owner_id, project_id, apply_diagnostic)
         return self._progress_response(record.data)
 
+    def add_topic(
+        self,
+        owner_id: str,
+        project_id: str,
+        topic: TopicSeed,
+        *,
+        start_at: datetime | None = None,
+    ) -> ProgressResponse:
+        """Add one confirmed topic and regenerate its usable learning path."""
+
+        self._require_project(owner_id, project_id)
+        observed_at = (start_at or datetime.now(UTC)).astimezone(UTC)
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            progress = self._progress(data)
+            existing = progress["topics"].get(topic.id)
+            if existing is not None:
+                if str(existing.get("name", "")).casefold() != topic.name.casefold():
+                    raise LearningConflictError("Topic ID already belongs to another topic")
+                return data
+            if any(
+                str(item.get("name", "")).casefold() == topic.name.casefold()
+                for item in progress["topics"].values()
+            ):
+                raise LearningConflictError("Learning topic already exists")
+            if len(progress["topics"]) >= 200:
+                raise LearningConflictError("Learning topic limit reached")
+
+            progress["topics"][topic.id] = topic.model_dump(mode="json")
+            progress.setdefault("topic_order", list(progress["topics"]))
+            if topic.id not in progress["topic_order"]:
+                progress["topic_order"].append(topic.id)
+            progress["bkt_states"][topic.id] = DEFAULT_BKT.model_dump(mode="json")
+            progress["difficulty_states"][topic.id] = DifficultyState().model_dump(mode="json")
+
+            raw_plan = progress.get("plan")
+            if raw_plan:
+                try:
+                    candidate = build_study_plan(
+                        goal=progress["goal"],
+                        topic_ids=list(progress["topic_order"]),
+                        exam_at=datetime.fromisoformat(progress["exam_at"]),
+                        daily_minutes=int(progress["daily_minutes"]),
+                        start_at=observed_at,
+                    )
+                except ValueError as error:
+                    raise LearningConflictError(str(error)) from error
+                previous = StudyPlan.model_validate(raw_plan)
+                completed = Counter(
+                    (session.topic_id, session.activity)
+                    for session in previous.sessions
+                    if session.status == "completed"
+                )
+                sessions: list[StudySession] = []
+                for session in candidate.sessions:
+                    key = (session.topic_id, session.activity)
+                    is_completed = completed[key] > 0
+                    if is_completed:
+                        completed[key] -= 1
+                    sessions.append(
+                        StudySession.model_validate(
+                            {
+                                **session.model_dump(mode="json"),
+                                "status": "completed" if is_completed else "planned",
+                            }
+                        )
+                    )
+                progress["plan"] = StudyPlan.model_validate(
+                    {**candidate.model_dump(mode="json"), "sessions": sessions}
+                ).model_dump(mode="json")
+            return data
+
+        record = self._learning.mutate(owner_id, project_id, apply)
+        return self._progress_response(record.data)
+
     def create_plan(
         self,
         owner_id: str,

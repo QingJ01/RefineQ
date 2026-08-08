@@ -138,6 +138,159 @@ def test_intents_create_reuse_switch_and_restore_learning_spaces(
         assert body["materials"][0]["filename"] == "limits.md"
 
 
+def test_material_topic_suggestions_require_owner_confirmation_and_ignore_body(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习高等数学极限"},
+        ).json()["workspace"]["id"]
+        before = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files=[
+                (
+                    "files",
+                    (
+                        "opaque.md",
+                        b"SECRET_BODY_TOPIC must never become a learning topic.",
+                        "text/markdown",
+                    ),
+                )
+            ],
+        ).json()[0]
+        updated = client.patch(
+            f"/workspaces/{workspace_id}/materials/{uploaded['id']}",
+            headers=headers,
+            json={"title": "Continuity guide", "tags": ["epsilon-delta"]},
+        )
+        bob = client.post(
+            "/auth/register",
+            json={
+                "email": "topic-suggestion-bob@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Bob",
+            },
+        ).json()
+
+        suggestions = client.get(
+            f"/workspaces/{workspace_id}/topic-suggestions",
+            headers=headers,
+        )
+        forbidden = client.get(
+            f"/workspaces/{workspace_id}/topic-suggestions",
+            headers={"Authorization": f"Bearer {bob['access_token']}"},
+        )
+        unchanged = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+
+        assert updated.status_code == 200
+        assert suggestions.status_code == 200
+        by_name = {item["name"]: item for item in suggestions.json()}
+        assert {"Continuity guide", "epsilon-delta"} <= set(by_name)
+        assert "SECRET_BODY_TOPIC" not in " ".join(by_name)
+        assert forbidden.status_code == 404
+        assert unchanged["workspace"]["topics"] == before["workspace"]["topics"]
+        assert unchanged["progress"]["topics"] == before["progress"]["topics"]
+
+        forbidden_accept = client.post(
+            f"/workspaces/{workspace_id}/topic-suggestions/{by_name['epsilon-delta']['id']}/accept",
+            headers={"Authorization": f"Bearer {bob['access_token']}"},
+        )
+
+        accepted = client.post(
+            f"/workspaces/{workspace_id}/topic-suggestions/{by_name['epsilon-delta']['id']}/accept",
+            headers=headers,
+        )
+        replayed = client.post(
+            f"/workspaces/{workspace_id}/topic-suggestions/{by_name['epsilon-delta']['id']}/accept",
+            headers=headers,
+        )
+
+    assert accepted.status_code == 200
+    assert replayed.status_code == 200
+    assert forbidden_accept.status_code == 404
+    accepted_body = accepted.json()
+    assert "epsilon-delta" in accepted_body["workspace"]["topics"]
+    accepted_topic_id = by_name["epsilon-delta"]["id"]
+    assert accepted_body["progress"]["topics"][accepted_topic_id] == "epsilon-delta"
+    assert any(
+        session["topic_id"] == accepted_topic_id for session in accepted_body["plan"]["sessions"]
+    )
+    assert all(item["id"] != accepted_topic_id for item in accepted_body["topic_suggestions"])
+    assert replayed.json()["workspace"]["topics"].count("epsilon-delta") == 1
+
+
+def test_material_topic_acceptance_rolls_back_both_records_on_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    owner = app.state.identity.register(
+        email="topic-rollback@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Rollback Learner",
+    )
+    workspace = app.state.workspace_service.resolve(
+        owner.id,
+        WorkspaceResolveRequest(intent="学习高等数学极限"),
+        now=datetime(2026, 8, 8, tzinfo=UTC),
+    ).workspace
+    app.state.knowledge.add_document(
+        owner_id=owner.id,
+        project_id=workspace.id,
+        material_id="continuity-material",
+        filename="continuity.md",
+        text="material body",
+        content_type="text/markdown",
+    )
+    app.state.knowledge.update_material_metadata(
+        owner_id=owner.id,
+        project_id=workspace.id,
+        material_id="continuity-material",
+        tags=[f"tag-{index}" for index in range(12)],
+    )
+    suggestions = app.state.workspace_service.topic_suggestions(owner.id, workspace.id)
+    suggestion = next(item for item in suggestions if item.name == "continuity.md")
+    assert len(suggestions) == 12
+    workspace_before = app.state.workspaces.snapshot(owner.id, workspace.id)
+    learning_before = app.state.learning.get(owner.id, workspace.id)
+    original_add_topic = app.state.workspace_learning_service.add_topic
+
+    def fail_after_learning_write(*args, **kwargs):
+        original_add_topic(*args, **kwargs)
+        raise RuntimeError("simulated second-record failure")
+
+    monkeypatch.setattr(
+        app.state.workspace_learning_service,
+        "add_topic",
+        fail_after_learning_write,
+    )
+
+    with pytest.raises(RuntimeError, match="second-record failure"):
+        app.state.workspace_service.accept_topic_suggestion(
+            owner.id,
+            workspace.id,
+            suggestion.id,
+            now=datetime(2026, 8, 8, 1, tzinfo=UTC),
+        )
+
+    assert (
+        app.state.workspaces.get(owner.id, workspace.id).model_dump(mode="json")
+        == workspace_before.data
+    )
+    assert app.state.learning.get(owner.id, workspace.id).data == learning_before.data
+
+
 def test_workspace_snapshot_is_owner_scoped(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 

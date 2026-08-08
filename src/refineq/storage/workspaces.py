@@ -85,6 +85,26 @@ class WorkspaceRepository:
         record = self._store.mutate(owner_id, "workspaces", workspace_id, apply)
         return LearningWorkspace.model_validate(record.data)
 
+    def append_topic(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        topic_name: str,
+    ) -> LearningWorkspace:
+        normalized = topic_name.strip()
+
+        def apply(data: dict) -> dict:
+            topics = data.setdefault("topics", [])
+            if any(str(item).casefold() == normalized.casefold() for item in topics):
+                return data
+            if len(topics) >= 200:
+                raise ValueError("Learning workspace topic limit reached")
+            topics.append(normalized)
+            return data
+
+        record = self._store.mutate(owner_id, "workspaces", workspace_id, apply)
+        return LearningWorkspace.model_validate(record.data)
+
     def delete(self, owner_id: str, workspace_id: str) -> None:
         self._store.delete(owner_id, "workspaces", workspace_id)
 

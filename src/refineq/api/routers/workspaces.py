@@ -8,6 +8,8 @@ from refineq.api.dependencies import CurrentUser
 from refineq.learning.service import LearningServiceError
 from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.service import (
+    TopicSuggestion,
+    TopicSuggestionNotFoundError,
     WorkspaceConstraintError,
     WorkspaceNotFoundError,
     WorkspaceQuotaError,
@@ -72,6 +74,40 @@ def workspace_snapshot(
         return request.app.state.workspace_service.snapshot(user.id, workspace_id)
     except WorkspaceNotFoundError as error:
         _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+
+
+@router.get("/{workspace_id}/topic-suggestions", response_model=list[TopicSuggestion])
+def workspace_topic_suggestions(
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> list[TopicSuggestion]:
+    try:
+        return request.app.state.workspace_service.topic_suggestions(user.id, workspace_id)
+    except WorkspaceNotFoundError as error:
+        _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+
+
+@router.post(
+    "/{workspace_id}/topic-suggestions/{suggestion_id}/accept",
+    response_model=WorkspaceSnapshot,
+)
+def accept_workspace_topic_suggestion(
+    workspace_id: str,
+    suggestion_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> WorkspaceSnapshot:
+    try:
+        return request.app.state.workspace_service.accept_topic_suggestion(
+            user.id,
+            workspace_id,
+            suggestion_id,
+        )
+    except (WorkspaceNotFoundError, TopicSuggestionNotFoundError) as error:
+        _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+    except LearningServiceError as error:
+        _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
 
 
 @router.patch("/{workspace_id}", response_model=LearningWorkspace)

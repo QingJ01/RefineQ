@@ -1159,6 +1159,29 @@ describe("persistent personal learning session", () => {
 
 
 describe("implicit workspace API", () => {
+  it("lists and explicitly accepts owner-scoped material topic suggestions", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({ path: String(input), method: String(init?.method ?? "GET") });
+      const body = String(input).endsWith("/accept") ? {} : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.listWorkspaceTopicSuggestions("token", "math-space");
+    await client.acceptWorkspaceTopicSuggestion("token", "math-space", "topic_epsilon");
+
+    expect(requests).toEqual([
+      { path: "/api/workspaces/math-space/topic-suggestions", method: "GET" },
+      {
+        path: "/api/workspaces/math-space/topic-suggestions/topic_epsilon/accept",
+        method: "POST",
+      },
+    ]);
+  });
+
   it("submits the initial diagnostic through the owner-scoped workspace route", async () => {
     let requestedPath = "";
     let requestedBody: unknown;

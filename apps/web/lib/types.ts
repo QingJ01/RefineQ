@@ -51,6 +51,13 @@ export interface WorkspaceSnapshot {
   saved_questions?: SavedPracticeQuestion[];
   active_question?: PracticeQuestion | null;
   last_answer?: AnswerResult | null;
+  topic_suggestions?: TopicSuggestion[];
+}
+
+export interface TopicSuggestion {
+  id: string;
+  name: string;
+  source_material_ids: string[];
 }
 
 export interface StudySession {

@@ -10,6 +10,7 @@ import type {
   Progress,
   SavedPracticeQuestion,
   StudyPlan,
+  TopicSuggestion,
   WorkspaceRoute,
   WorkspaceSnapshot,
 } from "@/lib/types";
@@ -24,6 +25,7 @@ export function useWorkspaceState() {
   const [insights, setInsights] = useState<LearningInsights | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [materials, setMaterials] = useState<MaterialRecord[]>([]);
+  const [topicSuggestions, setTopicSuggestions] = useState<TopicSuggestion[]>([]);
   const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
   const [previousWorkspaceId, setPreviousWorkspaceId] = useState<string | null>(null);
@@ -37,6 +39,7 @@ export function useWorkspaceState() {
     setInsights(null);
     setSelectedTopicId(null);
     setMaterials(snapshot.materials);
+    setTopicSuggestions(snapshot.topic_suggestions ?? []);
     setSavedQuestions(snapshot.saved_questions ?? []);
   }, []);
 
@@ -48,6 +51,7 @@ export function useWorkspaceState() {
     setInsights(null);
     setSelectedTopicId(null);
     setMaterials([]);
+    setTopicSuggestions([]);
     setSavedQuestions([]);
     setRoute(null);
     setPreviousWorkspaceId(null);
@@ -68,6 +72,7 @@ export function useWorkspaceState() {
     setEvidence,
     setInsights,
     setMaterials,
+    setTopicSuggestions,
     setPlan,
     setPreviousWorkspaceId,
     setProgress,
@@ -78,6 +83,7 @@ export function useWorkspaceState() {
     setWorkspace,
     setWorkspaces,
     showArchived,
+    topicSuggestions,
     workspace,
     workspaces,
   };

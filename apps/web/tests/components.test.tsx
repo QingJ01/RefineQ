@@ -1133,6 +1133,12 @@ describe("focused learning components", () => {
         onDelete={() => undefined}
         onUpdate={async () => undefined}
         onBulkDelete={async () => undefined}
+        topicSuggestions={[{
+          id: "topic_epsilon_delta",
+          name: "epsilon-delta",
+          source_material_ids: ["material-1"],
+        }]}
+        onAcceptTopicSuggestion={async () => undefined}
       />,
     );
 
@@ -1150,6 +1156,9 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="material-download-material-1"');
     expect(html).toContain('data-testid="material-delete-material-1"');
     expect(html).toContain('data-testid="material-metadata-material-1"');
+    expect(html).toContain('data-testid="material-topic-suggestions"');
+    expect(html).toContain('data-testid="accept-topic-topic_epsilon_delta"');
+    expect(html).toContain("Add topic");
     expect(html).toContain("12 B");
     expect(html).toContain("text/plain");
   });

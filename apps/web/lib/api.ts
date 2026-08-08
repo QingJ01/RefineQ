@@ -26,6 +26,7 @@ import type {
   PlanUpdateInput,
   PracticeRequest,
   PracticeQuestion,
+  Progress,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
@@ -33,6 +34,7 @@ import type {
   RestoreValidationResponse,
   StudyPlan,
   StudySession,
+  TopicSuggestion,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -248,6 +250,25 @@ export class ApiClient {
 
   getWorkspaceSnapshot(token: string, workspaceId: string): Promise<WorkspaceSnapshot> {
     return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
+  }
+
+  listWorkspaceTopicSuggestions(
+    token: string,
+    workspaceId: string,
+  ): Promise<TopicSuggestion[]> {
+    return this.request(`/workspaces/${workspaceId}/topic-suggestions`, {}, token);
+  }
+
+  acceptWorkspaceTopicSuggestion(
+    token: string,
+    workspaceId: string,
+    suggestionId: string,
+  ): Promise<WorkspaceSnapshot> {
+    return this.request(
+      `/workspaces/${workspaceId}/topic-suggestions/${suggestionId}/accept`,
+      { method: "POST" },
+      token,
+    );
   }
 
   submitWorkspaceDiagnostic(
