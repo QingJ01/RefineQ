@@ -78,6 +78,10 @@ import type {
   WorkspaceSnapshot,
 } from "@/lib/types";
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
+import {
+  consumeWorkspaceSnapshot,
+  saveWorkspaceSnapshot,
+} from "@/lib/workspace-snapshot-handoff";
 
 const ROUTE_NOTICE_KEY = "refineq.workspace-route-notice";
 const SECTION_FOCUS_KEY = "refineq.section-focus";
@@ -299,7 +303,8 @@ export function StudyWorkspace({
         }
         if (resolution.kind === "workspace") {
           const selected = resolution.workspace;
-          const snapshot = await api.getWorkspaceSnapshot(saved.token, selected.id);
+          const snapshot = consumeWorkspaceSnapshot(window.sessionStorage, selected.id)
+            ?? await api.getWorkspaceSnapshot(saved.token, selected.id);
           if (!active) return;
           applySnapshot(snapshot);
           saveLearningSession(window.sessionStorage, {
@@ -355,16 +360,6 @@ export function StudyWorkspace({
     setWorkspaces,
   ]);
 
-  useEffect(() => {
-    if (!route) return;
-    const timeout = window.setTimeout(() => {
-      window.sessionStorage.removeItem(ROUTE_NOTICE_KEY);
-      setRoute(null);
-      setPreviousWorkspaceId(null);
-    }, 7000);
-    return () => window.clearTimeout(timeout);
-  }, [route, setPreviousWorkspaceId, setRoute]);
-
   async function authenticated(response: AuthResponse) {
     if (initialWorkspaceId) setHomeBusy(true);
     setAuth(response);
@@ -405,6 +400,7 @@ export function StudyWorkspace({
     try {
       const snapshot = await api.getWorkspaceSnapshot(token, target.id);
       applySnapshot(snapshot);
+      saveWorkspaceSnapshot(window.sessionStorage, snapshot);
       saveLearningSession(window.sessionStorage, {
         token,
         workspaceId: target.id,
@@ -432,6 +428,7 @@ export function StudyWorkspace({
       const previousId = workspace?.id ?? saved?.workspaceId ?? null;
       const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
       applySnapshot(snapshot);
+      saveWorkspaceSnapshot(window.sessionStorage, snapshot);
       setRoute(route);
       setPreviousWorkspaceId(previousId === route.workspace.id ? null : previousId);
       window.sessionStorage.setItem(ROUTE_NOTICE_KEY, JSON.stringify({
@@ -805,7 +802,7 @@ export function StudyWorkspace({
 
   async function applyCoachAction(
     proposal: ExecutableActionProposal,
-    options: { confirmed?: boolean; historical?: boolean } = {},
+    options: { confirmed?: boolean } = {},
   ) {
     const storedDraft = question
       ? window.sessionStorage.getItem(`refineq.practice-draft:${workspace?.id}:${question.id}`)
@@ -814,7 +811,6 @@ export function StudyWorkspace({
       appliedActionIds: appliedActionIdsRef.current,
       hasDraft: Boolean((storedDraft ?? answer).trim()),
       confirmed: options.confirmed,
-      historical: options.historical,
       applyAdjust: (action) => getQuestion({
         requestId: action.action_id,
         topicId: action.topic_id,
@@ -843,7 +839,6 @@ export function StudyWorkspace({
         }
         return toggleSavedQuestion(target, action.saved);
       },
-      refreshSnapshot: refreshWorkspaceSnapshot,
     });
   }
 
@@ -1178,6 +1173,10 @@ export function StudyWorkspace({
           </header>
         )}
         <section className={`workspace-content workspace-content-${section}`}>
+          <div className="workspace-routing-summary" data-testid="workspace-routing-summary">
+            <Sparkles size={16} />
+            <span>{workspace.routing_summary}</span>
+          </div>
           {route && (
             <div className="workspace-route-notice" data-testid="workspace-route-notice" role="status">
               <Sparkles size={18} />
@@ -1192,7 +1191,6 @@ export function StudyWorkspace({
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
           {section === "today" && (
             <LearningSessionCanvas
-              key={workspace.id}
               locale={locale}
               t={t}
               workspace={workspace}

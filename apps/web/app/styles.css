@@ -7133,3 +7133,57 @@ textarea:focus {
     white-space: normal;
   }
 }
+
+.workspace-routing-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.workspace-routing-summary svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.question-explanation {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 13px 15px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.question-explanation strong {
+  font-size: 13px;
+}
+
+.question-explanation p {
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.55;
+}
+
+.guided-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  min-height: 220px;
+  align-content: center;
+}
+
+.guided-empty-state h2,
+.guided-empty-state p,
+.guided-empty-state ol {
+  margin: 0;
+}
+
+.guided-empty-state p,
+.guided-empty-state ol {
+  max-width: 680px;
+  color: var(--muted-strong);
+  line-height: 1.65;
+}

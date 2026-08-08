@@ -96,6 +96,37 @@ def _valid_citations(citations: list[str], sources: list[SearchResult]) -> list[
     return [item for item in dict.fromkeys(citations) if item in available]
 
 
+def _safe_public_prompt(
+    prompt: str,
+    *,
+    sources: list[SearchResult],
+    topic_id: str,
+    topic_name: str,
+    difficulty_level: int,
+    learning_mode: LearningMode,
+) -> str:
+    if sources:
+        return prompt
+    normalized = prompt.casefold()
+    unsupported_source_claims = (
+        "上传材料",
+        "访谈原文",
+        "根据材料",
+        "uploaded material",
+        "uploaded source",
+        "source document",
+    )
+    if not any(claim in normalized for claim in unsupported_source_claims):
+        return prompt
+    return fallback_question(
+        topic_id=topic_id,
+        topic_name=topic_name,
+        difficulty_level=difficulty_level,
+        sources=[],
+        learning_mode=learning_mode,
+    ).prompt
+
+
 def fallback_question(
     *,
     topic_id: str,
@@ -327,7 +358,14 @@ class LearningIntelligenceService:
             topic_id=topic_id,
             topic_name=topic_name,
             difficulty_level=difficulty_level,
-            prompt=output.prompt,
+            prompt=_safe_public_prompt(
+                output.prompt,
+                sources=sources,
+                topic_id=topic_id,
+                topic_name=topic_name,
+                difficulty_level=difficulty_level,
+                learning_mode=learning_mode,
+            ),
             expected_answer=output.expected_answer,
             rubric=output.rubric,
             explanation=output.explanation,

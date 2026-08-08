@@ -111,6 +111,12 @@ export function PracticeCard({
             <span>{t(question.mode === "ai" ? "aiQuestion" : "fallbackQuestion")}</span>
           </div>
           <h3>{question.prompt}</h3>
+          {question.explanation && (
+            <div className="question-explanation" data-testid="question-explanation">
+              <strong>{t("whyThisQuestion")}</strong>
+              <p>{question.explanation}</p>
+            </div>
+          )}
           <div className="practice-question-actions">
             <button
               type="button"

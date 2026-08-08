@@ -194,7 +194,7 @@ export function LearningSessionCanvas({
   onAskCoach: (message: string) => Promise<AgentReply>;
   onApplyCoachAction?: (
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) => Promise<CoachActionOutcome>;
   onCoachTurnHandled?: () => void;
 }) {
@@ -329,6 +329,12 @@ export function LearningSessionCanvas({
                 {groundingLabel}
               </span>
               <h2>{question.prompt}</h2>
+              {question.explanation && (
+                <div className="question-explanation" data-testid="question-explanation">
+                  <strong>{locale === "zh" ? "为什么考这道题" : "Why this task matters"}</strong>
+                  <p>{question.explanation}</p>
+                </div>
+              )}
               {taskSources[0]?.text && (
                 <blockquote className="session-case-evidence">
                   <span>{locale === "zh" ? "真实材料线索" : "Source evidence"}</span>
@@ -550,6 +556,7 @@ export function LearningSessionCanvas({
             onRecheck={onRecheckModel}
             isAdmin={isAdmin}
             onOpenSettings={onOpenAgentSettings}
+            onApplyAction={onApplyCoachAction}
           />
         </details>
       )}

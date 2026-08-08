@@ -2,13 +2,14 @@
 
 import { BrandMark, BrandName } from "../components/brand";
 import { useSessionLocale } from "../hooks/use-session-locale";
+import { routeLoadingText } from "../lib/route-loading";
+import { usePathname } from "next/navigation";
 
 
 export default function Loading() {
   const locale = useSessionLocale();
-  const text = locale === "zh"
-    ? { aria: "正在准备页面", kicker: "正在准备", title: "正在加载 RefineQ", body: "正在读取当前页面需要的信息。" }
-    : { aria: "Preparing page", kicker: "Preparing", title: "Loading RefineQ", body: "Loading the information needed for this page." };
+  const pathname = usePathname();
+  const text = routeLoadingText(pathname, locale);
   return (
     <main
       id="main-content"

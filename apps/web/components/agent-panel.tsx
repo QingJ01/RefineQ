@@ -16,11 +16,19 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } fr
 
 import { SourceDrawer } from "@/components/source-drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CoachActionCard, type CoachActionCardState } from "@/components/session-coach";
 import { api, ApiError } from "@/lib/api";
+import type { CoachActionOutcome } from "@/lib/coach-actions";
 import { localizeApiError } from "@/lib/error-messages";
 import type { Translator } from "@/lib/i18n";
 import { resolveModelCapability } from "@/lib/model-capability";
-import type { AgentMessage, AgentSessionSummary, Locale, SearchSource } from "@/lib/types";
+import type {
+  AgentMessage,
+  AgentSessionSummary,
+  ExecutableActionProposal,
+  Locale,
+  SearchSource,
+} from "@/lib/types";
 
 
 interface ChatMessage extends AgentMessage {
@@ -52,6 +60,7 @@ export function AgentPanel({
   onRecheck,
   isAdmin = false,
   onOpenSettings,
+  onApplyAction,
 }: {
   token: string;
   workspaceId: string;
@@ -62,6 +71,10 @@ export function AgentPanel({
   onRecheck?: () => Promise<boolean | null>;
   isAdmin?: boolean;
   onOpenSettings?: () => void;
+  onApplyAction?: (
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean },
+  ) => Promise<CoachActionOutcome>;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
@@ -81,6 +94,7 @@ export function AgentPanel({
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AgentSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [actionState, setActionState] = useState<CoachActionCardState | null>(null);
   const requestController = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,6 +103,31 @@ export function AgentPanel({
     "agentSuggestionQuiz",
     "agentSuggestionPlan",
   ] as const;
+  const actionBusy = actionState?.status === "executing";
+
+  async function applyAction(
+    proposal: ExecutableActionProposal,
+    options?: { confirmed?: boolean },
+  ) {
+    setActionState({ status: "executing", proposal });
+    if (!onApplyAction) {
+      setActionState({ status: "failed", proposal });
+      return;
+    }
+    try {
+      const outcome = await onApplyAction(proposal, options);
+      setActionState({
+        status: outcome.status === "confirmation_required"
+          ? "confirmation_required"
+          : outcome.status === "applied"
+            ? "applied"
+            : "failed",
+        proposal,
+      });
+    } catch {
+      setActionState({ status: "failed", proposal });
+    }
+  }
 
   const loadSessions = useCallback(async () => {
     setSessions(await api.listWorkspaceAgentSessions(token, workspaceId));
@@ -139,7 +178,7 @@ export function AgentPanel({
   }, []);
 
   async function sendMessage(sent: string, retry?: AgentTurn) {
-    if (!sent || busy) return;
+    if (!sent || busy || actionBusy) return;
     const turn = retry ?? {
       message: sent,
       sessionId: sessionId ?? crypto.randomUUID().replaceAll("-", ""),
@@ -177,6 +216,14 @@ export function AgentPanel({
           sources: reply.sources,
         },
       ]);
+      const proposal = reply.action_proposal;
+      if (!proposal) {
+        setActionState(null);
+      } else if (proposal.type === "rejected") {
+        setActionState({ status: "rejected", proposal });
+      } else {
+        await applyAction(proposal);
+      }
       await loadSessions();
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -213,6 +260,7 @@ export function AgentPanel({
     setMessage("");
     setError("");
     setFailedTurn(null);
+    setActionState(null);
     setHistoryOpen(false);
   }
 
@@ -222,6 +270,7 @@ export function AgentPanel({
       const detail = await api.getWorkspaceAgentSession(token, workspaceId, id);
       setSessionId(detail.id);
       setMessages(detail.messages);
+      setActionState(null);
       setHistoryOpen(false);
     } catch (caught) {
       setError(errorMessage(caught, t, locale));
@@ -316,6 +365,23 @@ export function AgentPanel({
           )}
         </div>
       )}
+      {actionState && (
+        <CoachActionCard
+          locale={locale}
+          state={actionState}
+          onConfirm={() => {
+            if (actionState.status !== "rejected") {
+              void applyAction(actionState.proposal, { confirmed: true });
+            }
+          }}
+          onCancel={() => setActionState(null)}
+          onRetry={() => {
+            if (actionState.status !== "rejected") {
+              void applyAction(actionState.proposal, { confirmed: true });
+            }
+          }}
+        />
+      )}
       <div className="chat-log" role="log" aria-live="polite" aria-busy={busy}>
         {messages.length === 0 && (
           <div className="agent-empty">
@@ -323,7 +389,7 @@ export function AgentPanel({
             <p>{t("messagePlaceholder")}</p>
             <div className="agent-suggestions">
               {suggestionKeys.map((key) => (
-                <button key={key} type="button" data-testid="agent-suggestion" disabled={modelConfigured === false} onClick={() => setMessage(t(key))}>
+                <button key={key} type="button" data-testid="agent-suggestion" disabled={modelConfigured === false || actionBusy} onClick={() => setMessage(t(key))}>
                   {t(key)}
                 </button>
               ))}
@@ -346,11 +412,11 @@ export function AgentPanel({
         <div ref={logEndRef} aria-hidden="true" />
       </div>
       <form className="chat-composer" onSubmit={send}>
-        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} disabled={modelConfigured === false} />
+        <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={composerKeyDown} placeholder={t("messagePlaceholder")} aria-label={t("messagePlaceholder")} disabled={modelConfigured === false || actionBusy} />
         {busy ? (
           <button type="button" data-testid="agent-stop" className="secondary-action" onClick={stopResponse}><Square size={15} /> {t("stop")}</button>
         ) : (
-          <button className="primary-action" disabled={!message.trim() || modelConfigured === false}>{t("send")} <Send size={17} /></button>
+          <button className="primary-action" disabled={!message.trim() || modelConfigured === false || actionBusy}>{t("send")} <Send size={17} /></button>
         )}
       </form>
       {selectedSources.length > 0 && <SourceDrawer title={t("sources")} sources={selectedSources} t={t} onClose={() => setSelectedSources([])} />}

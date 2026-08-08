@@ -33,7 +33,14 @@ export function ProgressInsights({
   }
 
   if (!progress || topics.length === 0) {
-    return <div className="empty-note">{t("noProgress")}</div>;
+    return (
+      <section className="content-card guided-empty-state" data-testid="progress-empty-guide">
+        <Target size={28} strokeWidth={1.5} />
+        <span className="kicker">MASTERY / READY</span>
+        <h2>{t("noProgress")}</h2>
+        <p>{t("startPracticeHint")}</p>
+      </section>
+    );
   }
 
   return (

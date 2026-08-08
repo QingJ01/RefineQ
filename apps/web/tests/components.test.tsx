@@ -110,6 +110,25 @@ describe("focused learning components", () => {
     expect(html).toContain("Review");
   });
 
+  it("renders guided empty cards for plans, schedules, and progress", () => {
+    const planHtml = renderToStaticMarkup(
+      <PlanTimeline locale="en" t={t} plan={null} />,
+    );
+    const scheduleHtml = renderToStaticMarkup(
+      <ScheduleCalendar locale="en" plan={null} onUpdateSession={() => undefined} />,
+    );
+    const progressHtml = renderToStaticMarkup(
+      <ProgressInsights t={t} progress={null} />,
+    );
+
+    expect(planHtml).toContain('data-testid="plan-empty-guide"');
+    expect(scheduleHtml).toContain('data-testid="schedule-empty-guide"');
+    expect(progressHtml).toContain('data-testid="progress-empty-guide"');
+    expect(planHtml).toContain("content-card");
+    expect(scheduleHtml).toContain("content-card");
+    expect(progressHtml).toContain("content-card");
+  });
+
   it("summarizes only the latest seven days and reports mastery change honestly", () => {
     const html = renderToStaticMarkup(
       <LearningReport
@@ -337,6 +356,7 @@ describe("focused learning components", () => {
           id: "question-1",
           topic_id: "user-needs",
           prompt: "分析用户当前的替代方案",
+          explanation: "这道题用于检验你能否从行为证据识别真实需求。",
           grounding,
           sources,
         } : null}
@@ -382,6 +402,8 @@ describe("focused learning components", () => {
     const recoveryHtml = renderGrounding("material", [source], true, false);
 
     expect(materialHtml).toContain('data-testid="practice-grounding"');
+    expect(materialHtml).toContain('data-testid="question-explanation"');
+    expect(materialHtml).toContain("这道题用于检验你能否从行为证据识别真实需求。");
     expect(materialHtml).toContain("材料依据");
     expect(materialHtml).toContain('data-testid="practice-sources"');
     expect(materialHtml).toContain("未命名主题");

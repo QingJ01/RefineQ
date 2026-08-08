@@ -44,7 +44,6 @@ const copy = {
     cancel: "先不执行",
     failed: "动作执行失败，你可以用同一请求安全重试。",
     retry: "重试",
-    synced: "已同步当前学习状态，没有重复执行旧动作。",
   },
   en: {
     title: "RefineQ coach · Current step",
@@ -65,12 +64,11 @@ const copy = {
     cancel: "Keep current question",
     failed: "The action failed. You can safely retry the same request.",
     retry: "Retry",
-    synced: "Current learning state was synced without repeating the old action.",
   },
 } as const;
 
 export type CoachActionCardState =
-  | { status: "applied" | "confirmation_required" | "failed" | "executing" | "synced"; proposal: ExecutableActionProposal }
+  | { status: "applied" | "confirmation_required" | "failed" | "executing"; proposal: ExecutableActionProposal }
   | { status: "rejected"; proposal: Extract<CoachActionProposal, { type: "rejected" }> };
 
 function proposalSummary(proposal: ExecutableActionProposal, locale: Locale) {
@@ -145,7 +143,7 @@ export function CoachActionCard({
       data-testid={`coach-action-${state.status}`}
       role="status"
     >
-      {state.status === "applied" || state.status === "synced"
+      {state.status === "applied"
         ? <Check size={15} />
         : state.status === "executing"
           ? <LoaderCircle className="spin" size={15} />
@@ -156,7 +154,6 @@ export function CoachActionCard({
         <strong>{state.status === "applied" ? `${text.applied} · ${summary}` : summary}</strong>
         {state.status === "confirmation_required" && <p>{text.confirm}</p>}
         {state.status === "failed" && <p>{text.failed}</p>}
-        {state.status === "synced" && <p>{text.synced}</p>}
         {state.status === "confirmation_required" && (
           <div className="coach-action-buttons">
             <button type="button" data-testid="coach-action-confirm" onClick={onConfirm}>{text.confirmAction}</button>
@@ -197,7 +194,7 @@ export function SessionCoach({
   onModelUnavailable?: () => void;
   onApplyAction?: (
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) => Promise<CoachActionOutcome>;
   onTurnHandled?: () => void;
 }) {
@@ -211,7 +208,7 @@ export function SessionCoach({
 
   async function applyAction(
     proposal: ExecutableActionProposal,
-    options?: { confirmed?: boolean; historical?: boolean },
+    options?: { confirmed?: boolean },
   ) {
     setActionState({ status: "executing", proposal });
     if (!onApplyAction) {
@@ -223,9 +220,7 @@ export function SessionCoach({
       setActionState({
         status: outcome.status === "confirmation_required"
           ? "confirmation_required"
-          : outcome.status === "synced"
-            ? "synced"
-            : outcome.status === "applied"
+          : outcome.status === "applied"
               ? "applied"
               : "failed",
         proposal,

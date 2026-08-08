@@ -11,7 +11,6 @@ export function LearningRoute({
 }) {
   return (
     <StudyWorkspace
-      key={workspaceId}
       initialWorkspaceId={workspaceId}
       initialSection={section}
     />

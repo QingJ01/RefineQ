@@ -294,13 +294,13 @@ describe("durable learner routing", () => {
     expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
 
-  it("remounts learner state when the URL switches to a different workspace", () => {
+  it("reuses learner state when the URL switches to a prefetched workspace", () => {
     const routeSource = readFileSync(
       fileURLToPath(new URL("../components/learning-route.tsx", import.meta.url)),
       "utf8",
     );
 
-    expect(routeSource).toContain("key={workspaceId}");
+    expect(routeSource).not.toContain("key={workspaceId}");
   });
 
   it("renders the automatic routing decision with correction controls", () => {
@@ -310,6 +310,9 @@ describe("durable learner routing", () => {
     );
 
     expect(workspaceSource).toContain('data-testid="workspace-route-notice"');
+    expect(workspaceSource).toContain('data-testid="workspace-routing-summary"');
+    expect(workspaceSource).toContain("workspace.routing_summary");
+    expect(workspaceSource).not.toContain("}, 7000);");
     expect(workspaceSource).toContain("route.confidence");
     expect(workspaceSource).toContain("route.reason");
     expect(workspaceSource).toContain("undoWorkspaceRoute");
@@ -1306,6 +1309,7 @@ describe("recoverable material and Agent interactions", () => {
     );
 
     expect(canvasSource).toContain("<AgentPanel");
+    expect(canvasSource).toContain("onApplyAction={onApplyCoachAction}");
     expect(canvasSource).toContain('data-testid="workspace-agent"');
     expect(workspaceSource).toContain("agentToken={auth.access_token}");
   });

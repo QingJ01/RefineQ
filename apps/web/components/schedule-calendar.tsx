@@ -87,7 +87,14 @@ export function ScheduleCalendar({
     setEditingId(null);
   }
 
-  if (!plan) return <div className="empty-note">{zh ? "确认学习范围后，时间表会出现在这里。" : "Confirm your learning scope to create a schedule."}</div>;
+  if (!plan) return (
+    <section className="content-card guided-empty-state" data-testid="schedule-empty-guide">
+      <CalendarDays size={28} strokeWidth={1.5} />
+      <span className="kicker">SCHEDULE / READY</span>
+      <h2>{zh ? "还没有可安排的学习日程" : "No study schedule yet"}</h2>
+      <p>{zh ? "先在今日学习中确认目标。生成学习路径后，每次学习与复习会自动排进这里。" : "Confirm the goal in Today first. Learning and review sessions will appear here after the study path is generated."}</p>
+    </section>
+  );
 
   return (
     <section className="schedule-page" data-testid="schedule-calendar">
