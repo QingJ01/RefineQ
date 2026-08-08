@@ -227,7 +227,12 @@ def request_password_reset(
         ttl=timedelta(minutes=request.app.state.settings.password_reset_ttl_minutes),
     )
     if token is not None and delivery.enabled:
-        background_tasks.add_task(_deliver_password_reset, delivery, payload.email, token)
+        background_tasks.add_task(
+            _deliver_password_reset,
+            delivery,
+            payload.email.strip().lower(),
+            token,
+        )
     return PasswordResetAccepted(reset_token=(token if expose_token else None))
 
 

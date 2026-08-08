@@ -380,7 +380,7 @@ def test_password_reset_schedules_smtp_delivery_without_exposing_token(
         _register(client, "mail-reset@example.com")
         existing = client.post(
             "/auth/password-reset/request",
-            json={"email": "mail-reset@example.com"},
+            json={"email": " MAIL-RESET@EXAMPLE.COM "},
         )
         missing = client.post(
             "/auth/password-reset/request",
