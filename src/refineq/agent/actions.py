@@ -167,10 +167,7 @@ class RejectedProposal(BaseModel):
 
 
 ActionProposal: TypeAlias = Annotated[
-    AdjustPracticeProposal
-    | UpdatePlanSessionProposal
-    | SaveQuestionProposal
-    | RejectedProposal,
+    AdjustPracticeProposal | UpdatePlanSessionProposal | SaveQuestionProposal | RejectedProposal,
     Field(discriminator="type"),
 ]
 
@@ -339,9 +336,7 @@ def _select_plan_session(
             else date.fromisoformat(selector.date or "")
         )
         matches = [
-            session
-            for session, planned in parsed
-            if planned.astimezone(zone).date() == target_date
+            session for session, planned in parsed if planned.astimezone(zone).date() == target_date
         ]
 
     labels = [_session_label(session, zone=zone, topics=topics) for session in matches]

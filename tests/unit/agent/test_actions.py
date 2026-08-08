@@ -118,9 +118,7 @@ def test_action_id_hashes_the_complete_turn_identity() -> None:
 
 
 def test_adjust_practice_inherits_the_pending_question_fields() -> None:
-    proposal = _resolve(
-        AdjustPracticeIntent(type="adjust_practice", difficulty="easier")
-    )
+    proposal = _resolve(AdjustPracticeIntent(type="adjust_practice", difficulty="easier"))
 
     assert isinstance(proposal, AdjustPracticeProposal)
     assert proposal.topic_id == "cache"
@@ -143,9 +141,7 @@ def test_adjust_practice_without_pending_question_falls_back_to_weakest_topic() 
 
 
 def test_adjust_practice_rejects_unknown_topics_and_difficulty_boundaries() -> None:
-    unknown = _resolve(
-        AdjustPracticeIntent(type="adjust_practice", topic="Operating systems")
-    )
+    unknown = _resolve(AdjustPracticeIntent(type="adjust_practice", topic="Operating systems"))
     assert isinstance(unknown, RejectedProposal)
     assert unknown.reason_code == "unknown_topic"
     assert unknown.candidates == ["Cache consistency", "Locking"]
