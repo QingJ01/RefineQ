@@ -352,7 +352,7 @@ class AgentService:
         session_id = payload.session_id or uuid4().hex
         validate_identifier(session_id, field="session_id")
         available = {source.citation_id: source for source in sources}
-        with self._sessions.conversation_transaction(owner_id, session_id):
+        with self._sessions.conversation_generation_lock(owner_id, session_id):
             return self._chat_in_session(
                 owner_id=owner_id,
                 project_id=project_id,
@@ -374,6 +374,33 @@ class AgentService:
         context: str,
         available: dict[str, SearchResult],
     ) -> AgentChatResponse:
+        def replay_turn(data: dict) -> AgentChatResponse | None:
+            if not payload.turn_id:
+                return None
+            turns = data.get("turns", {})
+            stored_turn = turns.get(payload.turn_id) if isinstance(turns, dict) else None
+            if not isinstance(stored_turn, dict) or not isinstance(stored_turn.get("message"), str):
+                return None
+            stored_citations = stored_turn.get("citations", [])
+            citations = [citation for citation in stored_citations if isinstance(citation, str)]
+            stored_sources = [
+                SearchResult.model_validate(source) for source in stored_turn.get("sources", [])
+            ]
+            response_sources = [
+                source for source in stored_sources if source.citation_id in citations
+            ]
+            if not response_sources:
+                citations = [citation for citation in citations if citation in available]
+                response_sources = [available[citation] for citation in citations]
+            restored_citation_ids = {source.citation_id for source in response_sources}
+            return AgentChatResponse(
+                session_id=session_id,
+                message=_sanitize_reply(stored_turn["message"], restored_citation_ids),
+                citations=citations,
+                sources=response_sources,
+                action_proposal=stored_turn.get("action_proposal"),
+            )
+
         session = None
         try:
             session = self._sessions.get(owner_id, session_id)
@@ -386,29 +413,10 @@ class AgentService:
             if self._sessions.count(owner_id) >= self._max_sessions:
                 raise AgentSessionLimitError("Agent session quota reached") from error
 
-        if session is not None and payload.turn_id:
-            turns = session.data.get("turns", {})
-            stored_turn = turns.get(payload.turn_id) if isinstance(turns, dict) else None
-            if isinstance(stored_turn, dict) and isinstance(stored_turn.get("message"), str):
-                stored_citations = stored_turn.get("citations", [])
-                citations = [citation for citation in stored_citations if isinstance(citation, str)]
-                stored_sources = [
-                    SearchResult.model_validate(source) for source in stored_turn.get("sources", [])
-                ]
-                response_sources = [
-                    source for source in stored_sources if source.citation_id in citations
-                ]
-                if not response_sources:
-                    citations = [citation for citation in citations if citation in available]
-                    response_sources = [available[citation] for citation in citations]
-                restored_citation_ids = {source.citation_id for source in response_sources}
-                return AgentChatResponse(
-                    session_id=session_id,
-                    message=_sanitize_reply(stored_turn["message"], restored_citation_ids),
-                    citations=citations,
-                    sources=response_sources,
-                    action_proposal=stored_turn.get("action_proposal"),
-                )
+        if session is not None:
+            replayed = replay_turn(session.data)
+            if replayed is not None:
+                return replayed
 
         history = _bounded_history(
             [
@@ -515,7 +523,24 @@ class AgentService:
             return data
 
         if session is not None:
-            self._sessions.mutate(owner_id, session_id, append_messages)
+            with self._sessions.conversation_transaction(owner_id, session_id):
+                try:
+                    latest_session = self._sessions.get(owner_id, session_id)
+                except RecordNotFoundError as error:
+                    raise AgentSessionConflictError(
+                        "Session changed during response generation"
+                    ) from error
+                latest_workspace_id = latest_session.data.get(
+                    "workspace_id"
+                ) or latest_session.data.get("project_id")
+                if latest_workspace_id != project_id:
+                    raise AgentSessionConflictError("Session belongs to another learning space")
+                replayed = replay_turn(latest_session.data)
+                if replayed is not None:
+                    return replayed
+                if latest_session.version != session.version:
+                    raise AgentSessionConflictError("Session changed during response generation")
+                self._sessions.mutate(owner_id, session_id, append_messages)
         else:
             with self._sessions.quota_transaction(owner_id):
                 try:
@@ -541,7 +566,10 @@ class AgentService:
                     ) or concurrent_session.data.get("project_id")
                     if concurrent_workspace_id != project_id:
                         raise AgentSessionConflictError("Session belongs to another learning space")
-                    self._sessions.mutate(owner_id, session_id, append_messages)
+                    replayed = replay_turn(concurrent_session.data)
+                    if replayed is not None:
+                        return replayed
+                    raise AgentSessionConflictError("Session changed during response generation")
         return AgentChatResponse(
             session_id=session_id,
             message=reply_text,

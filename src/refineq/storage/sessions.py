@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from hashlib import sha256
+from threading import RLock
 from typing import Any
 
 from refineq.storage.json_store import AtomicJsonStore, StoredRecord
@@ -12,6 +13,8 @@ SESSION_SCHEMA_VERSION = 1
 
 
 class SessionRepository:
+    _generation_locks = tuple(RLock() for _ in range(256))
+
     def __init__(self, store: AtomicJsonStore) -> None:
         self._store = store
 
@@ -84,3 +87,13 @@ class SessionRepository:
     def conversation_transaction(self, owner_id: str, session_id: str):
         digest = sha256(session_id.encode("utf-8")).hexdigest()[:32]
         return self._store.owner_transaction(owner_id, f"agent-{digest}")
+
+    @classmethod
+    def _conversation_generation_lock(cls, key: str) -> RLock:
+        return cls._generation_locks[hash(key) % len(cls._generation_locks)]
+
+    def conversation_generation_lock(self, owner_id: str, session_id: str) -> RLock:
+        """Deduplicate local replies without holding a database transaction."""
+
+        digest = sha256(session_id.encode("utf-8")).hexdigest()[:32]
+        return self._conversation_generation_lock(f"{owner_id}:{digest}")

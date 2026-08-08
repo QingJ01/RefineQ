@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 from fastapi.testclient import TestClient
 
@@ -39,6 +41,26 @@ class FakeLearningModel:
                 "citations": [],
                 "sufficient_evidence": True,
             }
+        )
+
+
+class BlockingQuestionModel(FakeLearningModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+        self.transaction_active: bool | None = None
+        self.inspect_transaction = lambda: False
+
+    def complete(self, *, settings, messages, response_model):
+        if response_model.__name__ == "QuestionModelOutput":
+            self.transaction_active = self.inspect_transaction()
+            self.started.set()
+            self.release.wait(timeout=3)
+        return super().complete(
+            settings=settings,
+            messages=messages,
+            response_model=response_model,
         )
 
 
@@ -83,6 +105,74 @@ class SequencedGradingLearningModel(FakeLearningModel):
                 "sufficient_evidence": True,
             }
         )
+
+
+def test_question_model_work_runs_outside_database_transaction(tmp_path: Path) -> None:
+    model = BlockingQuestionModel()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=model,
+    )
+    model.inspect_transaction = lambda: app.state.store._active_session.get() is not None
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "question-transaction@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Learner",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习高数极限"},
+        ).json()["workspace"]["id"]
+        admin = ensure_admin(
+            app.state.identity,
+            email="question-transaction-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first_pending = executor.submit(
+                    client.post,
+                    f"/workspaces/{workspace_id}/learning/question",
+                    headers=headers,
+                    json={"request_id": "outside-transaction"},
+                )
+                assert model.started.wait(timeout=2)
+                second_pending = executor.submit(
+                    client.post,
+                    f"/workspaces/{workspace_id}/learning/question",
+                    headers=headers,
+                    json={"request_id": "outside-transaction"},
+                )
+                snapshot = app.state.learning.get(auth["user"]["id"], workspace_id)
+                assert snapshot.data["progress"]["seeded"] is True
+                model.release.set()
+                responses = [
+                    first_pending.result(timeout=3),
+                    second_pending.result(timeout=3),
+                ]
+        finally:
+            model.release.set()
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert responses[0].json() == responses[1].json()
+    assert model.calls.count("QuestionModelOutput") == 1
+    assert model.transaction_active is False
 
 
 def test_workspace_practice_uses_ai_without_leaking_private_grading_data(

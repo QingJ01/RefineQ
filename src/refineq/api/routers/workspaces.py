@@ -10,6 +10,7 @@ from refineq.workspaces.models import LearningWorkspace
 from refineq.workspaces.service import (
     TopicSuggestion,
     TopicSuggestionNotFoundError,
+    WorkspaceConflictError,
     WorkspaceConstraintError,
     WorkspaceNotFoundError,
     WorkspaceQuotaError,
@@ -57,6 +58,8 @@ def resolve_workspace(
             error.code,
         )
     except WorkspaceQuotaError as error:
+        _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
+    except WorkspaceConflictError as error:
         _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
     except LearningServiceError as error:
         _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)

@@ -29,7 +29,7 @@ from refineq.storage.sessions import SessionRepository
 from refineq.storage.workspaces import WorkspaceRepository
 from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.intelligence import WorkspaceRoutingIntelligence
-from refineq.workspaces.models import LearningWorkspace
+from refineq.workspaces.models import LearningWorkspace, WorkspaceRoutingDecision
 from refineq.workspaces.routing import route_workspace
 
 DEFAULT_CAPABILITY_HORIZON_DAYS = 7
@@ -52,6 +52,10 @@ class WorkspaceConstraintError(WorkspaceServiceError):
 
 class WorkspaceQuotaError(WorkspaceServiceError):
     code = "workspace_quota"
+
+
+class WorkspaceConflictError(WorkspaceServiceError):
+    code = "workspace_conflict"
 
 
 class TopicSuggestionNotFoundError(WorkspaceServiceError):
@@ -188,28 +192,46 @@ class WorkspaceService:
         now: datetime | None = None,
     ) -> WorkspaceRouteResponse:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._workspaces.quota_transaction(owner_id):
-            return self._resolve_locked(owner_id, payload, observed_at=observed_at)
-
-    def _resolve_locked(
-        self,
-        owner_id: str,
-        payload: WorkspaceResolveRequest,
-        *,
-        observed_at: datetime,
-    ) -> WorkspaceRouteResponse:
         workspaces = self._workspaces.list(owner_id)
         decision = (
             self._routing.route(payload.intent, owner_id, workspaces)
             if self._routing is not None
             else route_workspace(payload.intent, workspaces)
         )
-        if decision.workspace_id is not None:
-            workspace = self._workspaces.touch(
+        with self._workspaces.quota_transaction(owner_id):
+            latest = self._workspaces.list(owner_id)
+            if decision.workspace_id is None and len(latest) >= self._max_workspaces:
+                raise WorkspaceQuotaError("Learning workspace quota reached")
+            if {item.id for item in latest} != {item.id for item in workspaces}:
+                raise WorkspaceConflictError("Learning workspaces changed during routing")
+            return self._commit_resolution(
                 owner_id,
-                decision.workspace_id,
-                now=observed_at,
+                payload,
+                decision,
+                latest,
+                observed_at=observed_at,
             )
+
+    def _commit_resolution(
+        self,
+        owner_id: str,
+        payload: WorkspaceResolveRequest,
+        decision: WorkspaceRoutingDecision,
+        workspaces: list[LearningWorkspace],
+        *,
+        observed_at: datetime,
+    ) -> WorkspaceRouteResponse:
+        if decision.workspace_id is not None:
+            try:
+                workspace = self._workspaces.touch(
+                    owner_id,
+                    decision.workspace_id,
+                    now=observed_at,
+                )
+            except RecordNotFoundError as error:
+                raise WorkspaceConflictError(
+                    "Selected learning workspace no longer exists"
+                ) from error
         else:
             if len(workspaces) >= self._max_workspaces:
                 raise WorkspaceQuotaError("Learning workspace quota reached")

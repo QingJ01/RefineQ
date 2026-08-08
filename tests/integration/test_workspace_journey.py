@@ -11,9 +11,11 @@ from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 
+from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
 from refineq.learning.service import AnswerRequest, PlanUpdateRequest
+from refineq.operations.admin import ensure_admin
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
 
@@ -29,6 +31,76 @@ def _register(client: TestClient) -> tuple[str, str]:
     )
     body = response.json()
     return body["access_token"], body["user"]["id"]
+
+
+class BlockingRoutingTransport:
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+        self.transaction_active: bool | None = None
+        self.inspect_transaction = lambda: False
+
+    def complete(self, *, settings, messages, response_model):
+        del settings, messages
+        self.transaction_active = self.inspect_transaction()
+        self.started.set()
+        self.release.wait(timeout=3)
+        return response_model.model_validate(
+            {
+                "action": "created",
+                "workspace_id": None,
+                "title": "Calculus learning",
+                "subject": "mathematics",
+                "topics": ["limits"],
+                "keywords": ["calculus", "limits"],
+                "confidence": 0.93,
+                "reason": "The learner requested a new calculus capability.",
+            }
+        )
+
+
+def test_workspace_routing_model_runs_outside_database_transaction(tmp_path: Path) -> None:
+    transport = BlockingRoutingTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=transport,
+    )
+    transport.inspect_transaction = lambda: app.state.store._active_session.get() is not None
+
+    with TestClient(app) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        admin = ensure_admin(
+            app.state.identity,
+            email="routing-transaction-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="routing-model",
+                api_key="secret-key",
+            ),
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    "/workspaces/resolve",
+                    headers=headers,
+                    json={"intent": "学习函数极限"},
+                )
+                assert transport.started.wait(timeout=2)
+                assert app.state.workspaces.list(owner_id) == []
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 200
+    assert transport.transaction_active is False
 
 
 def test_concurrent_workspace_resolves_cannot_cross_owner_quota(

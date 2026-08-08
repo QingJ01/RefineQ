@@ -52,6 +52,21 @@ class SlowModelTransport(FakeModelTransport):
         return super().complete(settings=settings, messages=messages)
 
 
+class BlockingModelTransport(FakeModelTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+        self.transaction_active: bool | None = None
+        self.inspect_transaction = lambda: False
+
+    def complete(self, *, settings, messages):
+        self.transaction_active = self.inspect_transaction()
+        self.started.set()
+        self.release.wait(timeout=3)
+        return super().complete(settings=settings, messages=messages)
+
+
 class FakeIntentTransport:
     def __init__(self, action: dict | None) -> None:
         self.action = action
@@ -136,6 +151,42 @@ def _seed_project(client: TestClient, headers: dict[str, str], name: str = "Syst
     )
     assert response.status_code == 200
     return project_id
+
+
+def test_agent_model_work_runs_outside_database_transaction(tmp_path: Path) -> None:
+    transport = BlockingModelTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+    transport.inspect_transaction = lambda: app.state.store._active_session.get() is not None
+
+    with TestClient(app) as client:
+        user = _register(client, "agent-transaction@example.com")
+        headers = _headers(user["token"])
+        project_id = _seed_project(client, headers)
+        _configure_model(app)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    f"/projects/{project_id}/agent/chat",
+                    headers=headers,
+                    json={
+                        "session_id": "transaction-session",
+                        "turn_id": "transaction-turn",
+                        "message": "Explain limits",
+                    },
+                )
+                assert transport.started.wait(timeout=2)
+                assert app.state.sessions.count(user["user_id"]) == 0
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 200
+    assert transport.transaction_active is False
 
 
 def test_agent_uses_grounded_context_citations_and_persistent_session(
@@ -690,9 +741,7 @@ def test_agent_action_extraction_failure_degrades_to_plain_reply(
     assert response.json()["message"] == "Keep reasoning about the question."
     assert response.json()["action_proposal"] is None
     operational_logs = "\n".join(
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "refineq.agent.service"
+        record.getMessage() for record in caplog.records if record.name == "refineq.agent.service"
     )
     assert "event=intent_extraction_failed reason=model_or_timeout" in operational_logs
     assert "duration_ms=" in operational_logs

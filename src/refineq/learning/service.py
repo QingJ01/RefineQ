@@ -820,8 +820,9 @@ class LearningService:
         plan_session_id: str | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
-        with self._learning.question_transaction(owner_id, project_id):
+        with self._learning.question_generation_lock(owner_id, project_id):
             current = self._learning.get(owner_id, project_id)
+            snapshot_version = current.version
             progress = self._progress(current.data)
             history = progress.setdefault("question_history", {})
             requests = progress.setdefault("question_requests", {})
@@ -939,6 +940,7 @@ class LearningService:
                 "plan_session_id": originating_plan_session_id,
             }
             selected: dict[str, Any] | None = None
+            selected_saved_at: str | None = None
 
             def store_once(data: dict[str, Any]) -> dict[str, Any]:
                 nonlocal selected
@@ -975,10 +977,35 @@ class LearningService:
                         inner_requests.pop(next(iter(inner_requests)))
                 return data
 
-            self._learning.mutate(owner_id, project_id, store_once)
+            with self._learning.question_transaction(owner_id, project_id):
+                latest = self._learning.get(owner_id, project_id)
+                latest_progress = self._progress(latest.data)
+                latest_history = latest_progress.setdefault("question_history", {})
+                if request_id:
+                    latest_requests = latest_progress.setdefault("question_requests", {})
+                    replay_id = latest_requests.get(request_id)
+                    replay = latest_history.get(replay_id) if replay_id else None
+                    if replay is not None:
+                        selected = deepcopy(replay)
+                        selected_saved_at = latest_progress.get("saved_questions", {}).get(
+                            replay["id"]
+                        )
+                if selected is None and latest.version != snapshot_version:
+                    pending = latest_progress.get("pending_question")
+                    if pending is not None and not replace_pending:
+                        selected = deepcopy(pending)
+                        selected_saved_at = latest_progress.get("saved_questions", {}).get(
+                            pending["id"]
+                        )
+                    else:
+                        raise LearningConflictError(
+                            "Learning state changed during question generation"
+                        )
+                if selected is None:
+                    self._learning.mutate(owner_id, project_id, store_once)
             if selected is None:
                 raise LearningServiceError("Question generation failed")
-            return self._public_question(selected)
+            return self._public_question(selected, saved_at=selected_saved_at)
 
     def pending_question(self, owner_id: str, project_id: str) -> QuestionResponse:
         self._require_project(owner_id, project_id)
