@@ -228,9 +228,7 @@ def request_password_reset(
     )
     if token is not None and delivery.enabled:
         background_tasks.add_task(_deliver_password_reset, delivery, payload.email, token)
-    return PasswordResetAccepted(
-        reset_token=(token if expose_token else None)
-    )
+    return PasswordResetAccepted(reset_token=(token if expose_token else None))
 
 
 @router.post(

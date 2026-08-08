@@ -360,17 +360,11 @@ def test_auth_capabilities_report_only_available_password_reset_delivery(
     )
 
     with TestClient(disabled_app) as client:
-        assert client.get("/auth/capabilities").json() == {
-            "password_reset_available": False
-        }
+        assert client.get("/auth/capabilities").json() == {"password_reset_available": False}
     with TestClient(exposed_app) as client:
-        assert client.get("/auth/capabilities").json() == {
-            "password_reset_available": True
-        }
+        assert client.get("/auth/capabilities").json() == {"password_reset_available": True}
     with TestClient(smtp_app) as client:
-        assert client.get("/auth/capabilities").json() == {
-            "password_reset_available": True
-        }
+        assert client.get("/auth/capabilities").json() == {"password_reset_available": True}
 
 
 def test_password_reset_schedules_smtp_delivery_without_exposing_token(

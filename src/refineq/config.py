@@ -116,8 +116,7 @@ class Settings(BaseSettings):
         sender = (self.smtp_from_email or "").strip()
         username = (self.smtp_username or "").strip()
         has_password = bool(
-            self.smtp_password is not None
-            and self.smtp_password.get_secret_value().strip()
+            self.smtp_password is not None and self.smtp_password.get_secret_value().strip()
         )
         if bool(host) != bool(sender):
             raise ValueError("SMTP host and sender must be configured together")
