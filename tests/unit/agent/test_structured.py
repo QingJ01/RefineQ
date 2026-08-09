@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 import pytest
@@ -84,6 +85,51 @@ def test_structured_transport_uses_finite_timeout_retry_and_output_budget(
     assert captured["client"]["timeout"] <= 30
     assert captured["client"]["max_retries"] <= 2
     assert captured["request"]["max_tokens"] <= 4_000
+
+
+def test_structured_transport_declares_the_response_schema_to_the_model(monkeypatch) -> None:
+    """The model must be told the exact field contract, or it cannot satisfy extra=forbid."""
+
+    captured: dict[str, object] = {}
+
+    class FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            captured["request"] = kwargs
+            message = type("Message", (), {"content": '{"action":"create","reason":"new"}'})
+            choice = type("Choice", (), {"message": message})
+            return type("Response", (), {"choices": [choice]})
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            del kwargs
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})
+
+    monkeypatch.setattr("refineq.agent.structured.OpenAI", FakeOpenAI)
+
+    OpenAICompatibleStructuredTransport().complete(
+        settings=ModelSettings(
+            base_url="https://api.openai.com/v1",
+            model="exam-tutor",
+            api_key="secret",
+        ),
+        messages=[
+            {"role": "system", "content": "route this"},
+            {"role": "user", "content": "9 月的线性代数考试"},
+        ],
+        response_model=RoutingAnswer,
+    )
+
+    request_messages = captured["request"]["messages"]
+    serialized = json.dumps(request_messages, ensure_ascii=False)
+    # The exact JSON Schema (field names, enum values, strictness flag) must reach the model.
+    assert "reason" in serialized
+    assert "action" in serialized
+    assert "create" in serialized
+    assert "additionalProperties" in serialized
+    # The caller's original messages must be preserved.
+    assert any(message.get("content") == "9 月的线性代数考试" for message in request_messages)
+    assert any(message.get("content") == "route this" for message in request_messages)
 
 
 def test_structured_transport_accepts_short_lived_client_configuration(monkeypatch) -> None:

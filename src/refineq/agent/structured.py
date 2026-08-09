@@ -41,6 +41,27 @@ def parse_structured_reply(
     raise StructuredModelResponseError("Model did not return valid structured JSON")
 
 
+def _schema_instruction(response_model: type[BaseModel]) -> dict[str, str]:
+    """Tell the model the exact field contract so strict validation can succeed.
+
+    ``response_format={"type": "json_object"}`` only guarantees syntactically valid
+    JSON, not the field shape. Without the schema the model has to guess field names,
+    which cannot satisfy the ``extra="forbid"`` response models and forces every call
+    to fall back. Embedding the JSON Schema is what makes the primary AI path usable.
+    """
+
+    schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+    return {
+        "role": "system",
+        "content": (
+            "Respond with a single minified JSON object that strictly conforms to the "
+            "JSON Schema below. Populate every required field, use only fields defined "
+            "in the schema, add no extra keys, and return no prose or code fences.\n"
+            f"JSON Schema: {schema}"
+        ),
+    }
+
+
 class StructuredModelTransport(Protocol):
     def complete(
         self,
@@ -81,7 +102,7 @@ class OpenAICompatibleStructuredTransport:
         )
         response = client.chat.completions.create(
             model=settings.model,
-            messages=messages,
+            messages=[*messages, _schema_instruction(response_model)],
             temperature=settings.temperature,
             response_format={"type": "json_object"},
             max_tokens=4_000,
