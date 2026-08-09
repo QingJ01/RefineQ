@@ -887,9 +887,7 @@ class KnowledgeIndex:
 
         owner_id = validate_identifier(owner_id, field="owner_id")
         bounded_ids = list(
-            dict.fromkeys(
-                validate_identifier(item, field="project_id") for item in project_ids
-            )
+            dict.fromkeys(validate_identifier(item, field="project_id") for item in project_ids)
         )
         if not bounded_ids:
             return {}

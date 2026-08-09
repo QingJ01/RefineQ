@@ -154,9 +154,7 @@ def select_next_action(
         )
 
     sessions = [
-        session
-        for session in (plan.sessions if plan else [])
-        if session.status != "completed"
+        session for session in (plan.sessions if plan else []) if session.status != "completed"
     ]
     due_reviews = sorted(
         (

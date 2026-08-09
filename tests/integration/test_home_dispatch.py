@@ -593,13 +593,17 @@ def test_undo_receipt_failure_rolls_back_and_releases_the_material_lease(
         with pytest.raises(RuntimeError, match="receipt storage failed"):
             app.state.home_dispatch.undo_created_workspace(owner_id, payload)
 
-        assert app.state.workspaces.get(owner_id, created["workspace_id"]).id == created[
-            "workspace_id"
-        ]
-        assert app.state.home_receipts.get(
-            owner_id,
-            f"undo-{request_id_hash('strong-undo-receipt-failure')}",
-        ) is None
+        assert (
+            app.state.workspaces.get(owner_id, created["workspace_id"]).id
+            == created["workspace_id"]
+        )
+        assert (
+            app.state.home_receipts.get(
+                owner_id,
+                f"undo-{request_id_hash('strong-undo-receipt-failure')}",
+            )
+            is None
+        )
         lease = RecoveryLease.acquire(app.state.material_deletions.lease_path)
         assert lease is not None
         lease.release()
