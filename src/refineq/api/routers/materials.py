@@ -22,6 +22,7 @@ from refineq.knowledge.extract import (
 )
 from refineq.knowledge.index import (
     MaterialDocument,
+    MaterialFilenameConflictError,
     MaterialNotFoundError,
     MaterialQuotaExceededError,
     MaterialRecord,
@@ -37,6 +38,8 @@ workspace_router = APIRouter(
     prefix="/workspaces/{workspace_id}/materials",
     tags=["materials"],
 )
+library_router = APIRouter(prefix="/materials/library", tags=["materials"])
+LIBRARY_SCOPE_ID = "library"
 _policy = MaterialPolicy()
 
 
@@ -94,6 +97,8 @@ class MaterialBulkDeleteRequest(BaseModel):
 
 
 def _require_project(request: Request, owner_id: str, project_id: str) -> None:
+    if project_id == LIBRARY_SCOPE_ID and request.url.path.startswith("/materials/library"):
+        return
     try:
         request.app.state.projects.get(owner_id, project_id)
     except RecordNotFoundError as error:
@@ -151,6 +156,7 @@ def _store_and_index(
     owner_id: str,
     documents: list[MaterialDocument],
     material_payloads: list[bytes],
+    required_project_id: str,
 ) -> list[MaterialRecord]:
     settings = request.app.state.settings
     lease = RecoveryLease.acquire_wait(request.app.state.material_deletions.lease_path)
@@ -164,8 +170,7 @@ def _store_and_index(
         )
     stored_objects = []
     try:
-        project_id = documents[0].project_id
-        _require_project(request, owner_id, project_id)
+        _require_project(request, owner_id, required_project_id)
         indexed_documents: list[MaterialDocument] = []
         for document, payload in zip(documents, material_payloads, strict=True):
             stored = request.app.state.object_storage.put(
@@ -177,6 +182,7 @@ def _store_and_index(
             )
             stored_objects.append(stored)
             indexed_documents.append(replace(document, storage_key=stored.key))
+        _require_project(request, owner_id, required_project_id)
         return request.app.state.knowledge.add_documents_with_quota(
             owner_id=owner_id,
             documents=indexed_documents,
@@ -195,6 +201,16 @@ def _raise_quota_error(error: MaterialQuotaExceededError) -> None:
     raise HTTPException(
         status_code=status.HTTP_413_CONTENT_TOO_LARGE,
         detail={"code": "material_quota", "message": str(error)},
+    ) from error
+
+
+def _raise_filename_conflict(error: MaterialFilenameConflictError) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "material_filename_exists",
+            "message": f"A material named '{error.filename}' already exists",
+        },
     ) from error
 
 
@@ -228,10 +244,44 @@ async def upload_materials(
             _policy.validate_batch(descriptors)
         except MaterialPolicyError as error:
             raise _material_error(error) from error
+        try:
+            request.app.state.knowledge.ensure_filenames_available(
+                owner_id=user.id,
+                filenames=[descriptor.filename for descriptor in descriptors],
+            )
+        except MaterialFilenameConflictError as error:
+            _raise_filename_conflict(error)
+
+        material_ids = [f"material_{sha256(payload).hexdigest()[:20]}" for _, payload in loaded]
+        existing_by_id: dict[str, MaterialRecord] = {}
+        for material_id in material_ids:
+            try:
+                existing_by_id[material_id] = request.app.state.knowledge.get_material(
+                    owner_id=user.id,
+                    project_id=LIBRARY_SCOPE_ID,
+                    material_id=material_id,
+                )
+            except MaterialNotFoundError:
+                continue
+        if len(existing_by_id) == len(loaded):
+            existing = [existing_by_id[material_id] for material_id in material_ids]
+            if project_id != LIBRARY_SCOPE_ID:
+                for material in existing:
+                    request.app.state.knowledge.link_material(
+                        owner_id=user.id,
+                        workspace_id=project_id,
+                        material_id=material.id,
+                    )
+            return existing
 
         limits = _extraction_limits(request)
-        extracted: list[str] = []
-        for (_, payload), descriptor in zip(loaded, descriptors, strict=True):
+        extracted: list[str | None] = []
+        for material_id, (_, payload), descriptor in zip(
+            material_ids, loaded, descriptors, strict=True
+        ):
+            if material_id in existing_by_id:
+                extracted.append(None)
+                continue
             used_ocr = False
             try:
                 text = await to_thread.run_sync(
@@ -290,12 +340,17 @@ async def upload_materials(
 
         documents: list[MaterialDocument] = []
         material_payloads: list[bytes] = []
-        for (_, payload), descriptor, text in zip(loaded, descriptors, extracted, strict=True):
-            material_id = f"material_{sha256(project_id.encode() + payload).hexdigest()[:20]}"
+        prepared_ids: set[str] = set()
+        for material_id, (_, payload), descriptor, text in zip(
+            material_ids, loaded, descriptors, extracted, strict=True
+        ):
+            if text is None or material_id in prepared_ids:
+                continue
+            prepared_ids.add(material_id)
             material_payloads.append(payload)
             documents.append(
                 MaterialDocument(
-                    project_id=project_id,
+                    project_id=LIBRARY_SCOPE_ID,
                     material_id=material_id,
                     filename=descriptor.filename,
                     content_type=descriptor.content_type,
@@ -305,18 +360,33 @@ async def upload_materials(
             )
 
         try:
-            return await to_thread.run_sync(
+            _require_project(request, user.id, project_id)
+            newly_indexed = await to_thread.run_sync(
                 partial(
                     _store_and_index,
                     request,
                     user.id,
                     documents,
                     material_payloads,
+                    project_id,
                 ),
                 abandon_on_cancel=False,
             )
+            indexed_by_id = {material.id: material for material in newly_indexed}
+            indexed_by_id.update(existing_by_id)
+            indexed = [indexed_by_id[material_id] for material_id in material_ids]
+            if project_id != LIBRARY_SCOPE_ID:
+                for material in indexed:
+                    request.app.state.knowledge.link_material(
+                        owner_id=user.id,
+                        workspace_id=project_id,
+                        material_id=material.id,
+                    )
+            return indexed
         except MaterialQuotaExceededError as error:
             _raise_quota_error(error)
+        except MaterialFilenameConflictError as error:
+            _raise_filename_conflict(error)
     finally:
         for upload in files:
             await upload.close()
@@ -345,6 +415,58 @@ async def upload_workspace_materials(
                 ref_id=material.id,
             )
     return indexed
+
+
+@library_router.post("", response_model=list[MaterialRecord], status_code=status.HTTP_201_CREATED)
+async def upload_library_materials(
+    request: Request,
+    user: CurrentUser,
+    files: Annotated[list[UploadFile], File()],
+) -> list[MaterialRecord]:
+    """Upload material without requiring the learner to create a learning space first."""
+
+    return await upload_materials(LIBRARY_SCOPE_ID, request, user, files)
+
+
+@library_router.get("", response_model=list[MaterialRecord])
+def list_library_materials(request: Request, user: CurrentUser) -> list[MaterialRecord]:
+    """Return the learner's complete material collection across every learning space."""
+
+    return request.app.state.knowledge.list_owner_materials(owner_id=user.id)
+
+
+@library_router.post(
+    "/{source_scope}/{material_id}/attach/{workspace_id}",
+    response_model=MaterialRecord,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_library_material(
+    source_scope: str,
+    material_id: str,
+    workspace_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> MaterialRecord:
+    """Copy an owned material into a learning space so retrieval remains space-isolated."""
+
+    _require_project(request, user.id, workspace_id)
+    try:
+        source = request.app.state.knowledge.get_material(
+            owner_id=user.id,
+            project_id=source_scope,
+            material_id=material_id,
+        )
+    except MaterialNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material not found"},
+        ) from error
+    request.app.state.knowledge.link_material(
+        owner_id=user.id,
+        workspace_id=workspace_id,
+        material_id=source.id,
+    )
+    return source
 
 
 @router.get("/search", response_model=list[SearchResult])
@@ -447,6 +569,13 @@ def _bulk_delete_materials(
     user: CurrentUser,
 ) -> Response:
     _require_project(request, user.id, project_id)
+    if project_id != LIBRARY_SCOPE_ID:
+        request.app.state.knowledge.unlink_materials(
+            owner_id=user.id,
+            workspace_id=project_id,
+            material_ids=payload.material_ids,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     try:
         pending = request.app.state.material_deletions.prepare(
             owner_id=user.id,
@@ -487,7 +616,13 @@ def bulk_delete_workspace_materials(
     request: Request,
     user: CurrentUser,
 ) -> Response:
-    return _bulk_delete_materials(workspace_id, payload, request, user)
+    _require_project(request, user.id, workspace_id)
+    request.app.state.knowledge.unlink_materials(
+        owner_id=user.id,
+        workspace_id=workspace_id,
+        material_ids=payload.material_ids,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @workspace_router.get("/search", response_model=list[SearchResult])
@@ -540,9 +675,14 @@ def _analyze_material(
 ) -> MaterialAnalysis:
     _require_project(request, user.id, project_id)
     try:
+        material = request.app.state.knowledge.get_material(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+        )
         return request.app.state.material_analysis.analyze(
             owner_id=user.id,
-            workspace_id=project_id,
+            workspace_id=material.project_id,
             material_id=material_id,
         )
     except MaterialNotFoundError as error:
@@ -580,6 +720,11 @@ def _material_analysis(
 ) -> MaterialAnalysis:
     _require_project(request, user.id, project_id)
     try:
+        request.app.state.knowledge.get_material(
+            owner_id=user.id,
+            project_id=project_id,
+            material_id=material_id,
+        )
         return request.app.state.material_analysis.get(
             owner_id=user.id,
             workspace_id=project_id,
@@ -699,4 +844,10 @@ def delete_workspace_material(
     request: Request,
     user: CurrentUser,
 ) -> Response:
-    return _delete_material(workspace_id, material_id, request, user)
+    _require_project(request, user.id, workspace_id)
+    request.app.state.knowledge.unlink_materials(
+        owner_id=user.id,
+        workspace_id=workspace_id,
+        material_ids=[material_id],
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -8,6 +8,10 @@ from refineq.learning.bkt import mastery_is_stable, update_bkt
 from refineq.learning.models import BKTState
 
 
+def test_new_topic_starts_with_zero_mastery() -> None:
+    assert BKTState().p_mastery == 0.0
+
+
 def test_correct_answer_increases_mastery_and_evidence() -> None:
     state = BKTState(p_mastery=0.2)
 

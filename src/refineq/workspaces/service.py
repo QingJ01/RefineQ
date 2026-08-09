@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from hashlib import sha256
 from uuid import uuid4
 
@@ -73,6 +73,7 @@ class WorkspaceResolveRequest(BaseModel):
     intent: str = Field(min_length=1, max_length=2_000)
     exam_at: datetime | None = None
     daily_minutes: int | None = Field(default=None, ge=5, le=480)
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
     @field_validator("exam_at", mode="after")
     @classmethod
@@ -245,6 +246,37 @@ class WorkspaceService:
         *,
         observed_at: datetime,
     ) -> WorkspaceRouteResponse:
+        user_timezone = timezone(timedelta(minutes=payload.timezone_offset_minutes))
+        local_observed_at = observed_at.astimezone(user_timezone)
+        inferred = infer_intent_constraints(payload.intent, now=local_observed_at)
+        should_generate_plan = any(
+            (
+                payload.exam_at is not None,
+                payload.daily_minutes is not None,
+                inferred.exam_at is not None,
+                inferred.daily_minutes is not None,
+                inferred.preferred_hour is not None,
+                inferred.plan_requested,
+            )
+        )
+        exam_at = (
+            payload.exam_at
+            or inferred.exam_at
+            or observed_at + timedelta(days=DEFAULT_CAPABILITY_HORIZON_DAYS)
+        )
+        daily_minutes = payload.daily_minutes or inferred.daily_minutes or 45
+        plan_start_at = observed_at
+        if inferred.preferred_hour is not None:
+            local_start = local_observed_at.replace(
+                hour=inferred.preferred_hour,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+            if local_start <= local_observed_at:
+                local_start += timedelta(days=1)
+            plan_start_at = local_start.astimezone(UTC)
+
         if decision.workspace_id is not None:
             try:
                 workspace = self._workspaces.touch(
@@ -256,17 +288,25 @@ class WorkspaceService:
                 raise WorkspaceConflictError(
                     "Selected learning workspace no longer exists"
                 ) from error
+            progress = self._learning_service.progress(owner_id, workspace.id)
+            if should_generate_plan and progress.plan_id is None:
+                self.update_plan(
+                    owner_id,
+                    workspace.id,
+                    PlanUpdateRequest(
+                        goal=payload.intent.strip(),
+                        exam_at=exam_at,
+                        daily_minutes=daily_minutes,
+                        topic_order=progress.topic_order,
+                        regenerate=True,
+                    ),
+                    start_at=plan_start_at,
+                )
+                workspace = self._workspaces.get(owner_id, workspace.id)
         else:
             if len(workspaces) >= self._max_workspaces:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
             workspace_id = uuid4().hex
-            inferred = infer_intent_constraints(payload.intent, now=observed_at)
-            exam_at = (
-                payload.exam_at
-                or inferred.exam_at
-                or observed_at + timedelta(days=DEFAULT_CAPABILITY_HORIZON_DAYS)
-            )
-            daily_minutes = payload.daily_minutes or inferred.daily_minutes or 45
             topic_seeds = [TopicSeed(id=_topic_id(name), name=name) for name in decision.topics]
             try:
                 build_study_plan(
@@ -274,7 +314,7 @@ class WorkspaceService:
                     topic_ids=[topic.id for topic in topic_seeds],
                     exam_at=exam_at,
                     daily_minutes=daily_minutes,
-                    start_at=observed_at,
+                    start_at=plan_start_at,
                 )
             except ValueError as error:
                 raise WorkspaceConstraintError(str(error)) from error
@@ -301,7 +341,12 @@ class WorkspaceService:
                         topics=topic_seeds,
                     ),
                 )
-                self._learning_service.create_plan(owner_id, workspace.id, start_at=observed_at)
+                if should_generate_plan:
+                    self._learning_service.create_plan(
+                        owner_id,
+                        workspace.id,
+                        start_at=plan_start_at,
+                    )
             except Exception:
                 self._learning.delete(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)
@@ -403,6 +448,8 @@ class WorkspaceService:
         owner_id: str,
         workspace_id: str,
         payload: PlanUpdateRequest,
+        *,
+        start_at: datetime | None = None,
     ) -> StudyPlan:
         plan_fields = ("goal", "exam_at", "daily_minutes", "topic_order", "plan")
         try:
@@ -412,7 +459,12 @@ class WorkspaceService:
                 original_plan_fields = {
                     field: deepcopy(progress[field]) for field in plan_fields if field in progress
                 }
-                plan = self._learning_service.update_plan(owner_id, workspace_id, payload)
+                plan = self._learning_service.update_plan(
+                    owner_id,
+                    workspace_id,
+                    payload,
+                    start_at=start_at,
+                )
                 try:
                     self._workspaces.update(owner_id, workspace_id, goal=payload.goal)
                 except Exception:
@@ -437,7 +489,7 @@ class WorkspaceService:
         learning_snapshot = None
         journey_event_snapshot = None
         session_snapshots = []
-        pending = None
+        linked_material_ids: list[str] = []
         try:
             with self._learning.plan_transaction(owner_id, workspace_id):
                 try:
@@ -454,41 +506,44 @@ class WorkspaceService:
                     owner_id,
                     workspace_id,
                 )
-                pending = self._material_deletions.prepare(
-                    owner_id=owner_id,
-                    project_id=workspace_id,
-                    material_ids=None,
-                )
+                linked_material_ids = [
+                    material.id
+                    for material in self._knowledge.list_materials(
+                        owner_id=owner_id,
+                        project_id=workspace_id,
+                    )
+                ]
                 self._learning.delete(owner_id, workspace_id)
                 self._learning_service.delete_journey_events(owner_id, workspace_id)
                 self._sessions.delete_for_workspace(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)
 
-            self._material_deletions.complete(pending)
+            if linked_material_ids:
+                self._knowledge.unlink_materials(
+                    owner_id=owner_id,
+                    workspace_id=workspace_id,
+                    material_ids=linked_material_ids,
+                )
         except Exception:
-            try:
-                if pending is not None and pending.directory.exists():
-                    self._material_deletions.rollback(pending)
-            finally:
-                if workspace_snapshot is not None and learning_snapshot is not None:
-                    with self._learning.plan_transaction(owner_id, workspace_id):
-                        self._workspaces.restore(
+            if workspace_snapshot is not None and learning_snapshot is not None:
+                with self._learning.plan_transaction(owner_id, workspace_id):
+                    self._workspaces.restore(
                             owner_id,
                             workspace_id,
                             workspace_snapshot,
-                        )
-                        self._learning.restore(
+                    )
+                    self._learning.restore(
                             owner_id,
                             workspace_id,
                             learning_snapshot,
-                        )
-                        if journey_event_snapshot is not None:
-                            self._learning_service.restore_journey_events(
+                    )
+                    if journey_event_snapshot is not None:
+                        self._learning_service.restore_journey_events(
                                 owner_id,
                                 workspace_id,
                                 journey_event_snapshot,
-                            )
-                        self._sessions.restore_snapshots(owner_id, session_snapshots)
+                        )
+                    self._sessions.restore_snapshots(owner_id, session_snapshots)
             raise
 
     def require_searchable_material(self, owner_id: str, workspace_id: str) -> None:

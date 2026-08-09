@@ -28,6 +28,10 @@ describe("localized API errors", () => {
       "zh",
     )).toBe("资料正在被整理，请稍后重试上传。");
     expect(localizeApiError(
+      new ApiError(409, "material_filename_exists", "Duplicate filename"),
+      "zh",
+    )).toBe("同名文件已存在，请直接从总资料库选择，或修改文件名后再上传。");
+    expect(localizeApiError(
       new ApiError(503, "backup_creation_failed", "Backup could not be created safely"),
       "zh",
     )).toBe("系统备份未能安全创建，请稍后重试。");

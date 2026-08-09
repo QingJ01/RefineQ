@@ -677,7 +677,7 @@ class LearningService:
             nonlocal updated
             progress = self._progress(data)
             plan = progress.get("plan")
-            if not plan:
+            if not plan and not payload.regenerate:
                 raise LearningNotSeededError("Learning plan has not been created")
             for session in plan["sessions"]:
                 if session["id"] != session_id:
@@ -782,7 +782,7 @@ class LearningService:
             nonlocal generated
             progress = self._progress(data)
             plan = progress.get("plan")
-            if not plan:
+            if not plan and not payload.regenerate:
                 raise LearningNotSeededError("Learning plan has not been created")
             topic_ids = list(progress["topics"])
             if len(payload.topic_order) != len(set(payload.topic_order)) or set(
@@ -803,14 +803,16 @@ class LearningService:
             except ValueError as error:
                 raise LearningConflictError(str(error)) from error
 
-            existing = StudyPlan.model_validate(plan)
+            existing = StudyPlan.model_validate(plan) if plan else None
             if payload.regenerate:
                 completed_ids = {
-                    session.id for session in existing.sessions if session.status == "completed"
+                    session.id
+                    for session in (existing.sessions if existing else [])
+                    if session.status == "completed"
                 }
                 completed_kinds = Counter(
                     (session.topic_id, session.activity)
-                    for session in existing.sessions
+                    for session in (existing.sessions if existing else [])
                     if session.status == "completed"
                 )
                 sessions: list[StudySession] = []
@@ -831,6 +833,8 @@ class LearningService:
                     {**candidate.model_dump(mode="json"), "sessions": sessions}
                 )
             else:
+                if existing is None:
+                    raise LearningNotSeededError("Learning plan has not been created")
                 generated = StudyPlan.model_validate(
                     {
                         **existing.model_dump(mode="json"),

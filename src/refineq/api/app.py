@@ -31,6 +31,7 @@ from refineq.api.routers.calendar import router as calendar_router
 from refineq.api.routers.health import router as health_router
 from refineq.api.routers.learning import router as learning_router
 from refineq.api.routers.learning import workspace_router as workspace_learning_router
+from refineq.api.routers.materials import library_router as library_materials_router
 from refineq.api.routers.materials import router as materials_router
 from refineq.api.routers.materials import workspace_router as workspace_materials_router
 from refineq.api.routers.projects import router as projects_router
@@ -256,6 +257,7 @@ def create_app(
     app.include_router(learning_router)
     app.include_router(workspace_learning_router)
     app.include_router(materials_router)
+    app.include_router(library_materials_router)
     app.include_router(workspace_materials_router)
     app.include_router(agent_router)
     app.include_router(workspace_agent_router)

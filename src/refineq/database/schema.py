@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 EMBEDDING_DIMENSIONS = 1536
 
 naming_convention = {
@@ -155,6 +155,21 @@ materials = Table(
 )
 Index("ix_materials_owner_project", materials.c.owner_id, materials.c.project_id)
 
+workspace_materials = Table(
+    "workspace_materials",
+    metadata,
+    Column("owner_id", String(128), nullable=False),
+    Column("workspace_id", String(128), nullable=False),
+    Column("material_id", String(128), nullable=False),
+    Column("added_at", DateTime(timezone=True), nullable=False, default=utc_now),
+    UniqueConstraint("owner_id", "workspace_id", "material_id"),
+)
+Index(
+    "ix_workspace_materials_owner_workspace",
+    workspace_materials.c.owner_id,
+    workspace_materials.c.workspace_id,
+)
+
 material_chunks = Table(
     "material_chunks",
     metadata,
@@ -184,5 +199,6 @@ ALL_TABLES = (
     integration_settings,
     audit_logs,
     materials,
+    workspace_materials,
     material_chunks,
 )

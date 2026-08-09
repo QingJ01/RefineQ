@@ -6,6 +6,7 @@ import {
   ArchiveRestore,
   Check,
   Clock3,
+  LoaderCircle,
   Pencil,
   Sparkles,
   Trash2,
@@ -102,6 +103,7 @@ export function LearningHome({
           isAdmin={isAdmin}
           onToggleLocale={onToggleLocale}
           onLogout={onLogout}
+          onDeleteWorkspace={onDelete}
         />
       </div>
       <section className="learning-home">
@@ -121,8 +123,8 @@ export function LearningHome({
             />
             <div className="composer-footer">
               <small className="routing-note"><Sparkles size={14} /> {t("autoRouting")}</small>
-              <button data-testid="start-learning" className="composer-send" disabled={busy || !intent.trim()} aria-label={t("startLearning")}>
-                {busy ? <span>{t("loading")}</span> : <ArrowRight size={19} />}
+              <button data-testid="start-learning" className="composer-send" disabled={busy || !intent.trim()} aria-busy={busy} aria-label={busy ? t("loading") : t("startLearning")}>
+                {busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={19} />}
               </button>
             </div>
           </form>

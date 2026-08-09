@@ -173,7 +173,7 @@ describe("shared authenticated sidebar", () => {
 
     expect(html).not.toContain('data-testid="app-nav-admin"');
     expect(html).toContain("学习首页");
-    expect(html).toContain("跨空间日程");
+    expect(html).toContain("全部日程");
   });
 
   it("keeps administration navigation separate from learner spaces", () => {
@@ -248,6 +248,23 @@ describe("shared authenticated sidebar", () => {
 
     expect(html).not.toContain('href="/learn/math-space/today"');
     expect(html).toContain('href="/learn/history-space/today"');
+  });
+
+  it("shows a compact workspace action menu only when deletion is available", () => {
+    const html = renderToStaticMarkup(
+      <AppSidebar
+        locale="zh"
+        active="home"
+        workspaces={sidebarWorkspaces}
+        onDeleteWorkspace={() => undefined}
+        onToggleLocale={() => undefined}
+        onLogout={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="workspace-menu-math-space"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-testid="workspace-menu-delete-math-space"');
   });
 });
 
@@ -997,10 +1014,8 @@ describe("focused learning components", () => {
     expect(html).toContain('class="auth-illustration"');
     expect(html).toContain("refineq-learning-illustration.png");
     expect(html).toMatch(/<img(?=[^>]*class="auth-illustration")(?=[^>]*aria-hidden="true")[^>]*>/);
-    expect(html).toContain("目标");
-    expect(html).toContain("资料");
-    expect(html).toContain("练习");
-    expect(html).toContain("进步");
+    expect(html).toContain("目标、资料和学习进度");
+    expect(html).toContain("使用你的账号继续");
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('autoComplete="current-password"');
     expect(html).toContain('data-testid="toggle-password"');
@@ -1030,6 +1045,26 @@ describe("focused learning components", () => {
     expect(html).toContain("RefineQ");
     expect(html).toContain('data-testid="app-logout"');
     expect(html).toContain('data-testid="app-language"');
+  });
+
+  it("keeps the home loading state inside the square send button", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        locale="zh"
+        t={translator("zh")}
+        busy
+        workspaces={[]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="start-learning"');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('class="lucide lucide-loader-circle spin"');
+    expect(html).not.toContain("<span>正在整理……</span>");
   });
 
   it("makes recent learning and workspace correction actions operable", () => {
@@ -1172,6 +1207,24 @@ describe("focused learning components", () => {
       expect(html).toContain("Historical input");
       expect(html).toContain("Pass calculus in 90 minutes every day");
       expect(html).toContain("does not control the current schedule");
+  });
+
+  it("renders plan generation controls after a schedule has been cleared", () => {
+    const html = renderToStaticMarkup(
+      <PlanSettings
+        locale="zh"
+        plan={null}
+        topics={{ limits: "极限", derivatives: "导数" }}
+        topicOrder={["limits", "derivatives"]}
+        originalGoal="准备高数考试"
+        onSave={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("生成学习计划");
+    expect(html).toContain("尚未生成日程");
+    expect(html).toContain("生成课表");
+    expect(html).not.toContain('data-testid="plan-settings-save"');
   });
 
   it("keeps long study paths focused until the learner expands them", () => {

@@ -119,6 +119,21 @@ export function GlobalCalendarRoute() {
     setReload((current) => current + 1);
   }
 
+  async function deleteWorkspace(target: LearningWorkspace) {
+    setLoading(true);
+    setError("");
+    try {
+      await api.deleteWorkspace(token, target.id);
+      setWorkspaces((current) => current.filter((workspace) => workspace.id !== target.id));
+      setTasks((current) => current.filter((task) => task.workspace_id !== target.id));
+    } catch (caught) {
+      setError(localizeApiError(caught, locale));
+      throw caught;
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (!token) {
     return (
       <main id="main-content" className="loading-stage">
@@ -140,6 +155,7 @@ export function GlobalCalendarRoute() {
           isAdmin={isAdmin}
           onToggleLocale={toggleLocale}
           onLogout={logout}
+          onDeleteWorkspace={deleteWorkspace}
         />
       </div>
       <GlobalCalendar

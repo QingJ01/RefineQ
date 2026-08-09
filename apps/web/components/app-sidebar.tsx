@@ -5,43 +5,55 @@ import {
   House,
   Languages,
   Layers3,
+  LibraryBig,
   LogOut,
+  MoreHorizontal,
   Settings2,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
-import type { MouseEvent, ReactNode } from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 
 import { BrandMark, BrandName } from "@/components/brand";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { workspaceColorIndex } from "@/lib/global-calendar";
 import { learningPath } from "@/lib/learning-routes";
 import type { LearningWorkspace, Locale } from "@/lib/types";
 
 
-export type AppSidebarDestination = "home" | "calendar" | "workspace" | "account" | "admin";
+export type AppSidebarDestination = "home" | "library" | "calendar" | "workspace" | "account" | "admin";
 
 const copy = {
   zh: {
     global: "全局导航",
     home: "学习首页",
-    calendar: "跨空间日程",
+    library: "总资料库",
+    calendar: "全部日程",
     spaces: "最近使用",
     otherSpaces: "切换到其他空间",
     account: "账户设置",
     admin: "系统管理",
     language: "EN",
     logout: "退出登录",
+    delete: "删除学习空间",
+    deleteConfirm: "删除后，该空间的学习进度、计划和记录将无法恢复。是否确定删除？",
+    cancel: "取消",
   },
   en: {
     global: "Global navigation",
     home: "Learning home",
-    calendar: "Cross-space schedule",
+    library: "Material library",
+    calendar: "All schedules",
     spaces: "Recent spaces",
     otherSpaces: "Switch to another space",
     account: "Account settings",
     admin: "System admin",
     language: "中文",
     logout: "Sign out",
+    delete: "Delete learning space",
+    deleteConfirm: "This permanently removes the space, its progress, plan, and records. Delete it?",
+    cancel: "Cancel",
   },
 } as const;
 
@@ -58,6 +70,7 @@ export function AppSidebar({
   onLogout,
   onNavigate,
   onHomeNavigate,
+  onDeleteWorkspace,
 }: {
   locale: Locale;
   active: AppSidebarDestination;
@@ -73,8 +86,12 @@ export function AppSidebar({
   onLogout: () => void;
   onNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
   onHomeNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onDeleteWorkspace?: (workspace: LearningWorkspace) => void | Promise<void>;
 }) {
   const text = copy[locale];
+  const [menuWorkspaceId, setMenuWorkspaceId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<LearningWorkspace | null>(null);
+  const [deleting, setDeleting] = useState(false);
   // Settings areas own the context slot; stacking the learner space list there
   // would show two unrelated navigations at once.
   const showSpaces = active === "home" || active === "calendar" || active === "workspace";
@@ -95,6 +112,16 @@ export function AppSidebar({
       </Link>
 
       <nav className="app-sidebar-global" aria-label={text.global}>
+        <Link
+          data-testid="app-nav-library"
+          className={active === "library" ? "app-nav-item active" : "app-nav-item"}
+          href="/library"
+          onClick={onNavigate}
+          aria-current={active === "library" ? "page" : undefined}
+        >
+          <LibraryBig size={19} />
+          <span>{text.library}</span>
+        </Link>
         <Link
           data-testid="app-nav-home"
           className={active === "home" ? "app-nav-item active" : "app-nav-item"}
@@ -128,16 +155,41 @@ export function AppSidebar({
           </span>
           <div className="app-recent-spaces">
             {recent.map((workspace) => (
-              <Link
-                key={workspace.id}
-                className="app-space-link"
-                href={learningPath(workspace.id, "today")}
-                onClick={onNavigate}
-              >
-                <i data-color={workspaceColorIndex(workspace.id)} />
-                <BookOpen size={16} />
-                <span>{workspace.title}</span>
-              </Link>
+              <div className="app-space-row" key={workspace.id}>
+                <Link
+                  className="app-space-link"
+                  href={learningPath(workspace.id, "today")}
+                  onClick={onNavigate}
+                >
+                  <i data-color={workspaceColorIndex(workspace.id)} />
+                  <BookOpen size={16} />
+                  <span>{workspace.title}</span>
+                </Link>
+                {onDeleteWorkspace && (
+                  <div className="app-space-menu">
+                    <button
+                      type="button"
+                      className="app-space-menu-trigger"
+                      data-testid={`workspace-menu-${workspace.id}`}
+                      aria-label={`${workspace.title} ${locale === "zh" ? "更多操作" : "More actions"}`}
+                      aria-expanded={menuWorkspaceId === workspace.id}
+                      onClick={() => setMenuWorkspaceId((current) => current === workspace.id ? null : workspace.id)}
+                    ><MoreHorizontal size={17} /></button>
+                    {menuWorkspaceId === workspace.id && (
+                      <div className="app-space-menu-popover">
+                        <button
+                          type="button"
+                          data-testid={`workspace-menu-delete-${workspace.id}`}
+                          onClick={() => {
+                            setMenuWorkspaceId(null);
+                            setDeleteTarget(workspace);
+                          }}
+                        ><Trash2 size={15} />{text.delete}</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </section>
@@ -179,8 +231,28 @@ export function AppSidebar({
         <button data-testid="app-logout" type="button" onClick={onLogout}>
           <LogOut size={18} /> <span>{text.logout}</span>
         </button>
-        <p>Personal learning, remembered.</p>
+        <p>{locale === "zh" ? "记住进度，继续学习。" : "Your progress, remembered."}</p>
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={deleteTarget ? `${text.delete} · ${deleteTarget.title}` : text.delete}
+        description={text.deleteConfirm}
+        confirmLabel={text.delete}
+        cancelLabel={text.cancel}
+        tone="danger"
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (!deleteTarget || !onDeleteWorkspace) return;
+          setDeleting(true);
+          try {
+            await onDeleteWorkspace(deleteTarget);
+            setDeleteTarget(null);
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
     </aside>
   );
 }

@@ -22,6 +22,7 @@ def test_initialize_creates_the_complete_application_schema() -> None:
         "integration_settings",
         "audit_logs",
         "materials",
+        "workspace_materials",
         "material_chunks",
     } <= tables
     with database.session() as session:
@@ -71,11 +72,22 @@ def test_initialize_migrates_v1_material_metadata_without_losing_rows(tmp_path) 
     assert {"title", "tags"} <= columns
     with database.engine.connect() as connection:
         row = connection.execute(
-            text("SELECT filename, title, tags FROM materials WHERE material_id = 'material-1'")
+            text(
+                "SELECT filename, title, tags, project_id FROM materials "
+                "WHERE material_id = 'material-1'"
+            )
         ).one()
         assert row.filename == "limits.txt"
         assert row.title == "limits.txt"
         assert row.tags == "[]"
+        assert row.project_id == "library"
+        assert connection.scalar(
+            text(
+                "SELECT COUNT(*) FROM workspace_materials "
+                "WHERE owner_id = 'owner' AND workspace_id = 'workspace' "
+                "AND material_id = 'material-1'"
+            )
+        ) == 1
         assert connection.scalar(text("SELECT version FROM schema_versions")) == SCHEMA_VERSION
 
 

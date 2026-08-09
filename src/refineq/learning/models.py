@@ -41,7 +41,7 @@ class Grounding(StrEnum):
 class BKTState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    p_mastery: float = Field(default=0.2, ge=0.0, le=1.0)
+    p_mastery: float = Field(default=0.0, ge=0.0, le=1.0)
     p_learn: float = Field(default=0.15, ge=0.0, le=1.0)
     p_guess: float = Field(default=0.2, ge=0.0, le=1.0)
     p_slip: float = Field(default=0.1, ge=0.0, le=1.0)

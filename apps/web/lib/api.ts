@@ -336,7 +336,14 @@ export class ApiClient {
   resolveWorkspace(token: string, intent: string, signal?: AbortSignal): Promise<WorkspaceRoute> {
     return this.request<WorkspaceRoute>(
       "/workspaces/resolve",
-      { method: "POST", body: JSON.stringify({ intent }), signal },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          intent,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+        signal,
+      },
       token,
       this.longRequestTimeouts.model,
     ).then((route) => {
@@ -586,6 +593,35 @@ export class ApiClient {
     return this.request(
       `/workspaces/${workspaceId}/materials`,
       { method: "POST", body, signal },
+      token,
+      this.longRequestTimeouts.upload,
+    );
+  }
+
+  uploadLibraryMaterials(token: string, files: File[], signal?: AbortSignal): Promise<MaterialRecord[]> {
+    const body = new FormData();
+    files.forEach((file) => body.append("files", file));
+    return this.request(
+      "/materials/library",
+      { method: "POST", body, signal },
+      token,
+      this.longRequestTimeouts.upload,
+    );
+  }
+
+  listLibraryMaterials(token: string): Promise<MaterialRecord[]> {
+    return this.request("/materials/library", {}, token);
+  }
+
+  attachLibraryMaterial(
+    token: string,
+    sourceScope: string,
+    materialId: string,
+    workspaceId: string,
+  ): Promise<MaterialRecord> {
+    return this.request(
+      `/materials/library/${encodeURIComponent(sourceScope)}/${encodeURIComponent(materialId)}/attach/${encodeURIComponent(workspaceId)}`,
+      { method: "POST" },
       token,
       this.longRequestTimeouts.upload,
     );

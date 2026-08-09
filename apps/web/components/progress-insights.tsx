@@ -51,8 +51,8 @@ export function ProgressInsights({
     <section className="content-card progress-insights" aria-labelledby="progress-heading">
       <div className="section-heading">
         <div>
-          <span className="kicker">MASTERY / INSIGHTS</span>
-          <h2 id="progress-heading">{t("progressInsights")}</h2>
+          <span className="kicker">{locale === "zh" ? "知识点" : "TOPICS"}</span>
+          <h2 id="progress-heading">{locale === "zh" ? "掌握情况" : t("progressInsights")}</h2>
         </div>
         <Target size={22} strokeWidth={1.5} />
       </div>
@@ -87,12 +87,12 @@ export function ProgressInsights({
         <div className="progress-recommendation" data-testid="progress-recommendation">
           <ArrowUpRight size={17} />
           <span>{t("recommendedNext")} <strong>{topicLabel(recommended[0])}</strong></span>
-          <button
-            type="button"
-            data-testid="practice-recommended-topic"
-            disabled={busy}
-            onClick={() => void onPracticeTopic?.(recommended[0])}
-          >{t("practiceRecommended")}</button>
+          {onPracticeTopic && <button
+              type="button"
+              data-testid="practice-recommended-topic"
+              disabled={busy}
+              onClick={() => void onPracticeTopic(recommended[0])}
+            >{t("practiceRecommended")}</button>}
         </div>
       )}
     </section>

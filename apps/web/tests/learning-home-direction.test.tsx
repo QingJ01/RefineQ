@@ -45,7 +45,7 @@ describe("dialog-first learning home", () => {
 
     expect(html).toContain("10 月 25 日考计算机组成原理期中");
     expect(html).toContain("每天能学 90 分钟");
-    expect(html).toContain("计划、练习和掌握证据");
+    expect(html).toContain("安排计划和练习");
     expect(html).not.toContain("访谈分析");
   });
 

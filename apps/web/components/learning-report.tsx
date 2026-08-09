@@ -56,14 +56,14 @@ export function LearningReport({
     <section className="content-card learning-report" data-testid="learning-report" aria-labelledby="learning-report-heading">
       <div className="section-heading">
         <div>
-          <span className="kicker">REPORT / LAST 7 DAYS</span>
-          <h2 id="learning-report-heading">{zh ? "近 7 天学习报告" : "Last 7 days"}</h2>
+          <span className="kicker">{zh ? "最近 7 天" : "LAST 7 DAYS"}</span>
+          <h2 id="learning-report-heading">{zh ? "学习概览" : "Learning overview"}</h2>
         </div>
         <Activity size={22} strokeWidth={1.5} />
       </div>
       <div className="learning-report-grid">
         <div><CalendarCheck2 size={18} /><strong>{summary.activeDays}</strong><span>{zh ? "活跃天数" : "active days"}</span></div>
-        <div><Activity size={18} /><strong>{attemptLabel}</strong><span>{zh ? "窗口内练习" : "in this window"}</span></div>
+        <div><Activity size={18} /><strong>{attemptLabel}</strong><span>{zh ? "完成练习" : "completed"}</span></div>
         <div><TrendingUp size={18} /><strong>{masteryLabel}</strong><span>{zh ? "平均掌握度变化" : "average mastery change"}</span></div>
         <div><strong>{summary.averageScore ?? "—"}</strong><span>{zh ? "平均得分" : "average score"}</span></div>
       </div>

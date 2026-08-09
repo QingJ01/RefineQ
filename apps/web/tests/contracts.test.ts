@@ -414,19 +414,19 @@ describe("durable learner routing", () => {
     expect(workspaceSource).toContain('data-testid="workspace-routing-summary"');
     expect(workspaceSource).toContain("workspace.routing_summary");
     expect(workspaceSource).not.toContain("}, 7000);");
-    expect(workspaceSource).toContain("route.confidence");
+    expect(workspaceSource).not.toContain("route.confidence");
     expect(workspaceSource).toContain("route.reason");
     expect(workspaceSource).toContain("undoWorkspaceRoute");
   });
 
-  it("keeps reviews on Today and gives learning records their own anchor", () => {
+  it("keeps one next action on Today and gives learning records their own anchor", () => {
     const workspaceSource = readFileSync(
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
 
-    expect(workspaceSource.match(/<ReviewQueue/g)).toHaveLength(1);
-    expect(workspaceSource).toContain('{section === "today" && (');
+    expect(workspaceSource).not.toContain("<ReviewQueue");
+    expect(workspaceSource).toContain("<NextActionCard");
     expect(workspaceSource).toContain('id="learning-record"');
     expect(workspaceSource).toContain('href="#learning-record"');
     expect(workspaceSource).toContain("onStartPlanSession={startPlanSession}");
@@ -449,15 +449,16 @@ describe("responsive learning workspace layout", () => {
     );
   });
 
-  it("places capability progress and the evidence ledger side by side on wide screens", () => {
+  it("keeps the progress overview balanced and the learning record full width", () => {
     const styles = readFileSync(
       fileURLToPath(new URL("../app/styles.css", import.meta.url)),
       "utf8",
     );
 
     expect(styles).toMatch(
-      /\.learning-progress-view\s*\{[^}]*grid-template-columns: minmax\(0, 1\.35fr\) minmax\(320px, 0\.65fr\)/s,
+      /\.progress-overview-grid\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/s,
     );
+    expect(styles).toMatch(/\.learning-progress-view \.learning-record\s*\{[^}]*grid-column: 1 \/ -1/s);
   });
 
   it("keeps mobile section context, shortcuts, focus, and task actions explicit", () => {

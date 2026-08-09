@@ -45,11 +45,18 @@ class MaterialAnalysisRepository:
         return analysis
 
     def get(self, owner_id: str, workspace_id: str, material_id: str) -> MaterialAnalysis:
-        record = self._store.read(
-            owner_id,
-            "material-analyses",
-            self._record_id(workspace_id, material_id),
-        )
+        try:
+            record = self._store.read(
+                owner_id,
+                "material-analyses",
+                self._record_id(workspace_id, material_id),
+            )
+        except RecordNotFoundError:
+            record = self._store.read(
+                owner_id,
+                "material-analyses",
+                self._record_id("library", material_id),
+            )
         return MaterialAnalysis.model_validate(record.data)
 
     def delete(self, owner_id: str, workspace_id: str, material_id: str) -> None:

@@ -18,6 +18,7 @@ import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "reac
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
+import { ApiError } from "@/lib/api";
 import { consumeHistoryUploadContinuation } from "@/lib/history-navigation-guard";
 import type { Translator } from "@/lib/i18n";
 import type {
@@ -26,8 +27,6 @@ import type {
   MaterialRecord,
   MaterialUpdateInput,
   SearchSource,
-  StudyPlan,
-  TargetedPlanInput,
   TopicSuggestion,
 } from "@/lib/types";
 import {
@@ -44,7 +43,7 @@ interface UploadItem {
   id: string;
   file: File;
   status: UploadState;
-  error?: UploadValidationError | "upload_failed";
+  error?: UploadValidationError | "material_filename_exists" | "upload_failed";
   controller?: AbortController;
 }
 
@@ -114,14 +113,15 @@ export function MaterialDropzone({
   onDownload,
   onDelete,
   onAnalyze,
-  onGeneratePlan,
-  onOpenCalendar,
   onUpdate,
   onBulkDelete,
   topicSuggestions = [],
   acceptingTopicSuggestionId = null,
   onAcceptTopicSuggestion,
   onUploadActivityChange,
+  libraryMaterials = [],
+  linkingLibraryMaterialId = null,
+  onLinkLibraryMaterial,
   materials,
 }: {
   t: Translator;
@@ -131,14 +131,15 @@ export function MaterialDropzone({
   onDownload?: (material: MaterialRecord) => void | Promise<void>;
   onDelete?: (material: MaterialRecord) => void | Promise<void>;
   onAnalyze?: (material: MaterialRecord) => Promise<MaterialAnalysis>;
-  onGeneratePlan?: (input: TargetedPlanInput) => Promise<StudyPlan>;
-  onOpenCalendar?: () => void;
   onUpdate?: (material: MaterialRecord, input: MaterialUpdateInput) => void | Promise<void>;
   onBulkDelete?: (materials: MaterialRecord[]) => void | Promise<void>;
   topicSuggestions?: TopicSuggestion[];
   acceptingTopicSuggestionId?: string | null;
   onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
   onUploadActivityChange?: (active: boolean) => void;
+  libraryMaterials?: MaterialRecord[];
+  linkingLibraryMaterialId?: string | null;
+  onLinkLibraryMaterial?: (material: MaterialRecord) => void | Promise<void>;
   materials: MaterialRecord[];
 }) {
   const copy = organizationCopy[locale];
@@ -153,20 +154,11 @@ export function MaterialDropzone({
   const [searchedQuery, setSearchedQuery] = useState("");
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<MaterialRecord | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [analyses, setAnalyses] = useState<Record<string, MaterialAnalysis>>({});
   const [analyzingIds, setAnalyzingIds] = useState<string[]>([]);
   const [analysisErrors, setAnalysisErrors] = useState<string[]>([]);
-  const [planningId, setPlanningId] = useState<string | null>(null);
-  const [focusText, setFocusText] = useState("");
-  const [examDate, setExamDate] = useState("");
-  const [dailyMinutes, setDailyMinutes] = useState(45);
-  const [preferredTime, setPreferredTime] = useState("19:00");
-  const [studyWeekdays, setStudyWeekdays] = useState([0, 1, 2, 3, 4, 5, 6]);
-  const [routineNotes, setRoutineNotes] = useState("");
-  const [generatingPlan, setGeneratingPlan] = useState(false);
-  const [planStatus, setPlanStatus] = useState<"idle" | "success" | "error">("idle");
-  const [planError, setPlanError] = useState("");
 
   const analysisCopy = locale === "zh" ? {
     analyze: "分析资料",
@@ -177,7 +169,7 @@ export function MaterialDropzone({
     confidence: "置信度",
     topics: "知识点",
     sections: "章节",
-    citations: "资料片段",
+    citations: "引用内容",
     types: {
       textbook: "教材",
       lecture_notes: "讲义",
@@ -240,6 +232,9 @@ export function MaterialDropzone({
     });
   }, [materials, sortOrder, statusFilter, tagFilter]);
   const selectedMaterials = materials.filter((material) => selectedIds.has(material.id));
+  const availableLibraryMaterials = libraryMaterials.filter(
+    (material) => !materials.some((linked) => linked.id === material.id),
+  );
   const allVisibleSelected = visibleMaterials.length > 0
     && visibleMaterials.every((material) => selectedIds.has(material.id));
   const uploadActive = queue.some((item) => (
@@ -277,6 +272,7 @@ export function MaterialDropzone({
   function queueLabel(item: UploadItem): string {
     if (item.error === "unsupported_type") return t("uploadUnsupported");
     if (item.error === "file_too_large") return t("uploadTooLarge");
+    if (item.error === "material_filename_exists") return t("uploadDuplicate");
     if (item.status === "queued") return t("uploadQueued");
     if (item.status === "uploading") return t("uploading");
     if (item.status === "uploaded") return t("uploaded");
@@ -297,9 +293,15 @@ export function MaterialDropzone({
           controller: undefined,
         });
       }
-    } catch {
+    } catch (error) {
       if (!controller.signal.aborted) {
-        patchQueue(item.id, { status: "failed", error: "upload_failed", controller: undefined });
+        patchQueue(item.id, {
+          status: "failed",
+          error: error instanceof ApiError && error.code === "material_filename_exists"
+            ? "material_filename_exists"
+            : "upload_failed",
+          controller: undefined,
+        });
       }
     } finally {
       activeControllersRef.current.delete(controller);
@@ -399,42 +401,6 @@ export function MaterialDropzone({
     }
   }
 
-  function beginPlanning(analysis: MaterialAnalysis) {
-    setPlanningId(analysis.material_id);
-    setFocusText(analysis.topics.slice(0, 8).join("、"));
-    setPlanStatus("idle");
-    setPlanError("");
-  }
-
-  async function generatePlan(analysis: MaterialAnalysis) {
-    if (!onGeneratePlan || !examDate) return;
-    const topics = focusText.split(/[、,，\n]/).map((item) => item.trim()).filter(Boolean);
-    if (topics.length === 0) return;
-    setGeneratingPlan(true);
-    setPlanStatus("idle");
-    setPlanError("");
-    try {
-      await onGeneratePlan({
-        material_id: analysis.material_id,
-        focus_topics: topics,
-        exam_at: new Date(`${examDate}T23:59:00`).toISOString(),
-        daily_minutes: dailyMinutes,
-        study_weekdays: studyWeekdays,
-        preferred_hour: Number(preferredTime.split(":")[0]),
-        timezone_offset_minutes: -new Date().getTimezoneOffset(),
-        routine_notes: routineNotes,
-      });
-      setPlanStatus("success");
-      await new Promise((resolve) => window.setTimeout(resolve, 900));
-      onOpenCalendar?.();
-    } catch (error) {
-      setPlanStatus("error");
-      setPlanError(error instanceof Error ? error.message : (locale === "zh" ? "计划生成失败，请重试。" : "Plan generation failed. Please retry."));
-    } finally {
-      setGeneratingPlan(false);
-    }
-  }
-
   function toggleSelection(materialId: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -488,7 +454,13 @@ export function MaterialDropzone({
 
   return (
     <section className="content-card materials-card">
-      <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><FileStack size={24} strokeWidth={1.4} /></div>
+      <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><button type="button" className="secondary-action" onClick={() => setLibraryOpen((open) => !open)}><FileStack size={17} />{locale === "zh" ? "从总资料库选择" : "Choose from library"}</button></div>
+      {libraryOpen && (
+        <aside className="space-library-picker" data-testid="space-library-picker">
+          <div><strong>{locale === "zh" ? "选择已有资料" : "Choose existing materials"}</strong><span>{locale === "zh" ? "加入后不会重复上传或解析。" : "Adding a material does not upload or process it again."}</span></div>
+          {availableLibraryMaterials.length === 0 ? <p>{locale === "zh" ? "总资料库里没有可加入的新资料。" : "There are no additional materials to add."}</p> : <ul>{availableLibraryMaterials.map((material) => <li key={material.id}><span>{material.title ?? material.filename}</span><button type="button" disabled={linkingLibraryMaterialId !== null} onClick={() => void onLinkLibraryMaterial?.(material)}>{linkingLibraryMaterialId === material.id ? (locale === "zh" ? "正在加入…" : "Adding…") : (locale === "zh" ? "加入" : "Add")}</button></li>)}</ul>}
+        </aside>
+      )}
       <button
         type="button"
         className={dragging ? "upload-surface dragging" : "upload-surface"}
@@ -528,10 +500,10 @@ export function MaterialDropzone({
           <div>
             <span><ListPlus size={17} /></span>
             <div>
-              <strong>{locale === "zh" ? "从资料信息发现的主题" : "Topics found in material details"}</strong>
+              <strong>{locale === "zh" ? "资料重点" : "Material priorities"}</strong>
               <p>{locale === "zh"
-                ? "这些候选只来自标题和标签。确认后才会加入学习路径。"
-                : "These candidates use titles and tags only. Nothing changes until you confirm."}</p>
+                ? "先根据文件名和标签给出建议；点击下方“分析资料”后，会补充正文中的知识点。"
+                : "Initial suggestions come from names and tags. Analyze a file to add topics from its contents."}</p>
             </div>
           </div>
           <ul>
@@ -691,9 +663,6 @@ export function MaterialDropzone({
                     <div><dt>{t("indexedAt")}</dt><dd>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(material.indexed_at))}</dd></div>
                   </dl>
                 </details>
-                {analyzingIds.includes(material.id) && (
-                  <span className="material-analysis-status">{analysisCopy.analyzing}</span>
-                )}
                 {analysisErrors.includes(material.id) && (
                   <span className="material-analysis-error">{analysisCopy.failed}</span>
                 )}
@@ -724,27 +693,6 @@ export function MaterialDropzone({
                           ))}
                         </ol>
                       </details>
-                    )}
-                    {planningId !== material.id ? (
-                      <button type="button" className="targeted-plan-button" onClick={() => beginPlanning(analyses[material.id])}>
-                        {locale === "zh" ? "生成针对性学习计划" : "Create targeted study plan"}
-                      </button>
-                    ) : (
-                      <div className="targeted-plan-form">
-                        <label>{locale === "zh" ? "学习重点" : "Priority topics"}<textarea value={focusText} onChange={(event) => setFocusText(event.target.value)} /></label>
-                        <label>{locale === "zh" ? "考试日期" : "Exam date"}<input type="date" value={examDate} onChange={(event) => setExamDate(event.target.value)} /></label>
-                        <label>{locale === "zh" ? "每日分钟" : "Daily minutes"}<input type="number" min={10} max={480} value={dailyMinutes} onChange={(event) => setDailyMinutes(Number(event.target.value))} /></label>
-                        <label>{locale === "zh" ? "习惯学习时间" : "Preferred study time"}<input type="time" step={3600} value={preferredTime} onChange={(event) => setPreferredTime(event.target.value)} /></label>
-                        <fieldset className="targeted-plan-weekdays">
-                          <legend>{locale === "zh" ? "可学习日期" : "Available weekdays"}</legend>
-                          {(locale === "zh" ? ["一", "二", "三", "四", "五", "六", "日"] : ["M", "T", "W", "T", "F", "S", "S"]).map((label, day) => (
-                            <label key={day}><input type="checkbox" checked={studyWeekdays.includes(day)} onChange={() => setStudyWeekdays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day].sort())} />{label}</label>
-                          ))}
-                        </fieldset>
-                        <label className="wide">{locale === "zh" ? "作息与不可用时间" : "Routine and unavailable time"}<textarea value={routineNotes} onChange={(event) => setRoutineNotes(event.target.value)} placeholder={locale === "zh" ? "例如：工作日晚上学习，周三不可安排" : "e.g. evenings; unavailable Wednesday"} /></label>
-                        {planStatus === "error" && <p className="targeted-plan-error" role="alert">{locale === "zh" ? `生成失败：${planError}` : `Generation failed: ${planError}`}</p>}
-                        <button type="button" className={planStatus === "success" ? "is-success" : undefined} disabled={generatingPlan || !examDate || !focusText.trim() || studyWeekdays.length === 0} onClick={() => void generatePlan(analyses[material.id])}>{generatingPlan ? (locale === "zh" ? "正在生成…" : "Generating…") : planStatus === "success" ? (locale === "zh" ? "✓ 生成成功，正在打开日历" : "✓ Generated — opening calendar") : (locale === "zh" ? "确认并打开日历" : "Confirm and open calendar")}</button>
-                      </div>
                     )}
                   </div>
                 )}

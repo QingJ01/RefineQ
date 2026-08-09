@@ -28,7 +28,6 @@ import { PlanTimeline } from "@/components/plan-timeline";
 import { ScheduleCalendar } from "@/components/schedule-calendar";
 import { ProgressInsights } from "@/components/progress-insights";
 import { ProgressTopicDetail } from "@/components/progress-topic-detail";
-import { ReviewQueue } from "@/components/review-queue";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { useAgentState } from "@/hooks/use-agent-state";
 import { useLearningAuth } from "@/hooks/use-learning-auth";
@@ -75,7 +74,6 @@ import type {
   AttemptInsight,
   ExecutableActionProposal,
   AuthResponse,
-  DueReviewInsight,
   DiagnosticResultInput,
   LearningMode,
   LearningWorkspace,
@@ -85,8 +83,6 @@ import type {
   PlanUpdateInput,
   PracticeQuestion,
   PracticeRequest,
-  StudyPlan,
-  TargetedPlanInput,
   SearchSource,
   StudySession,
   TopicSuggestion,
@@ -197,6 +193,8 @@ export function StudyWorkspace({
   const [draftConfirmOpen, setDraftConfirmOpen] = useState(false);
   const [navigationConfirmReason, setNavigationConfirmReason] = useState<NavigationBlockReason | null>(null);
   const [uploadInProgress, setUploadInProgress] = useState(false);
+  const [libraryMaterials, setLibraryMaterials] = useState<MaterialRecord[]>([]);
+  const [linkingLibraryMaterialId, setLinkingLibraryMaterialId] = useState<string | null>(null);
   const pendingRouteActionRef = useRef<PracticeNavigationAction | null>(null);
   const persistWorkspaceHandoffRef = useRef<() => void>(() => undefined);
   const navigationBlockRef = useRef<() => NavigationBlockReason | null>(() => null);
@@ -364,6 +362,15 @@ export function StudyWorkspace({
       });
     return () => { active = false; };
   }, [auth?.access_token, section, setError, setInsights, workspace?.id]);
+
+  useEffect(() => {
+    if (!auth || !workspace || section !== "materials") return;
+    let active = true;
+    api.listLibraryMaterials(auth.access_token)
+      .then((records) => { if (active) setLibraryMaterials(records); })
+      .catch((caught) => { if (active) reportError(caught); });
+    return () => { active = false; };
+  }, [auth, reportError, section, workspace]);
 
   useEffect(() => {
     if (window.sessionStorage.getItem(SECTION_FOCUS_KEY) !== "1") return;
@@ -837,10 +844,6 @@ export function StudyWorkspace({
     });
   }
 
-  function startReview(review: DueReviewInsight) {
-    startReviewSession(review.topic_id, review.session_id);
-  }
-
   function retryAttempt(attempt: AttemptInsight) {
     runGuardedPracticeAction(async () => {
       if (!auth || !workspace) return;
@@ -946,7 +949,29 @@ export function StudyWorkspace({
     } catch (caught) {
       if (isAbortError(caught)) return [];
       if (workspaceRef.current?.id === targetWorkspaceId) reportError(caught);
-      return [];
+      throw caught;
+    }
+  }
+
+  async function linkLibraryMaterial(material: MaterialRecord): Promise<void> {
+    if (!auth || !workspace || !material.project_id) return;
+    setLinkingLibraryMaterialId(material.id);
+    setError("");
+    try {
+      const linked = await api.attachLibraryMaterial(
+        auth.access_token,
+        material.project_id,
+        material.id,
+        workspace.id,
+      );
+      setMaterials((current) => current.some((item) => item.id === linked.id)
+        ? current
+        : [linked, ...current]);
+    } catch (caught) {
+      reportError(caught);
+      throw caught;
+    } finally {
+      setLinkingLibraryMaterialId(null);
     }
   }
 
@@ -1000,52 +1025,6 @@ export function StudyWorkspace({
         throw analysisError;
       }
     }
-  }
-
-  async function createTargetedPlan(input: TargetedPlanInput): Promise<StudyPlan> {
-    if (!auth || !workspace) throw new Error(t("error"));
-    const previousSessionIds = new Set(plan?.sessions.map((session) => session.id) ?? []);
-    const previousTopics = new Set(Object.values(progress?.topics ?? {}));
-    let generated: StudyPlan;
-    try {
-      generated = await api.createTargetedPlan(auth.access_token, workspace.id, input);
-    } catch (requestError) {
-      // A reverse proxy can time out after the backend has already persisted the plan.
-      // Recover from the workspace snapshot before reporting a false failure.
-      let recovered: StudyPlan | null = null;
-      for (let attempt = 0; attempt < 30 && !recovered; attempt += 1) {
-        if (attempt > 0) await new Promise((resolve) => window.setTimeout(resolve, 1_500));
-        try {
-          const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
-          const candidate = snapshot.plan;
-          const hasNewSession = candidate?.sessions.some(
-            (session) => !previousSessionIds.has(session.id),
-          );
-          const hasNewFocus = input.focus_topics.some(
-            (topic) => Object.values(snapshot.progress.topics).includes(topic)
-              && !previousTopics.has(topic),
-          );
-          const alreadyGenerated = candidate
-            && input.focus_topics.some((topic) => candidate.goal.includes(topic));
-          if (candidate && (hasNewSession || hasNewFocus || alreadyGenerated)) {
-            applySnapshot(snapshot);
-            recovered = candidate;
-          }
-        } catch {
-          // Keep polling briefly; surface the original request error if recovery fails.
-        }
-      }
-      if (!recovered) throw requestError;
-      generated = recovered;
-    }
-    setPlan(generated);
-    try {
-      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
-      applySnapshot(snapshot);
-    } catch {
-      // The generated response is sufficient to open the calendar; refresh can retry later.
-    }
-    return generated;
   }
 
   async function addCalendarSession(input: { topic_name: string; planned_at: string; minutes: number; activity: string }) {
@@ -1331,6 +1310,7 @@ export function StudyWorkspace({
         plan_id: updated.id,
         topic_order: [...input.topic_order],
       } : current);
+      if (input.regenerate) setPlanView("calendar");
       await refreshNextAction(auth.access_token, workspace.id);
     } catch (caught) {
       reportError(caught);
@@ -1593,6 +1573,7 @@ export function StudyWorkspace({
           )}
           onToggleLocale={toggleLocale}
           onLogout={logout}
+          onDeleteWorkspace={deleteLearningWorkspace}
           onNavigate={prepareRouteNavigation}
           onHomeNavigate={prepareHomeNavigation}
         />
@@ -1636,23 +1617,27 @@ export function StudyWorkspace({
           </header>
         )}
         <section className={`workspace-content workspace-content-${section}`}>
-          <div className="workspace-routing-summary" data-testid="workspace-routing-summary">
-            <Sparkles size={16} />
-            <span>{workspace.routing_summary}</span>
-          </div>
+          {!route && (
+            <div className="workspace-routing-summary" data-testid="workspace-routing-summary">
+              <Sparkles size={16} />
+              <span>{workspace.routing_summary}</span>
+            </div>
+          )}
           {route && (
             <div className="workspace-route-notice" data-testid="workspace-route-notice" role="status">
               <Sparkles size={18} />
               <div>
                 <strong>{t(route.action === "created" ? "routingCreated" : route.action === "switched" ? "routingSwitched" : "routingReused")}</strong>
-                <span>{route.reason} · {t("confidence")} {Math.round(route.confidence * 100)}%</span>
+                <span>{route.reason}</span>
               </div>
               <button type="button" onClick={undoWorkspaceRoute}>{t("routingUndo")}</button>
               <button type="button" aria-label={t("routingDismiss")} onClick={dismissWorkspaceRoute}>×</button>
             </div>
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
-          {section === "today" && !question && !result && nextAction && (
+          {section === "today" && !question && !result && nextAction
+            && progress
+            && (progress.diagnostic_count !== 0 || progress.attempt_count !== 0) && (
             <NextActionCard
               locale={locale}
               action={nextAction}
@@ -1729,27 +1714,18 @@ export function StudyWorkspace({
               onCoachTurnHandled={() => { pendingTurnIdRef.current = null; }}
             />
           )}
-          {section === "today" && (
-            <ReviewQueue
-              locale={locale}
-              reviews={insights?.due_reviews ?? []}
-              busy={practiceBusy}
-              loading={insightsLoading}
-              onStartReview={startReview}
-            />
-          )}
           {section === "plan" && (
             <div className="learning-path-view" data-testid="learning-path-view">
               <div className="page-section-heading">
-                <span className="kicker">PLAN / ADAPTIVE</span>
+                <span className="kicker">学习安排</span>
                 <h2>{t("plan")}</h2>
-                <p>{locale === "zh" ? "列表与日历使用同一份计划；开始、完成、顺延和调整会在两种视图中同步。" : "List and calendar share one plan; start, complete, defer, and edit stay in sync."}</p>
+                <p>{locale === "zh" ? "查看或调整当前学习空间的任务。列表和日历会自动同步。" : "View or adjust tasks in this learning space. List and calendar stay in sync."}</p>
                 <div className="plan-view-toggle" aria-label={locale === "zh" ? "计划视图" : "Plan view"}>
                   <button type="button" data-testid="plan-view-list" aria-pressed={planView === "list"} onClick={() => setPlanView("list")}><List size={16} />{locale === "zh" ? "列表" : "List"}</button>
                   <button type="button" data-testid="plan-view-calendar" aria-pressed={planView === "calendar"} onClick={() => setPlanView("calendar")}><CalendarDays size={16} />{locale === "zh" ? "日历" : "Calendar"}</button>
                 </div>
               </div>
-              {plan && progress && (
+              {progress && (
                 <PlanSettings
                   locale={locale}
                   plan={plan}
@@ -1797,11 +1773,6 @@ export function StudyWorkspace({
               onUpload={uploadMaterials}
               onSearch={searchMaterials}
               onAnalyze={analyzeMaterial}
-              onGeneratePlan={createTargetedPlan}
-              onOpenCalendar={() => {
-                setPlanView("calendar");
-                router.push(learningPath(workspace.id, "plan"));
-              }}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
               onUpdate={updateMaterial}
@@ -1810,30 +1781,33 @@ export function StudyWorkspace({
               acceptingTopicSuggestionId={acceptingTopicSuggestionId}
               onAcceptTopicSuggestion={acceptTopicSuggestion}
               onUploadActivityChange={setUploadInProgress}
-            />
+               libraryMaterials={libraryMaterials}
+               linkingLibraryMaterialId={linkingLibraryMaterialId}
+               onLinkLibraryMaterial={linkLibraryMaterial}
+             />
           )}
           {section === "progress" && (
             <div className="learning-progress-view" data-testid="learning-progress-view">
               <div className="page-section-heading">
-                <span className="kicker">PROGRESS / CAPABILITY</span>
                 <h2>{t("progress")}</h2>
-                <p>{locale === "zh" ? "把能力变化、实践反馈和下一步安排放在一起。" : "Capability change, task feedback, and next actions in one place."}</p>
-                <a href="#learning-record">{locale === "zh" ? "查看错题与学习记录" : "View mistakes and learning record"}</a>
+                <p>{locale === "zh" ? "掌握学习状态，找到下一步重点。" : "See your learning status and what to focus on next."}</p>
+                <a href="#learning-record">{locale === "zh" ? "查看学习记录" : "View learning record"}</a>
               </div>
-              {insights && progress && (
-                <LearningReport locale={locale} progress={progress} insights={insights} />
-              )}
-              <ProgressInsights
-                progress={progress}
-                t={t}
-                locale={locale}
-                onPracticeTopic={practiceTopic}
-                topicLabels={progress?.topics}
-                insights={insights}
-                onSelectTopic={setSelectedTopicId}
-                busy={practiceBusy}
-                loading={insightsLoading}
-              />
+              <div className="progress-overview-grid">
+                {insights && progress && (
+                  <LearningReport locale={locale} progress={progress} insights={insights} />
+                )}
+                <ProgressInsights
+                  progress={progress}
+                  t={t}
+                  locale={locale}
+                  topicLabels={progress?.topics}
+                  insights={insights}
+                  onSelectTopic={setSelectedTopicId}
+                  busy={practiceBusy}
+                  loading={insightsLoading}
+                />
+              </div>
               {selectedTopic && (
                 <ProgressTopicDetail
                   locale={locale}
@@ -1844,7 +1818,7 @@ export function StudyWorkspace({
               )}
               <section id="learning-record" className="learning-record">
                 <div className="page-section-heading compact">
-                  <span className="kicker">RECORD / HISTORY</span>
+                  <span className="kicker">历史记录</span>
                   <h2>{locale === "zh" ? "学习记录" : "Learning record"}</h2>
                 </div>
                 <EvidenceLedger

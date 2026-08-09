@@ -67,6 +67,8 @@ def material_object_key(
     workspace_id = validate_identifier(workspace_id, field="workspace_id")
     material_id = validate_identifier(material_id, field="material_id")
     del filename
+    if workspace_id == "library":
+        return str(PurePosixPath("users", owner_id, "documents", material_id))
     return str(
         PurePosixPath(
             "users",

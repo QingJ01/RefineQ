@@ -4,6 +4,7 @@ import type { Locale } from "./types";
 
 const messages: Record<Locale, Record<string, string>> = {
   zh: {
+    material_filename_exists: "同名文件已存在，请直接从总资料库选择，或修改文件名后再上传。",
     material_bulk_delete_failed: "所选资料未能安全删除，原文件与索引已尽力恢复。",
     material_mutation_busy: "资料正在被整理，请稍后重试上传。",
     unsupported_material: "不支持这种资料格式，请选择 PDF、DOCX、TXT 或 MD 文件。",
@@ -55,6 +56,7 @@ const messages: Record<Locale, Record<string, string>> = {
     invalid_identifier: "请求标识无效。",
   },
   en: {
+    material_filename_exists: "A file with this name already exists. Select it from the material library or rename the file.",
     material_bulk_delete_failed: "The selected materials could not be deleted safely. Files and indexes were restored where possible.",
     material_mutation_busy: "Materials are being organized. Try the upload again shortly.",
     unsupported_material: "This material type is not supported. Choose a PDF, DOCX, TXT, or MD file.",

@@ -15,8 +15,9 @@ from sqlalchemy import func, select
 
 from refineq.api.app import create_app
 from refineq.config import Settings
-from refineq.database.schema import material_chunks, materials
+from refineq.database.schema import material_chunks, materials, workspace_materials
 from refineq.knowledge.extract import MaterialExtractionLimitError
+from refineq.knowledge.index import MaterialNotFoundError
 from refineq.operations.recovery import RecoveryLease
 
 
@@ -127,6 +128,113 @@ def test_upload_status_and_search_are_project_scoped(tmp_path: Path) -> None:
     assert search.json()[0]["citation_id"].startswith(material["id"])
     assert forbidden.status_code == 404
     assert forbidden.json()["error"]["code"] == "project_not_found"
+
+
+def test_global_library_uploads_before_a_workspace_and_attaches_later(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "library@example.com")
+        headers = _headers(token)
+        uploaded = client.post(
+            "/materials/library",
+            headers=headers,
+            files={"files": ("biology.txt", b"Cells contain hereditary DNA.", "text/plain")},
+        )
+        assert uploaded.status_code == 201
+        library_material = uploaded.json()[0]
+        assert library_material["project_id"] == "library"
+
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Prepare for a biology exam"},
+        ).json()["workspace"]["id"]
+        attached = client.post(
+            f"/materials/library/library/{library_material['id']}/attach/{workspace_id}",
+            headers=headers,
+        )
+        assert attached.status_code == 201
+        assert attached.json()["project_id"] == "library"
+
+        collection = client.get("/materials/library", headers=headers)
+        assert collection.status_code == 200
+        assert {item["project_id"] for item in collection.json()} == {"library"}
+        assert len(collection.json()) == 1
+
+        searchable = client.get(
+            f"/workspaces/{workspace_id}/materials/search",
+            headers=headers,
+            params={"q": "hereditary DNA"},
+        )
+        assert searchable.status_code == 200
+        assert searchable.json()[0]["filename"] == "biology.txt"
+
+
+def test_duplicate_filename_upload_is_rejected_and_existing_material_can_be_attached(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "deduplicated-library@example.com")
+        headers = _headers(token)
+        workspace_ids = [
+            client.post(
+                "/workspaces/resolve",
+                headers=headers,
+                json={"intent": intent},
+            ).json()["workspace"]["id"]
+            for intent in ("Study cell biology", "Prepare advanced French grammar")
+        ]
+        first = client.post(
+            f"/workspaces/{workspace_ids[0]}/materials",
+            headers=headers,
+            files={"files": ("biology.txt", b"Cells contain hereditary DNA.", "text/plain")},
+        )
+        assert first.status_code == 201
+        uploaded = first.json()[0]
+        duplicate = client.post(
+            f"/workspaces/{workspace_ids[1]}/materials",
+            headers=headers,
+            files={"files": ("biology.txt", b"Different contents.", "text/plain")},
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["error"]["code"] == "material_filename_exists"
+        attached = client.post(
+            f"/materials/library/library/{uploaded['id']}/attach/{workspace_ids[1]}",
+            headers=headers,
+        )
+        assert attached.status_code == 201
+        owner_id = client.get("/auth/me", headers=headers).json()["id"]
+
+    with app.state.database.session() as session:
+        assert session.scalar(
+            select(func.count()).select_from(materials).where(materials.c.owner_id == owner_id)
+        ) == 1
+        assert session.scalar(
+            select(func.count()).select_from(workspace_materials).where(
+                workspace_materials.c.owner_id == owner_id
+            )
+        ) == 2
+
+
+def test_duplicate_filename_in_one_upload_is_rejected(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token = _register(client, "duplicate-batch@example.com")
+        response = client.post(
+            "/materials/library",
+            headers=_headers(token),
+            files=[
+                ("files", ("Notes.txt", b"First notes", "text/plain")),
+                ("files", ("notes.txt", b"Second notes", "text/plain")),
+            ],
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "material_filename_exists"
 
 
 def test_workspace_materials_can_be_listed_downloaded_and_deleted(tmp_path: Path) -> None:
@@ -256,36 +364,40 @@ def test_workspace_material_metadata_filters_sort_and_bulk_delete_are_owner_scop
     assert forbidden.status_code == 404
     assert forbidden.json()["error"]["code"] == "workspace_not_found"
     assert deleted.status_code == 204
-    with pytest.raises(FileNotFoundError):
-        app.state.object_storage.get(zeta_key)
+    assert app.state.object_storage.get(zeta_key) == b"Limits notes"
+    with pytest.raises(MaterialNotFoundError):
+        app.state.knowledge.get_material(
+            owner_id=client.get("/auth/me", headers=headers).json()["id"],
+            project_id=workspace_id,
+            material_id=zeta["id"],
+        )
     with app.state.database.session() as session:
         assert (
             session.scalar(
                 select(func.count())
                 .select_from(materials)
                 .where(
-                    materials.c.project_id == workspace_id,
+                    materials.c.project_id == "library",
                     materials.c.material_id == zeta["id"],
                 )
             )
-            == 0
+            == 1
         )
         assert (
             session.scalar(
                 select(func.count())
                 .select_from(material_chunks)
                 .where(
-                    material_chunks.c.project_id == workspace_id,
+                    material_chunks.c.project_id == "library",
                     material_chunks.c.material_id == zeta["id"],
                 )
             )
-            == 0
+            > 0
         )
 
 
-def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
+def test_bulk_workspace_remove_does_not_delete_shared_objects(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
@@ -315,11 +427,6 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
             for material in uploaded
         }
 
-        def fail_delete(**kwargs):
-            del kwargs
-            raise RuntimeError("index unavailable")
-
-        monkeypatch.setattr(app.state.knowledge, "delete_materials", fail_delete, raising=False)
         failed = client.request(
             "DELETE",
             f"/workspaces/{workspace_id}/materials",
@@ -327,21 +434,24 @@ def test_bulk_material_delete_restores_objects_when_index_cleanup_fails(
             json={"material_ids": [material["id"] for material in uploaded]},
         )
 
-    assert failed.status_code == 503
+    assert failed.status_code == 204
     for material, expected in zip(
         uploaded,
         (b"Durable notes A", b"Durable notes B"),
         strict=True,
     ):
         assert app.state.object_storage.get(storage_keys[material["id"]]) == expected
-        assert (
+        with pytest.raises(MaterialNotFoundError):
             app.state.knowledge.get_material(
                 owner_id=owner_id,
                 project_id=workspace_id,
                 material_id=material["id"],
-            ).id
-            == material["id"]
-        )
+            )
+        assert app.state.knowledge.get_material(
+            owner_id=owner_id,
+            project_id="library",
+            material_id=material["id"],
+        ).id == material["id"]
 
 
 def test_upload_refuses_to_race_an_active_material_object_deletion(tmp_path: Path) -> None:
@@ -425,17 +535,15 @@ def test_upload_revalidates_workspace_after_parsing_before_writing(
         )
 
 
-def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the_lease(
+def test_workspace_deleted_during_upload_does_not_create_an_orphan_link(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
     upload_writing = Event()
-    delete_waiting = Event()
     continue_upload = Event()
     stored_keys: list[str] = []
     original_put = app.state.object_storage.put
-    original_prepare = app.state.material_deletions.prepare
 
     def delayed_put(*args, **kwargs):
         upload_writing.set()
@@ -444,12 +552,7 @@ def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the
         stored_keys.append(stored.key)
         return stored
 
-    def observed_prepare(*args, **kwargs):
-        delete_waiting.set()
-        return original_prepare(*args, **kwargs)
-
     monkeypatch.setattr(app.state.object_storage, "put", delayed_put)
-    monkeypatch.setattr(app.state.material_deletions, "prepare", observed_prepare)
 
     with TestClient(app) as client:
         token = _register(client, "empty-workspace-upload-race@example.com")
@@ -473,16 +576,15 @@ def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the
                 f"/workspaces/{workspace_id}",
                 headers=headers,
             )
-            assert delete_waiting.wait(timeout=5)
+            deleted = deletion.result(timeout=5)
             continue_upload.set()
             uploaded = upload.result(timeout=5)
-            deleted = deletion.result(timeout=5)
         missing_workspace = client.get(
             f"/workspaces/{workspace_id}/snapshot",
             headers=headers,
         )
 
-    assert uploaded.status_code == 201
+    assert uploaded.status_code == 404
     assert deleted.status_code == 204
     assert missing_workspace.status_code == 404
     with app.state.database.session() as session:
@@ -490,17 +592,16 @@ def test_empty_workspace_delete_serializes_with_an_upload_that_already_holds_the
             session.scalar(
                 select(func.count())
                 .select_from(materials)
-                .where(materials.c.project_id == workspace_id)
+                .where(materials.c.filename == "race.txt")
             )
             == 0
         )
-    assert stored_keys
     for storage_key in stored_keys:
         with pytest.raises(FileNotFoundError):
             app.state.object_storage.get(storage_key)
 
 
-def test_workspace_delete_restores_material_objects_when_index_cleanup_fails(
+def test_workspace_delete_restores_state_when_unlinking_materials_fails(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -524,7 +625,7 @@ def test_workspace_delete_restores_material_objects_when_index_cleanup_fails(
             del kwargs
             raise RuntimeError("index unavailable")
 
-        monkeypatch.setattr(app.state.knowledge, "delete_materials", fail_delete)
+        monkeypatch.setattr(app.state.knowledge, "unlink_materials", fail_delete)
         failed = client.delete(f"/workspaces/{workspace_id}", headers=headers)
         restored = client.get(
             f"/workspaces/{workspace_id}/materials/{material['id']}/download",
@@ -575,14 +676,10 @@ def test_workspace_delete_restores_state_when_learning_cleanup_fails(
     assert restored.content == b"workspace rollback material"
 
 
-def test_workspace_delete_stays_committed_when_recovery_journal_cleanup_fails(
+def test_workspace_delete_keeps_the_document_in_the_library(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
-    deletion_module = import_module("refineq.knowledge.deletion")
-    original_remove_tree = deletion_module.durable_remove_tree
-
     with TestClient(app) as client:
         token = _register(client, "workspace-delete-journal-cleanup@example.com")
         headers = _headers(token)
@@ -597,11 +694,6 @@ def test_workspace_delete_stays_committed_when_recovery_journal_cleanup_fails(
             files={"files": ("notes.txt", b"delete completely", "text/plain")},
         ).json()[0]
 
-        def remove_then_fail(path: Path) -> None:
-            original_remove_tree(path)
-            raise OSError("directory fsync failed after removal")
-
-        monkeypatch.setattr(deletion_module, "durable_remove_tree", remove_then_fail)
         deleted = client.delete(f"/workspaces/{workspace_id}", headers=headers)
         missing_workspace = client.get(
             f"/workspaces/{workspace_id}/snapshot",
@@ -617,9 +709,9 @@ def test_workspace_delete_stays_committed_when_recovery_journal_cleanup_fails(
                 .select_from(materials)
                 .where(materials.c.material_id == material["id"])
             )
-            == 0
+            == 1
         )
-    assert not any(path.name == material["id"] for path in app.state.settings.data_root.rglob("*"))
+    assert any(path.name == material["id"] for path in app.state.settings.data_root.rglob("*"))
 
 
 def test_pending_bulk_material_delete_is_recovered_after_process_interruption(
@@ -699,9 +791,8 @@ def test_workspace_material_delete_is_owner_scoped(tmp_path: Path) -> None:
     assert forbidden.json()["error"]["code"] == "workspace_not_found"
 
 
-def test_failed_material_index_delete_restores_the_original_object(
+def test_legacy_project_remove_unlinks_without_deleting_the_document(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
@@ -714,11 +805,6 @@ def test_failed_material_index_delete_restores_the_original_object(
             files={"files": ("notes.txt", b"Durable notes", "text/plain")},
         ).json()[0]
 
-        def fail_delete(**kwargs):
-            del kwargs
-            raise RuntimeError("index unavailable")
-
-        monkeypatch.setattr(app.state.knowledge, "delete_materials", fail_delete)
         failed = client.delete(
             f"/projects/{project_id}/materials/{uploaded['id']}",
             headers=_headers(token),
@@ -728,12 +814,11 @@ def test_failed_material_index_delete_restores_the_original_object(
             headers=_headers(token),
         )
 
-    assert failed.status_code == 503
-    assert restored.status_code == 200
-    assert restored.content == b"Durable notes"
+    assert failed.status_code == 204
+    assert restored.status_code == 404
 
 
-def test_deleting_workspace_removes_indexed_and_original_materials(tmp_path: Path) -> None:
+def test_deleting_workspace_removes_only_links_and_keeps_original_materials(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
     with TestClient(app) as client:
@@ -771,7 +856,12 @@ def test_deleting_workspace_removes_indexed_and_original_materials(tmp_path: Pat
         )
         == []
     )
-    assert not stored_path.exists()
+    assert stored_path.exists()
+    assert app.state.knowledge.get_material(
+        owner_id=owner.id,
+        project_id="library",
+        material_id=material["id"],
+    ).id == material["id"]
 
 
 def test_mime_mismatch_has_a_stable_error(tmp_path: Path) -> None:

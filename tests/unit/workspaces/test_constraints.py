@@ -26,6 +26,17 @@ def test_extracts_chinese_absolute_exam_and_daily_minutes() -> None:
     assert constraints.daily_minutes == 90
 
 
+def test_extracts_chinese_hours_and_preferred_start_time() -> None:
+    constraints = infer_intent_constraints(
+        "我8月15号考试考计算机，每天晚上六点开始学习两个小时",
+        now=NOW,
+    )
+
+    assert constraints.exam_at == datetime(2026, 8, 15, 23, 59, 59, tzinfo=UTC)
+    assert constraints.daily_minutes == 120
+    assert constraints.preferred_hour == 18
+
+
 def test_extracts_english_absolute_exam_and_daily_minutes() -> None:
     constraints = infer_intent_constraints(
         "Computer Architecture midterm on October 25, 90 minutes a day",
@@ -56,6 +67,15 @@ def test_ambiguous_intent_does_not_invent_constraints() -> None:
 
     assert constraints.exam_at is None
     assert constraints.daily_minutes is None
+    assert constraints.plan_requested is False
+
+
+def test_explicit_plan_request_is_detected_without_time_constraints() -> None:
+    constraints = infer_intent_constraints("帮我制定一个计算机学习计划", now=NOW)
+
+    assert constraints.exam_at is None
+    assert constraints.daily_minutes is None
+    assert constraints.plan_requested is True
 
 
 def test_absolute_exam_date_already_passed_rolls_into_next_year() -> None:

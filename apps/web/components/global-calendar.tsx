@@ -26,9 +26,9 @@ import type { CalendarTask, LearningWorkspace, Locale } from "@/lib/types";
 
 const copy = {
   zh: {
-    eyebrow: "跨空间学习安排",
-    title: "跨空间日程",
-    description: "在一处查看所有学习空间的任务；调整和执行仍回到任务所属空间。",
+    eyebrow: "所有学习空间",
+    title: "全部日程",
+    description: "集中查看所有学习任务。需要调整时，进入任务所属的学习空间。",
     today: "今天",
     previous: "上个月",
     next: "下个月",
@@ -54,9 +54,9 @@ const copy = {
     activities: { learn: "学习", practice: "练习", apply: "应用", review: "复习" },
   },
   en: {
-    eyebrow: "Cross-space learning schedule",
-    title: "Cross-space schedule",
-    description: "See every learning-space task here; return to its space to adjust or complete it.",
+    eyebrow: "All learning spaces",
+    title: "All schedules",
+    description: "See all learning tasks here. Open the related learning space when you need to adjust one.",
     today: "Today",
     previous: "Previous month",
     next: "Next month",
