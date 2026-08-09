@@ -1,8 +1,15 @@
 # RefineQ MCP 服务设计
 
-> 日期：2026-08-09 · 状态：设计待确认
+> 日期：2026-08-09 · 状态：设计待确认（v2）
 > 目的：为初赛动态测评（占 50%）提供平台可直接调用的 Agent 接口，同时让 RefineQ 的学习闭环可被外部 Agent 复用
 > 依据：[HACKATHON.md §6.1](../../HACKATHON.md)、后端 77 个端点的能力盘点
+
+**修订记录**
+
+| 版本 | 变更 |
+| --- | --- |
+| v1 | 9 个工具、服务账号认证、只读投影、降级行为、分阶段实施 |
+| v2 | 补齐会实际影响评分的四项：新增 `get_capabilities` 工具（对应「能否连通」）；补 **Resources** 与 **Prompts** 两种原语（v1 只用了 Tools，Prompts 决定评测方能否一键跑通）；补**分工具延迟预算**（「响应速度」是明写的评分项，v1 无数字）；把"服务账号必须已播种"从含糊表述改为**硬要求 + 部署验收项**（否则自动化评测方第一次调用就撞空状态） |
 
 ---
 
@@ -49,9 +56,34 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 ---
 
-## 2. 工具集（9 个，命名空间 `refineq`）
+## 2. 工具集（10 个，命名空间 `refineq`）
 
-数量控制在 10 以内。每个工具给出**做什么 / 何时用 / 入参 / 返回 / 错误**四段描述——工具描述就是提示词，不是文档。
+数量控制在 10 上下。每个工具给出**做什么 / 何时用 / 入参 / 返回 / 错误**四段描述——工具描述就是提示词，不是文档。
+
+工具只是 MCP 三种原语之一。Resources（§3）与 Prompts（§4）同样要实现：**Prompts 决定评测方能否"点一下就跑通闭环"，这直接对应「Agent 是否能够连通」这条评分项。**
+
+### 2.0 能力自描述（1 个）
+
+**`refineq:get_capabilities`**
+
+- **做什么**：报告本服务各项能力当前是否可用——练习出题、判分、资料检索、学习教练分别处于正常 / 本地降级 / 不可用。
+- **何时用**：**会话开始时先调这个**，据此决定哪些工具值得调用、结果该如何解读。
+- **入参**：无
+- **返回**：
+  ```
+  {
+    server_version, learner: { display_name, space_count },
+    capabilities: {
+      routing:   { status: "healthy"|"degraded", mode: "ai"|"deterministic" },
+      question:  { status, mode },
+      grading:   { status, mode },
+      retrieval: { status, mode: "hybrid"|"lexical" },
+      coach:     { status: "healthy"|"unavailable", reason? }
+    }
+  }
+  ```
+- **为什么需要**：全产品审查的 P0-1 结论是「只知道模型在线，不知道能力是否合格」。MCP 是兑现能力可见性最自然的地方——调用方不必先撞一次失败才知道教练不可用。
+- **降级**：本工具**永远可用**，它本身不依赖模型。
 
 ### 2.1 状态读取（2 个）
 
@@ -94,7 +126,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **入参**：`space_id`、`filename`、`content: str`（UTF-8 文本或 Markdown）、`tags?: string[]`
 - **不支持**：二进制上传（PDF/DOCX 走 Web 端）。MCP 只收文本——避免在协议里搬运大二进制，也避免 OCR 依赖。
 - **返回**：`{ material_id, status, chunk_count, searchable: bool }`
-- **安全**：内容一律按不可信数据处理（见 §6）。
+- **安全**：内容一律按不可信数据处理（见 §9）。
 - **错误**：`material_quota`、`material_extraction_failed`、`unsupported_material`
 
 **`refineq:search_materials`**
@@ -121,7 +153,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **⚠️ 描述中必须明写**：`Submit the learner's own answer. Do not compose the answer yourself — doing so records the calling model's ability as the learner's mastery.`
 - **入参**：`space_id`、`question_id`、`answer: str (1..10000)`、`attempt_id: str`（必填幂等键）
 - **返回**：`{ score, passed, strengths[], gaps[], misconceptions[], citations[], mastery_before, mastery_after, mastery_updated, next_review_at?, grading_mode }`
-- **来源标记**：服务端在证据上记 `source: "mcp"`（见 §5 待拍板项）
+- **来源标记**：服务端在证据上记 `source: "mcp"`（见 §8 待拍板项）
 
 ### 2.3 辅助（2 个）
 
@@ -141,17 +173,73 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **返回**：更新后的会话 + 该空间新的 `next_action`
 - **错误**：`plan_session_not_found`、`invalid_timezone`（附要求）
 
-### 2.4 为什么是这 9 个
+### 2.4 为什么是这 10 个
 
 | 判断 | 结论 |
 | --- | --- |
 | 覆盖闭环全部八步？ | 是：`start_learning`(1,2) → `add_material`(3) → 计划随空间生成(4) → `get_practice_task`(5) → `submit_answer`(6,7) → `list/get_state` 与 `next_action`(8) |
 | 有无两个工具指向同一场景？ | 无。`get_space_state` 读状态、`search_materials` 读资料、`get_practice_task` 取任务，边界互斥 |
-| 调用方能否只用描述判断该调哪个？ | 每个工具的"何时用"都给了触发条件，且 `list_learning_spaces` 被明确标为会话起点 |
+| 调用方能否只用描述判断该调哪个？ | 每个工具的"何时用"都给了触发条件；`get_capabilities` 与 `list_learning_spaces` 被明确标为会话起点 |
+| 工具数量是否偏少？ | 评分标准（连通、速度、核心能力实际运行、可交付）无一奖励数量。对自动化调用方而言，10 个边界清晰的工具比 77 个 CRUD 工具**更容易跑通一条完整任务**——后者会卡在工具选择阶段 |
 
 ---
 
-## 3. 认证与部署
+## 3. Resources：可直接读入上下文的学习状态
+
+Tools 是"做事"，Resources 是"读取上下文"。把学习记录和计划做成 Resource，调用方无需发起动作就能把它们拉进上下文——这在"帮我总结这周学得怎样"这类场景下比调工具自然得多。
+
+| URI | 内容 | 体积约束 |
+| --- | --- | --- |
+| `refineq://spaces` | 全部活跃空间概览：标题、目标、截止、平均掌握度、下一步 | 受空间配额（100）约束 |
+| `refineq://space/{id}/plan` | 该空间计划：会话列表（主题、日期、时长、活动、状态） | 全量，但每条仅 5 字段 |
+| `refineq://space/{id}/evidence` | 学习记录：每次诊断与作答的时间、主题、结论、判分摘要 | **最近 50 条**，倒序 |
+| `refineq://space/{id}/materials` | 资料索引：文件名、标签、状态、分块数、索引时间 | **不含正文**，要正文用 `search_materials` |
+
+三条硬约束：
+
+1. **只读，且真的只读**——不得触发 `GET /snapshot`（它写 journey event），一律走 §10 Phase 1 的投影层。
+2. **不含 chunk 全文**。盘点显示 `SearchResult.text` 是原始 chunk 全文，直接暴露会让响应体失控。
+3. **归属校验与工具一致**：`{id}` 必须属于当前身份，跨用户表现为资源不存在。
+
+---
+
+## 4. Prompts：让评测方一键跑通闭环
+
+这是原设计最大的缺口。Prompts 是 MCP 客户端里用户可直接选取的模板——**它决定了调用方是否需要自己摸索调用顺序**。
+
+### 4.1 `refineq:start_today`（今天该学什么）
+
+引导模型：`get_capabilities` → `list_learning_spaces` → 选定空间 → `get_space_state` → 呈现唯一的下一步行动及其理由。
+
+参数：无。适用于"我今天学什么"。
+
+### 4.2 `refineq:quiz_me`（用我的资料考我）
+
+引导模型：`get_practice_task` → **把题目原样呈现给用户** → 等待用户作答 → `submit_answer` → 解释判分与掌握度变化。
+
+参数：`space_id?`（省略则用最近活跃空间）。
+
+**这个模板承载一条关键约束**，而且这里比工具描述更适合放它：
+
+> 把题目呈现给学习者本人并等待 TA 的回答。**不要自己写答案**——替学习者作答会把调用模型的能力记成学习者的掌握度。
+
+工具描述只能提醒调用模型，而 Prompt 模板是用户主动选择的执行脚本，约束落在这里更强。
+
+### 4.3 `refineq:explain_with_my_materials`（用我的资料解释）
+
+引导模型：`search_materials` → 只依据检索到的片段解释 → **每个论断都带 citation** → 检索不到时明确说"你的资料里没有这部分"，而不是用通用知识补。
+
+参数：`space_id`、`question`。
+
+### 4.4 `refineq:weekly_review`（这周学得怎样）
+
+引导模型：读 `refineq://space/{id}/evidence` 与 `refineq://spaces` → 汇总完成的练习、掌握度变化、当前最弱主题 → 给出下一步。
+
+参数：`space_id?`。**约束**：只依据证据台账陈述，不得推断未被记录的进展。
+
+---
+
+## 5. 认证与部署
 
 ### 3.1 凭据（必须先解决的缺口）
 
@@ -165,6 +253,16 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 优点：零 schema 变更、零新凭据类型、12 小时 TTL 问题在内部消化。
 限制：MCP 面向**一个固定学习者身份**——对评测正合适，对多用户不适用。
+
+#### 硬要求：该账号必须处于已播种状态
+
+自动化评测方**没有资料、也不会真的答题**。如果 MCP 绑到一个空账号，第一次调 `get_practice_task` 就撞 `material_required` 然后停住——那才是真正的"空"，且直接打在「核心能力是否能够实际运行」这条评分项上。
+
+好在 `scripts/seed_demo.py` 已经把资料、学习状态、诊断、计划和一次作答全部播好（[operations/demo.py:108-185](../../src/refineq/operations/demo.py#L108)）。因此：
+
+1. MCP 服务账号**必须**是已执行 `seed_demo` 的账号，或部署后立即为其播种；
+2. 部署验收必须包含一条：**不做任何前置操作，直接调 `get_practice_task`，能返回一道带资料引用的题**；
+3. 该账号与人工演示账号分开，避免演示过程改变评测方看到的状态。
 
 **Phase 2（赛后）——按用户的 MCP 访问令牌：**
 
@@ -181,7 +279,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 - 复用全部既有不变量（owner 强制、幂等、事务边界、降级），不需要重新实现一遍；
 - 避免多一跳网络与序列化；
-- 避免被自己的 IP 限流打中（见 §3.3）。
+- 避免被自己的 IP 限流打中（见 §5.3）。
 
 新增模块 `src/refineq/mcp/`：
 
@@ -201,7 +299,34 @@ server.py      Streamable HTTP + stdio 两种入口
 
 ---
 
-## 4. 降级行为
+## 6. 延迟预算
+
+「响应速度是否可接受」是动态测评四条标准之一，必须给出可核对的数字而不是"尽量快"。
+
+| 工具 / 资源 | 预算 | 依赖 | 超时行为 |
+| --- | --- | --- | --- |
+| `get_capabilities` | ≤ 0.3 s | 无 | 不适用（纯本地） |
+| `list_learning_spaces`、`get_space_state` | ≤ 1 s | 无 | 不适用 |
+| 全部 Resources | ≤ 1 s | 无 | 不适用 |
+| `update_plan_session` | ≤ 1 s | 无 | 不适用 |
+| `search_materials` | ≤ 2 s（纯词法）/ ≤ 4 s（含向量） | Embedding | 向量超时 → 退纯词法，标 `retrieval_mode:"lexical"` |
+| `start_learning` | ≤ 8 s（AI）/ ≤ 1 s（降级） | 聊天模型 | 超时 → 关键词路由，标 `mode:"fallback"` |
+| `get_practice_task` | ≤ 15 s（AI）/ ≤ 1 s（降级） | 聊天模型 | 超时 → 确定性出题，标 `mode:"fallback"` |
+| `submit_answer` | ≤ 15 s（AI）/ ≤ 1 s（降级） | 聊天模型 | 超时 → 规则判分，标 `grading_mode:"fallback"` |
+| `ask_coach` | ≤ 20 s | 聊天模型 | 超时 → 明确报错，**不返回模板答复** |
+| `add_material` | ≤ 15 s（10 页量级文本） | 无 | 超时 → 报错并说明可重试 |
+
+三条规则：
+
+1. **任何工具都不得挂起。** 超过预算必须返回结果或错误，二者之一。
+2. **降级要标注，不要伪装。** 每个受影响的返回都带 `mode` / `grading_mode` / `retrieval_mode`。
+3. **超时值不是拍脑袋。** 上表是初值；上线后由 `get_capabilities` 的 canary 实测 P95 反推校准（与全产品审查 P0-1 的结论一致——不要重复"5 秒预算而实测 6.1 秒"那个错误）。
+
+盘点已确认确定性内核是亚毫秒级（路由 0.08 ms、出题 0.01 ms、判分 0.02 ms），所以**降级路径的预算有极大余量**，压力全部来自外部模型。
+
+---
+
+## 7. 降级行为
 
 盘点确认只有 `agent/chat` 硬依赖模型。因此**零模型环境下 MCP 仍能演示完整闭环**——这是相对多数参赛项目的优势，要在工具返回里明确标出而不是藏起来。
 
@@ -217,7 +342,7 @@ server.py      Streamable HTTP + stdio 两种入口
 
 ---
 
-## 5. 待你拍板的两个决策
+## 8. 待你拍板的两个决策
 
 ### 决策一：MCP 提交的作答是否计入掌握度
 
@@ -242,7 +367,7 @@ server.py      Streamable HTTP + stdio 两种入口
 
 ---
 
-## 6. 安全边界
+## 9. 安全边界
 
 MCP 是新增的外部入口，必须显式继承既有不变量，不能成为绕过它们的后门：
 
@@ -255,25 +380,25 @@ MCP 是新增的外部入口，必须显式继承既有不变量，不能成为�
 
 ---
 
-## 7. 实施计划
+## 10. 实施计划
 
 ### 前置（阻塞项，先做）
 
 | # | 事项 | 说明 |
 | --- | --- | --- |
 | 0-a | **安装 uv 并验证锁文件可重生成** | 加 `mcp` 依赖必须重生成三个 `.lock`（1168 条哈希）；本机无 uv，这是硬前置 |
-| 0-b | **修 P0-5（注入进入 `expected_answer`）** | 见 §6.2。MCP 会放大这个洞，必须先堵 |
+| 0-b | **修 P0-5（注入进入 `expected_answer`）** | 见 §9 第 2 条。MCP 会放大这个洞，必须先堵 |
 | 0-c | 创建 MCP 专用评测账号并写入部署环境变量 | 与演示账号分开，便于单独吊销 |
 
-### Phase 1 · 只读工具（半天）
+### Phase 1 · 只读面（半天）
 
-`list_learning_spaces`、`get_space_state`、`search_materials`。
+`get_capabilities`、`list_learning_spaces`、`get_space_state`、`search_materials` + 全部 4 个 Resources。
 
-- 新建 `src/refineq/mcp/{tools,service,projections,auth,server}.py`
-- **重点是 `projections.py`**：提供无写副作用、有界体积的只读投影，替代 `snapshot`
+- 新建 `src/refineq/mcp/{tools,resources,prompts,service,projections,auth,server}.py`
+- **重点是 `projections.py`**：无写副作用、有界体积的只读投影，替代 `snapshot`
 - stdio 入口先跑通，用 MCP Inspector 手工验证
 
-**验收**：三个工具在零模型环境下返回正确数据；调用 `get_space_state` **不产生** journey event（对比调用前后事件表）。
+**验收**：零模型环境下四个工具与四个 Resource 返回正确数据；调用 `get_space_state` 与读取任一 Resource **均不产生** journey event（对比调用前后事件表）；`get_capabilities` 如实报出 `coach: unavailable`。
 
 ### Phase 2 · 闭环写工具（1 天）
 
@@ -282,20 +407,31 @@ MCP 是新增的外部入口，必须显式继承既有不变量，不能成为�
 - 幂等键全部必填，重复调用返回同一结果
 - `submit_answer` 落地决策一的 `source` 标记
 - 错误信封统一：`{ code, message, next_step? }`，`next_step` 告诉调用方怎么恢复
+- 每个工具按 §6 落地超时与降级标注
 
-**验收**：用 MCP 客户端跑通完整闭环——说目标 → 加资料 → 取题 → 作答 → 看到掌握度变化，**全程零模型**。
+**验收**：用 MCP 客户端跑通完整闭环——说目标 → 加资料 → 取题 → 作答 → 看到掌握度变化，**全程零模型**；各工具耗时落在 §6 预算内。
 
-### Phase 3 · HTTP 传输与部署（半天）
+### Phase 3 · Prompts（半天）
+
+四个 Prompt 模板：`start_today`、`quiz_me`、`explain_with_my_materials`、`weekly_review`。
+
+- `quiz_me` 必须内嵌"不要替学习者作答"的执行约束
+- 每个模板都以 `get_capabilities` 开场，使降级状态在对话第一句就可见
+
+**验收**：在 MCP 客户端里选择 `quiz_me`，**不手工指定任何工具顺序**即可完成"出题 → 用户作答 → 判分 → 掌握度变化"；选择 `weekly_review` 得到的总结只包含证据台账里真实存在的内容。
+
+### Phase 4 · HTTP 传输与部署（半天）
 
 - Streamable HTTP 挂 `/mcp`，共享密钥头鉴权
 - Caddy 增加 `/mcp` 路由（注意：现有 `handle_path /api/*` 会剥前缀，`/mcp` 需要独立 handle）
-- README 增加 MCP 章节：端点地址、鉴权方式、工具清单、示例调用
+- 部署后执行 §5.1 的播种验收
+- README 增加 MCP 章节：端点地址、鉴权方式、工具/资源/模板清单、示例调用
 
-**验收**：从外网用 MCP 客户端连上并跑通闭环；冷启动到首个工具响应 ≤ 10 秒。
+**验收**：从外网用 MCP 客户端连上并跑通闭环；冷启动到首个工具响应 ≤ 10 秒；不做任何前置操作直接调 `get_practice_task` 即返回带资料引用的题。
 
 ---
 
-## 8. 测试策略
+## 11. 测试策略
 
 | 层 | 覆盖 |
 | --- | --- |
@@ -307,13 +443,24 @@ MCP 是新增的外部入口，必须显式继承既有不变量，不能成为�
 
 ---
 
-## 9. 验收标准
+## 12. 验收标准
 
 **功能**
 
-- 9 个工具全部可列出、可调用，描述包含"做什么/何时用/入参/返回/错误"四段。
-- 零模型环境下 8 个工具可用，`ask_coach` 明确报 `model_not_configured` 并说明其余可用。
+- 10 个工具、4 个 Resource、4 个 Prompt 全部可列出、可调用；工具描述包含"做什么/何时用/入参/返回/错误"四段。
+- 零模型环境下 9 个工具可用，`ask_coach` 明确报 `model_not_configured` 并说明其余可用。
+- `get_capabilities` 如实反映各能力状态，与实际行为一致（报 healthy 的能力必须真能用）。
 - 完整闭环可在 MCP 上跑通并看到掌握度变化。
+- **一键可用**：选择 `quiz_me` 模板即可完成闭环，调用方无需自行编排工具顺序。
+
+**性能**
+
+- 各工具耗时落在 §6 预算内；超时一律返回降级结果或错误，无挂起。
+- 降级时 `mode` / `grading_mode` / `retrieval_mode` 如实标注。
+
+**空状态**
+
+- 服务账号已播种；不做任何前置操作直接调 `get_practice_task` 返回带资料引用的题。
 
 **安全**
 
@@ -330,7 +477,7 @@ MCP 是新增的外部入口，必须显式继承既有不变量，不能成为�
 
 ---
 
-## 10. 风险
+## 13. 风险
 
 | 风险 | 影响 | 对策 |
 | --- | --- | --- |
