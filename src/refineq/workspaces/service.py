@@ -128,6 +128,24 @@ def _topic_id(name: str) -> str:
     return f"topic_{sha256(name.casefold().encode()).hexdigest()[:16]}"
 
 
+_MATERIAL_TOPIC_EXTENSIONS = frozenset({".pdf", ".docx", ".txt", ".md", ".markdown"})
+
+
+def _strip_material_extension(title: str) -> str:
+    """Drop a trailing file extension so topics read as subjects, not filenames.
+
+    A default material title is the uploaded filename, extension included, so an
+    unmodified title would offer ``notes.pdf`` as a learning topic and put it into
+    questions and the plan. Only known material extensions are removed, which leaves
+    legitimate dotted names such as ``3.14 的意义`` untouched.
+    """
+
+    stem, dot, extension = title.rpartition(".")
+    if dot and f".{extension.strip().lower()}" in _MATERIAL_TOPIC_EXTENSIONS and stem.strip():
+        return stem.strip()
+    return title
+
+
 def _material_topic_suggestions(
     workspace: LearningWorkspace,
     materials: list[MaterialRecord],
@@ -146,7 +164,7 @@ def _material_topic_suggestions(
     for material in bounded_materials:
         if material.status != "indexed":
             continue
-        for raw_name in [material.title, *material.tags]:
+        for raw_name in [_strip_material_extension(material.title), *material.tags]:
             name = " ".join(raw_name.split()).strip()
             key = name.casefold()
             if not name or len(name) > 200 or key in existing:

@@ -558,6 +558,42 @@ def test_material_topic_suggestions_require_owner_confirmation_and_ignore_body(
     assert replayed.json()["workspace"]["topics"].count("epsilon-delta") == 1
 
 
+def test_material_topic_suggestion_strips_the_file_extension(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "复习线性代数"},
+        ).json()["workspace"]["id"]
+        client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files=[
+                (
+                    "files",
+                    (
+                        "高斯消元法-笔记.txt",
+                        "高斯消元法通过初等行变换把增广矩阵化为行阶梯形。".encode(),
+                        "text/plain",
+                    ),
+                )
+            ],
+        )
+
+        suggestions = client.get(
+            f"/workspaces/{workspace_id}/topic-suggestions",
+            headers=headers,
+        ).json()
+
+    names = {item["name"] for item in suggestions}
+    assert "高斯消元法-笔记" in names
+    assert "高斯消元法-笔记.txt" not in names
+
+
 def test_material_topic_acceptance_rolls_back_both_records_on_failure(
     tmp_path: Path,
     monkeypatch,
@@ -588,7 +624,7 @@ def test_material_topic_acceptance_rolls_back_both_records_on_failure(
         tags=[f"tag-{index}" for index in range(12)],
     )
     suggestions = app.state.workspace_service.topic_suggestions(owner.id, workspace.id)
-    suggestion = next(item for item in suggestions if item.name == "continuity.md")
+    suggestion = next(item for item in suggestions if item.name == "continuity")
     assert len(suggestions) == 12
     workspace_before = app.state.workspaces.snapshot(owner.id, workspace.id)
     learning_before = app.state.learning.get(owner.id, workspace.id)
