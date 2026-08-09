@@ -19,8 +19,11 @@ def _add_workspace_material(
     owner_id: str,
     workspace_id: str,
     *,
-    text: str = "Workspace study practice material for the selected learning topic.",
+    text: str | None = None,
 ) -> None:
+    if text is None:
+        workspace = app.state.workspaces.get(owner_id, workspace_id)
+        text = f"{' '.join(workspace.topics)} study material and worked examples."
     app.state.knowledge.add_document(
         owner_id=owner_id,
         project_id=workspace_id,
@@ -146,7 +149,12 @@ def test_question_model_work_runs_outside_database_transaction(tmp_path: Path) -
             headers=headers,
             json={"intent": "复习高数极限"},
         ).json()["workspace"]["id"]
-        _add_workspace_material(app, auth["user"]["id"], workspace_id)
+        _add_workspace_material(
+            app,
+            auth["user"]["id"],
+            workspace_id,
+            text="函数极限描述自变量趋近某一点时函数值趋近的目标。",
+        )
         admin = ensure_admin(
             app.state.identity,
             email="question-transaction-admin@example.com",
@@ -176,6 +184,10 @@ def test_question_model_work_runs_outside_database_transaction(tmp_path: Path) -
                     headers=headers,
                     json={"request_id": "outside-transaction"},
                 )
+                opened = client.get(
+                    f"/workspaces/{workspace_id}/snapshot",
+                    headers=headers,
+                )
                 snapshot = app.state.learning.get(auth["user"]["id"], workspace_id)
                 assert snapshot.data["progress"]["seeded"] is True
                 model.release.set()
@@ -187,6 +199,7 @@ def test_question_model_work_runs_outside_database_transaction(tmp_path: Path) -
             model.release.set()
 
     assert [response.status_code for response in responses] == [200, 200]
+    assert opened.status_code == 200
     assert responses[0].json() == responses[1].json()
     assert model.calls.count("QuestionModelOutput") == 1
     assert model.transaction_active is False
@@ -536,7 +549,7 @@ def test_workspace_learning_task_accepts_project_mode(tmp_path: Path) -> None:
     assert response.json()["learning_mode"] == "project"
 
 
-def test_workspace_case_task_without_matching_material_is_explicitly_general(
+def test_workspace_case_task_without_matching_material_is_rejected(
     tmp_path: Path,
 ) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
@@ -568,11 +581,8 @@ def test_workspace_case_task_without_matching_material_is_explicitly_general(
             json={"request_id": "general-case-1", "mode": "case"},
         )
 
-    assert response.status_code == 200
-    question = response.json()
-    assert question["grounding"] == "general"
-    assert question["sources"] == []
-    assert "基于材料" not in question["prompt"]
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "material_insufficient"
 
 
 def test_configured_model_cannot_claim_uploaded_material_when_retrieval_is_empty(
@@ -624,10 +634,5 @@ def test_configured_model_cannot_claim_uploaded_material_when_retrieval_is_empty
             json={"request_id": "no-source-ai-1", "mode": "case"},
         )
 
-    assert response.status_code == 200
-    question = response.json()
-    assert question["grounding"] == "general"
-    assert question["sources"] == []
-    assert question["mode"] == "ai"
-    assert "上传材料" not in question["prompt"]
-    assert "访谈原文" not in question["prompt"]
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "material_insufficient"

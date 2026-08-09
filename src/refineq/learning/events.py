@@ -151,7 +151,7 @@ def learning_journey_metrics(
     return {
         "starts_at": starts_at,
         "ends_at": ends_at,
-        "weekly_active_learners": len(active),
+        "active_learners": len(active),
         "grounded_loop_completers": len(completers),
         "grounded_loop_completion_rate": (
             len(completers) / len(active) if active else 0.0

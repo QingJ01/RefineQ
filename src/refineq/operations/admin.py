@@ -182,14 +182,14 @@ class AdminOperations:
         with self.database.session() as session:
             rows = session.execute(
                 select(records.c.owner_id, records.c.record_id, records.c.data).where(
-                    records.c.collection == "learning"
+                    records.c.collection == "journey_events"
                 )
             ).all()
         event_records = [
             (
                 str(row.owner_id),
                 str(row.record_id),
-                row.data.get("progress", {}).get("journey_events", []),
+                row.data.get("events", []),
             )
             for row in rows
         ]

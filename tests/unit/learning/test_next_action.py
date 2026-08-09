@@ -125,6 +125,22 @@ def test_local_today_session_precedes_pace_risk() -> None:
     assert action.topic_id == "derivatives"
 
 
+def test_future_review_today_is_still_a_today_session() -> None:
+    future_review = StudySession(
+        id="review-later-today",
+        topic_id="limits",
+        planned_at=NOW + timedelta(hours=4),
+        minutes=20,
+        activity="review",
+    )
+
+    action = _select(plan=_plan(future_review))
+
+    assert action.action_type == "start_session"
+    assert action.trigger == "scheduled_session"
+    assert action.target_id == "review-later-today"
+
+
 def test_deadline_capacity_risk_precedes_weak_topic_practice() -> None:
     future = StudySession(
         id="future-session",
@@ -146,6 +162,26 @@ def test_deadline_capacity_risk_precedes_weak_topic_practice() -> None:
     assert action.target_id == "plan-1"
     assert action.minutes == 120
     assert action.evidence_refs == ["plan-1"]
+
+
+def test_past_deadline_has_zero_remaining_capacity() -> None:
+    overdue = StudySession(
+        id="overdue-session",
+        topic_id="limits",
+        planned_at=NOW + timedelta(days=2),
+        minutes=15,
+    )
+
+    action = _select(
+        plan=_plan(
+            overdue,
+            exam_at=NOW - timedelta(days=1),
+            daily_minutes=30,
+        )
+    )
+
+    assert action.action_type == "repair_pace"
+    assert action.trigger == "pace_risk"
 
 
 def test_weakest_topic_is_the_grounded_practice_fallback() -> None:

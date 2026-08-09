@@ -115,7 +115,10 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
     assert shown.status_code == 200
     assert shown.json() == shown_replay.json()
     assert stored.version == version_after_shown
-    names = [event["name"] for event in stored.data["progress"]["journey_events"]]
+    names = [
+        event.name
+        for event in app.state.journey_events.list(learner["user_id"], workspace_id)
+    ]
     assert {
         "intent_submitted",
         "workspace_ready",
@@ -126,6 +129,44 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
         "grounded_grade_shown",
     }.issubset(names)
     assert names.count("grounded_grade_shown") == 1
+
+
+def test_workspace_question_rejects_indexed_but_irrelevant_material(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "irrelevant-material@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "botany.txt",
+                    b"Photosynthesis uses chlorophyll and sunlight to produce glucose.",
+                    "text/plain",
+                )
+            },
+        )
+        created = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "irrelevant-source"},
+        )
+
+    assert uploaded.status_code == 201
+    assert created.status_code == 409
+    assert created.json()["error"]["code"] == "material_insufficient"
+    assert app.state.learning.get(
+        learner["user_id"], workspace_id
+    ).data["progress"]["pending_question"] is None
 
 
 def test_complete_learning_journey_is_owner_scoped_and_idempotent(

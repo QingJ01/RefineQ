@@ -493,7 +493,7 @@ export interface DurationPercentiles {
 export interface LearningMetricsResponse {
   starts_at: string;
   ends_at: string;
-  weekly_active_learners: number;
+  active_learners: number;
   grounded_loop_completers: number;
   grounded_loop_completion_rate: number;
   intent_to_grounded_grade_seconds: DurationPercentiles;

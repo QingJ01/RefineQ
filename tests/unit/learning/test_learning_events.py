@@ -87,7 +87,7 @@ def test_learning_metrics_are_computable_from_internal_events() -> None:
         ends_at=START + timedelta(days=7),
     )
 
-    assert metrics["weekly_active_learners"] == 2
+    assert metrics["active_learners"] == 2
     assert metrics["grounded_loop_completers"] == 1
     assert metrics["grounded_loop_completion_rate"] == 0.5
     assert metrics["intent_to_grounded_grade_seconds"] == {

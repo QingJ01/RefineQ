@@ -189,8 +189,7 @@ def select_next_action(
         (
             session
             for session in sessions
-            if session.activity != "review"
-            and _local_date(session.planned_at, timezone_offset_minutes) == local_today
+            if _local_date(session.planned_at, timezone_offset_minutes) == local_today
         ),
         key=lambda session: (session.planned_at, session.id),
     )
@@ -214,7 +213,7 @@ def select_next_action(
 
     if plan is not None and sessions:
         exam_date = _local_date(plan.exam_at, timezone_offset_minutes)
-        remaining_days = max(1, (exam_date - local_today).days + 1)
+        remaining_days = max(0, (exam_date - local_today).days + 1)
         available_minutes = remaining_days * plan.daily_minutes
         remaining_minutes = sum(session.minutes for session in sessions)
         if remaining_minutes > available_minutes:

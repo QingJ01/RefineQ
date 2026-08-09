@@ -56,6 +56,7 @@ from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.service import LearningService
 from refineq.operations.admin import AdminOperations
+from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
@@ -117,6 +118,7 @@ def create_app(
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
+    app.state.journey_events = JourneyEventRepository(app.state.store)
     app.state.calendar_service = CalendarService(
         workspaces=app.state.workspaces,
         learning=app.state.learning,
@@ -179,11 +181,13 @@ def create_app(
         app.state.projects,
         app.state.learning,
         app.state.learning_intelligence,
+        app.state.journey_events,
     )
     app.state.workspace_learning_service = LearningService(
         app.state.workspaces,
         app.state.learning,
         app.state.learning_intelligence,
+        app.state.journey_events,
     )
     app.state.sessions = SessionRepository(app.state.store)
     resolved_intent_transport = agent_intent_transport

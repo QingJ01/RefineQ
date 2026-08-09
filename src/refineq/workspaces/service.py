@@ -218,7 +218,7 @@ class WorkspaceService:
                 observed_at=observed_at,
             )
             intent_key = sha256(payload.intent.strip().casefold().encode()).hexdigest()[:20]
-            self._learning_service.record_journey_event(
+            self._learning_service.try_record_journey_event(
                 owner_id,
                 response.workspace.id,
                 name="intent_submitted",
@@ -226,7 +226,7 @@ class WorkspaceService:
                 occurred_at=observed_at,
             )
             if response.action == "created":
-                self._learning_service.record_journey_event(
+                self._learning_service.try_record_journey_event(
                     owner_id,
                     response.workspace.id,
                     name="workspace_ready",
@@ -455,6 +455,7 @@ class WorkspaceService:
                     material_ids=None,
                 )
                 self._learning.delete(owner_id, workspace_id)
+                self._learning_service.delete_journey_events(owner_id, workspace_id)
                 self._sessions.delete_for_workspace(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)
 
@@ -537,7 +538,7 @@ class WorkspaceService:
             workspace = self._workspaces.get(owner_id, workspace_id)
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
-        self._learning_service.record_journey_event(
+        self._learning_service.try_record_journey_event(
             owner_id,
             workspace_id,
             name="workspace_opened",

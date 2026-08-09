@@ -335,7 +335,7 @@ async def upload_workspace_materials(
     indexed = await upload_materials(workspace_id, request, user, files)
     for material in indexed:
         if material.status == "indexed":
-            request.app.state.workspace_learning_service.record_journey_event(
+            request.app.state.workspace_learning_service.try_record_journey_event(
                 user.id,
                 workspace_id,
                 name="material_searchable",

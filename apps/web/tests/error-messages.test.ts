@@ -61,6 +61,10 @@ describe("localized API errors", () => {
       .toBe("Learning state changed. Resync and try again.");
     expect(localizeApiError(new ApiError(404, "attempt_not_found", "raw"), "zh"))
       .toBe("找不到这次作答记录。");
+    expect(localizeApiError(new ApiError(409, "material_required", "raw"), "zh"))
+      .toBe("请先上传一份可检索的学习资料。");
+    expect(localizeApiError(new ApiError(409, "material_insufficient", "raw"), "en"))
+      .toBe("No uploaded source matches this topic. Upload a relevant source and try again.");
     expect(localizeApiError(new ApiError(409, "integration_not_configured", "raw"), "en"))
       .toBe("This integration has not been configured.");
     expect(localizeApiError(new ApiError(408, "upload_body_timeout", "raw"), "zh"))

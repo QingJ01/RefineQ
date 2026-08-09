@@ -95,7 +95,7 @@ class LearningMetricsResponse(BaseModel):
 
     starts_at: datetime
     ends_at: datetime
-    weekly_active_learners: int = Field(ge=0)
+    active_learners: int = Field(ge=0)
     grounded_loop_completers: int = Field(ge=0)
     grounded_loop_completion_rate: float = Field(ge=0, le=1)
     intent_to_grounded_grade_seconds: DurationPercentiles

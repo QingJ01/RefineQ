@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -12,12 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from refineq.knowledge.index import SearchResult
 from refineq.learning.bkt import DEFAULT_BKT, mastery_is_stable, update_bkt
 from refineq.learning.difficulty import update_difficulty
-from refineq.learning.events import (
-    JourneyEvent,
-    JourneyEventName,
-    append_journey_event,
-    build_journey_event,
-)
+from refineq.learning.events import JourneyEvent, JourneyEventName, build_journey_event
 from refineq.learning.evidence import create_evidence, stable_id
 from refineq.learning.intelligence import (
     GeneratedQuestion,
@@ -36,11 +32,13 @@ from refineq.learning.models import (
     StudySession,
 )
 from refineq.learning.planning import build_study_plan
+from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 
 MAX_QUESTION_HISTORY = 200
+logger = logging.getLogger(__name__)
 MAX_SAVED_QUESTIONS = 100
 MAX_QUESTION_REQUESTS = 100
 MAX_REVIEW_SESSIONS = 20
@@ -160,6 +158,10 @@ class LearningNotSeededError(LearningServiceError):
 
 class LearningConflictError(LearningServiceError):
     code = "learning_conflict"
+
+
+class MaterialGroundingRequiredError(LearningConflictError):
+    code = "material_insufficient"
 
 
 class QuestionNotFoundError(LearningServiceError):
@@ -413,10 +415,12 @@ class LearningService:
         projects: ProjectRepository,
         learning: LearningRepository,
         intelligence: LearningIntelligenceService | None = None,
+        journey_events: JourneyEventRepository | None = None,
     ) -> None:
         self._projects = projects
         self._learning = learning
         self._intelligence = intelligence
+        self._journey_events = journey_events
 
     def _require_project(self, owner_id: str, project_id: str) -> None:
         try:
@@ -430,18 +434,6 @@ class LearningService:
         if not progress or not progress.get("seeded"):
             raise LearningNotSeededError("Learning project has not been seeded")
         return progress
-
-    @staticmethod
-    def _journey_event(data: dict[str, Any], event_id: str) -> JourneyEvent | None:
-        progress = LearningService._progress(data)
-        return next(
-            (
-                JourneyEvent.model_validate(item)
-                for item in progress.get("journey_events", [])
-                if item.get("id") == event_id
-            ),
-            None,
-        )
 
     @staticmethod
     def _progress_response(data: dict[str, Any]) -> ProgressResponse:
@@ -836,8 +828,20 @@ class LearningService:
         request_id: str | None = None,
         review_session_id: str | None = None,
         plan_session_id: str | None = None,
+        require_material_grounding: bool = False,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
+
+        def public_question(question: dict[str, Any], saved_at: str | None) -> QuestionResponse:
+            response = self._public_question(question, saved_at=saved_at)
+            if require_material_grounding and (
+                response.grounding != Grounding.MATERIAL or not response.sources
+            ):
+                raise MaterialGroundingRequiredError(
+                    "No uploaded material matches this topic; upload a relevant source and retry"
+                )
+            return response
+
         with self._learning.question_generation_lock(owner_id, project_id):
             current = self._learning.get(owner_id, project_id)
             snapshot_version = current.version
@@ -847,15 +851,15 @@ class LearningService:
             if request_id and request_id in requests:
                 replay = history.get(requests[request_id])
                 if replay is not None:
-                    return self._public_question(
+                    return public_question(
                         replay,
-                        saved_at=progress.get("saved_questions", {}).get(replay["id"]),
+                        progress.get("saved_questions", {}).get(replay["id"]),
                     )
             if progress.get("pending_question") and not replace_pending:
                 pending = progress["pending_question"]
-                return self._public_question(
+                return public_question(
                     pending,
-                    saved_at=progress.get("saved_questions", {}).get(pending["id"]),
+                    progress.get("saved_questions", {}).get(pending["id"]),
                 )
             session_topic_id: str | None = None
             originating_plan_session_id: str | None = None
@@ -943,6 +947,12 @@ class LearningService:
                     sources=[],
                     learning_mode=learning_mode,
                 )
+            if require_material_grounding and (
+                generated.grounding != Grounding.MATERIAL or not generated.sources
+            ):
+                raise MaterialGroundingRequiredError(
+                    "No uploaded material matches this topic; upload a relevant source and retry"
+                )
             proposed = {
                 "topic_id": selected_topic_id,
                 "prompt": generated.prompt,
@@ -972,16 +982,6 @@ class LearningService:
                         "question", project_id, selected_topic_id, str(sequence)
                     )
                 selected = {"id": question_id, **proposed}
-                append_journey_event(
-                    inner_progress,
-                    build_journey_event(
-                        workspace_id=project_id,
-                        name="question_started",
-                        idempotency_key=question_id,
-                        occurred_at=datetime.now(UTC),
-                        ref_id=question_id,
-                    ),
-                )
                 inner_progress["question_sequence"] = sequence + 1
                 inner_progress["pending_question"] = selected
                 inner_history[question_id] = deepcopy(selected)
@@ -1033,7 +1033,14 @@ class LearningService:
                     self._learning.mutate(owner_id, project_id, store_once)
             if selected is None:
                 raise LearningServiceError("Question generation failed")
-            return self._public_question(selected, saved_at=selected_saved_at)
+            self.try_record_journey_event(
+                owner_id,
+                project_id,
+                name="question_started",
+                idempotency_key=selected["id"],
+                ref_id=selected["id"],
+            )
+            return public_question(selected, selected_saved_at)
 
     def pending_question(self, owner_id: str, project_id: str) -> QuestionResponse:
         self._require_project(owner_id, project_id)
@@ -1169,9 +1176,19 @@ class LearningService:
                 if stored_attempt.get("sources")
                 else Grounding.GENERAL.value
             )
-            return AnswerResponse.model_validate(
+            response = AnswerResponse.model_validate(
                 {**stored_attempt, "grounding": stored_grounding, "replayed": True}
             )
+            if response.grounding == Grounding.MATERIAL:
+                self.try_record_journey_event(
+                    owner_id,
+                    project_id,
+                    name="grounded_grade_created",
+                    idempotency_key=payload.attempt_id,
+                    occurred_at=response.observed_at,
+                    ref_id=payload.attempt_id,
+                )
+            return response
         current_progress = self._progress(current.data)
         current_question = current_progress.get("pending_question")
         if current_question is None or current_question["id"] != payload.question_id:
@@ -1336,17 +1353,6 @@ class LearningService:
                 "question_snapshot": deepcopy(question),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
-            if result["grounding"] == Grounding.MATERIAL.value:
-                append_journey_event(
-                    progress,
-                    build_journey_event(
-                        workspace_id=project_id,
-                        name="grounded_grade_created",
-                        idempotency_key=payload.attempt_id,
-                        occurred_at=observed_at,
-                        ref_id=payload.attempt_id,
-                    ),
-                )
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")
             progress["difficulty_states"][topic_id] = difficulty.model_dump(mode="json")
             progress["evidence"].append(evidence.model_dump(mode="json"))
@@ -1357,6 +1363,15 @@ class LearningService:
             self._learning.mutate(owner_id, project_id, grade_once)
         if result is None:
             raise LearningServiceError("Answer grading failed")
+        if result["grounding"] == Grounding.MATERIAL.value:
+            self.try_record_journey_event(
+                owner_id,
+                project_id,
+                name="grounded_grade_created",
+                idempotency_key=payload.attempt_id,
+                occurred_at=datetime.fromisoformat(result["observed_at"]),
+                ref_id=payload.attempt_id,
+            )
         return AnswerResponse.model_validate({**result, "replayed": replayed})
 
     def update_attempt_feedback(
@@ -1523,6 +1538,8 @@ class LearningService:
         ref_id: str | None = None,
     ) -> JourneyEvent:
         self._require_project(owner_id, project_id)
+        if self._journey_events is None:
+            raise LearningServiceError("Journey event storage is unavailable")
         proposed = build_journey_event(
             workspace_id=project_id,
             name=name,
@@ -1530,25 +1547,34 @@ class LearningService:
             occurred_at=occurred_at or datetime.now(UTC),
             ref_id=ref_id,
         )
-        existing = self._journey_event(
-            self._learning.get(owner_id, project_id).data, proposed.id
-        )
-        if existing is not None:
-            return existing
-        selected = proposed
+        return self._journey_events.append(owner_id, project_id, proposed)
 
-        def store(data: dict[str, Any]) -> dict[str, Any]:
-            nonlocal selected
-            progress = self._progress(data)
-            concurrent = self._journey_event(data, proposed.id)
-            if concurrent is not None:
-                selected = concurrent
-                return data
-            append_journey_event(progress, proposed)
-            return data
-
-        self._learning.mutate(owner_id, project_id, store)
-        return selected
+    def try_record_journey_event(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        name: JourneyEventName,
+        idempotency_key: str,
+        occurred_at: datetime | None = None,
+        ref_id: str | None = None,
+    ) -> JourneyEvent | None:
+        try:
+            return self.record_journey_event(
+                owner_id,
+                project_id,
+                name=name,
+                idempotency_key=idempotency_key,
+                occurred_at=occurred_at,
+                ref_id=ref_id,
+            )
+        except Exception as error:
+            logger.warning(
+                "event=journey_event_write_failed name=%s reason=%s",
+                name,
+                type(error).__name__,
+            )
+            return None
 
     def mark_grounded_grade_shown(
         self,
@@ -1572,28 +1598,13 @@ class LearningService:
             raise AttemptNotFoundError("Learning attempt not found")
         if attempt.get("grounding") != Grounding.MATERIAL.value:
             raise LearningConflictError("Only a material-grounded grade can be shown")
-        existing = self._journey_event(current, proposed.id)
-        if existing is not None:
-            return existing
-        selected = proposed
+        if self._journey_events is None:
+            raise LearningServiceError("Journey event storage is unavailable")
+        return self._journey_events.append(owner_id, project_id, proposed)
 
-        def validate_and_store(data: dict[str, Any]) -> dict[str, Any]:
-            nonlocal selected
-            attempt = data.get("attempts", {}).get(attempt_id)
-            if attempt is None:
-                raise AttemptNotFoundError("Learning attempt not found")
-            if attempt.get("grounding") != Grounding.MATERIAL.value:
-                raise LearningConflictError("Only a material-grounded grade can be shown")
-            progress = self._progress(data)
-            concurrent = self._journey_event(data, proposed.id)
-            if concurrent is not None:
-                selected = concurrent
-                return data
-            append_journey_event(progress, proposed)
-            return data
-
-        self._learning.mutate(owner_id, project_id, validate_and_store)
-        return selected
+    def delete_journey_events(self, owner_id: str, project_id: str) -> None:
+        if self._journey_events is not None:
+            self._journey_events.delete(owner_id, project_id)
 
     def evidence(self, owner_id: str, project_id: str) -> list[LearningEvidence]:
         self._require_project(owner_id, project_id)

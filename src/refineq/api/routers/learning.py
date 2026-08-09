@@ -150,6 +150,7 @@ def create_workspace_question(
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
             plan_session_id=payload.plan_session_id,
+            require_material_grounding=True,
         )
     except WorkspaceMaterialRequiredError as error:
         raise HTTPException(

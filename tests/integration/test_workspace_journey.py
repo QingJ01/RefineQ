@@ -39,13 +39,14 @@ def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
     with TestClient(app) as client:
-        token, _ = _register(client)
+        token, owner_id = _register(client)
         headers = {"Authorization": f"Bearer {token}"}
         workspace_id = client.post(
             "/workspaces/resolve",
             headers=headers,
-            json={"intent": "每天 30 分钟复习函数极限"},
+            json={"intent": "Study function limits"},
         ).json()["workspace"]["id"]
+        learning_before_open = app.state.learning.get(owner_id, workspace_id)
 
         snapshot = client.get(
             f"/workspaces/{workspace_id}/snapshot",
@@ -66,6 +67,10 @@ def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
         assert snapshot.status_code == 200
         assert snapshot.json()["next_action"] == refreshed.json()
         assert repeated_snapshot.json()["next_action"] == snapshot.json()["next_action"]
+        assert (
+            app.state.learning.get(owner_id, workspace_id).version
+            == learning_before_open.version
+        )
         assert refreshed.json()["action_type"] == "upload_material"
         assert refreshed.json()["trigger"] == "material_missing"
         assert refreshed.json()["preconditions"] == {"has_searchable_material": False}
@@ -92,6 +97,64 @@ def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
     assert ready.status_code == 200
     assert ready.json()["action_type"] != "upload_material"
     assert ready.json()["preconditions"] == {"has_searchable_material": True}
+
+
+def test_journey_event_storage_failure_does_not_break_core_flows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    def fail_event_write(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("simulated analytics storage failure")
+
+    monkeypatch.setattr(app.state.journey_events, "append", fail_event_write)
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        resolved = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        )
+        workspace = resolved.json()["workspace"]
+        workspace_id = workspace["id"]
+        topic_text = f"{workspace['topics'][0]} is explained by this source.".encode()
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "limits.txt",
+                    topic_text,
+                    "text/plain",
+                )
+            },
+        )
+        snapshot = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers)
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "analytics-failure-question"},
+        )
+        assert question.status_code == 200, question.json()
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "analytics-failure-attempt",
+                "question_id": question.json()["id"],
+                "answer": "A function limit is the value approached near an input.",
+            },
+        )
+
+    assert resolved.status_code == 200
+    assert uploaded.status_code == 201
+    assert snapshot.status_code == 200
+    assert question.status_code == 200
+    assert answer.status_code == 200
 
 
 class BlockingRoutingTransport:

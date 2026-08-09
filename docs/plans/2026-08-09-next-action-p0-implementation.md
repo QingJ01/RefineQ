@@ -4,7 +4,7 @@
 
 **Goal:** Turn the revised adversarial review into shipped product behavior: a material-gated, deterministic next action; one primary task on Today; one source of truth for plan constraints; consistent mobile agendas; and internally computable learning-loop metrics.
 
-**Architecture:** Keep decision policy deterministic and server-owned. A pure learning-domain selector receives a versioned workspace snapshot, indexed-material availability, the evaluation time, and the learner's current UTC offset; `WorkspaceService` supplies those inputs and exposes the result through the workspace snapshot and a refresh endpoint. Journey events remain owner/workspace scoped inside the existing atomic learning record, while an admin-only read model computes weekly aggregates without a third-party analytics SDK.
+**Architecture:** Keep decision policy deterministic and server-owned. A pure learning-domain selector receives a versioned workspace snapshot, indexed-material availability, the evaluation time, and the learner's current UTC offset; `WorkspaceService` supplies those inputs and exposes the result through the workspace snapshot and a refresh endpoint. Journey events remain owner/workspace scoped in a separate bounded event record so analytics cannot change learning-domain versions or break a committed user flow; an admin-only read model computes windowed aggregates without a third-party analytics SDK.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic, SQLAlchemy-backed atomic JSON records, Next.js 16, React 19, TypeScript, Vitest, pytest.
 
@@ -64,7 +64,7 @@ Expected: FAIL because the endpoint currently returns a fallback question.
 
 **Step 2: Implement the guard**
 
-Add an owner-scoped `WorkspaceMaterialRequiredError` and `WorkspaceService.require_searchable_material`. Call it only from the workspace question creation endpoint before model or fallback work begins.
+Add an owner-scoped `WorkspaceMaterialRequiredError` and `WorkspaceService.require_searchable_material`. Call it only from the workspace question creation endpoint before model or fallback work begins. After retrieval, enforce a second invariant: the generated workspace question must be material-grounded and carry real sources; otherwise return `material_insufficient` without storing a generic question. This closes irrelevant-material and check/delete race windows.
 
 **Step 3: Update fixtures that intentionally exercise later workspace-question behavior**
 
@@ -199,11 +199,11 @@ Expected: FAIL because the event timeline and metric endpoint do not exist.
 
 **Step 2: Implement atomic event recording**
 
-Store a bounded, idempotent `journey_events` array under the owner/workspace learning record. Record server-known events inside the same state mutation where practical. Add a narrow authenticated endpoint for the client to mark a grade as shown; validate the attempt and its grounding before recording.
+Store a bounded, idempotent event array in a separate owner/workspace journey record. Product analytics must not advance the learning-domain version, invalidate in-flight model work, or turn an already committed resolve/upload/question/grade/snapshot into a user-visible failure. Add a narrow authenticated endpoint for the client to mark a grade as shown; validate the attempt and its grounding before recording.
 
 **Step 3: Implement the admin-only metric read model**
 
-Add `GET /admin/metrics/learning?starts_at=...&ends_at=...`. Scan owner-scoped learning records through the operations service, aggregate in Python for SQLite/PostgreSQL parity, and return counts, rates, and percentile durations. Do not call a third-party analytics service.
+Add `GET /admin/metrics/learning?starts_at=...&ends_at=...`. Scan owner-scoped journey event records through the operations service, aggregate in Python for SQLite/PostgreSQL parity, and return counts, rates, and percentile durations. Use window-neutral names such as `active_learners`; a weekly north-star query is a caller-supplied seven-day window. Do not call a third-party analytics service.
 
 Run the targeted tests; expected PASS.
 

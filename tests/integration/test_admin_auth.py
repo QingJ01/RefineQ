@@ -14,6 +14,7 @@ from refineq.config import Settings
 from refineq.database.engine import Database
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService, InvalidTokenError
+from refineq.learning.events import build_journey_event
 from refineq.operations.admin import ensure_admin
 from refineq.workspaces.service import WorkspaceResolveRequest
 
@@ -242,33 +243,18 @@ def test_learning_metrics_are_admin_only_and_derived_from_internal_events(tmp_pa
         now=now,
     ).workspace
 
-    def add_metric_events(data: dict) -> dict:
-        data["progress"]["journey_events"] = [
-            {
-                "id": "event-intent",
-                "workspace_id": workspace.id,
-                "name": "intent_submitted",
-                "occurred_at": now.isoformat(),
-                "ref_id": None,
-            },
-            {
-                "id": "event-grade",
-                "workspace_id": workspace.id,
-                "name": "grounded_grade_created",
-                "occurred_at": (now + timedelta(minutes=10)).isoformat(),
-                "ref_id": "attempt-1",
-            },
-            {
-                "id": "event-shown",
-                "workspace_id": workspace.id,
-                "name": "grounded_grade_shown",
-                "occurred_at": (now + timedelta(minutes=11)).isoformat(),
-                "ref_id": "attempt-1",
-            },
-        ]
-        return data
-
-    app.state.learning.mutate(learner.id, workspace.id, add_metric_events)
+    for name, minute in (("grounded_grade_created", 10), ("grounded_grade_shown", 11)):
+        app.state.journey_events.append(
+            learner.id,
+            workspace.id,
+            build_journey_event(
+                workspace_id=workspace.id,
+                name=name,
+                idempotency_key="attempt-1",
+                occurred_at=now + timedelta(minutes=minute),
+                ref_id="attempt-1",
+            ),
+        )
     learner_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(learner)}"}
     admin_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(admin)}"}
     params = {
@@ -282,7 +268,7 @@ def test_learning_metrics_are_admin_only_and_derived_from_internal_events(tmp_pa
 
     assert forbidden.status_code == 403
     assert response.status_code == 200
-    assert response.json()["weekly_active_learners"] == 1
+    assert response.json()["active_learners"] == 1
     assert response.json()["grounded_loop_completers"] == 1
     assert response.json()["grounded_loop_completion_rate"] == 1.0
     assert response.json()["intent_to_grounded_grade_seconds"] == {

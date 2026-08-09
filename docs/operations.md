@@ -51,10 +51,12 @@ active learners, unique learners shown at least one material-grounded grade, the
 and nearest-rank P50/P90 seconds for intent-to-grounded-grade and revisit-open-to-question. Empty
 samples return `sample_size: 0` with null percentiles.
 
-Journey events are stored inside the owner/workspace learning record, are idempotent, and are
-bounded to the newest 500 events per workspace. Repeated delivery should not advance the record
-version. Treat these metrics as product-flow and retention proxies only: they do not provide an
-external truth for mastery calibration.
+Journey events are stored in a separate owner/workspace event record, are idempotent, and are
+bounded to the newest 500 events per workspace. They never advance the learning-domain version or
+invalidate an in-flight question. Event-write failures are logged without changing the success
+result of resolve, upload, question, grade, or snapshot operations. Treat these metrics as
+product-flow and retention proxies only: they do not provide an external truth for mastery
+calibration.
 
 ## Demo data
 
