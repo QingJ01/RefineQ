@@ -435,6 +435,7 @@ class WorkspaceService:
     def delete(self, owner_id: str, workspace_id: str) -> None:
         workspace_snapshot = None
         learning_snapshot = None
+        journey_event_snapshot = None
         session_snapshots = []
         pending = None
         try:
@@ -445,6 +446,10 @@ class WorkspaceService:
                     raise WorkspaceNotFoundError("Learning workspace not found") from error
                 workspace_snapshot = self._workspaces.snapshot(owner_id, workspace_id)
                 learning_snapshot = self._learning.get(owner_id, workspace_id)
+                journey_event_snapshot = self._learning_service.snapshot_journey_events(
+                    owner_id,
+                    workspace_id,
+                )
                 session_snapshots = self._sessions.snapshot_for_workspace(
                     owner_id,
                     workspace_id,
@@ -477,6 +482,12 @@ class WorkspaceService:
                             workspace_id,
                             learning_snapshot,
                         )
+                        if journey_event_snapshot is not None:
+                            self._learning_service.restore_journey_events(
+                                owner_id,
+                                workspace_id,
+                                journey_event_snapshot,
+                            )
                         self._sessions.restore_snapshots(owner_id, session_snapshots)
             raise
 
@@ -546,6 +557,7 @@ class WorkspaceService:
             occurred_at=observed_at,
             ref_id=workspace_id,
         )
+        self._learning_service.quarantine_ungrounded_pending(owner_id, workspace_id)
         progress = self._learning_service.progress(owner_id, workspace_id)
         learning_record = self._learning.get(owner_id, workspace_id)
         raw_plan = learning_record.data["progress"].get("plan")

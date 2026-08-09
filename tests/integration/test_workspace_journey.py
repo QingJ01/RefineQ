@@ -157,6 +157,86 @@ def test_journey_event_storage_failure_does_not_break_core_flows(
     assert answer.status_code == 200
 
 
+def test_workspace_delete_failure_restores_journey_events(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        before = app.state.journey_events.list(owner_id, workspace_id)
+
+        def fail_complete(pending) -> None:
+            del pending
+            raise RuntimeError("simulated material deletion commit failure")
+
+        monkeypatch.setattr(app.state.material_deletions, "complete", fail_complete)
+        with pytest.raises(RuntimeError, match="simulated material deletion"):
+            app.state.workspace_service.delete(owner_id, workspace_id)
+
+        restored = app.state.workspaces.get(owner_id, workspace_id)
+        after = app.state.journey_events.list(owner_id, workspace_id)
+
+    assert restored.id == workspace_id
+    assert [event.id for event in after] == [event.id for event in before]
+
+
+def test_workspace_delete_serializes_with_journey_event_writes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        original_append = app.state.journey_events.append
+        entered = Event()
+        release = Event()
+
+        def blocking_append(*args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return original_append(*args, **kwargs)
+
+        monkeypatch.setattr(app.state.journey_events, "append", blocking_append)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            event_future = executor.submit(
+                app.state.workspace_learning_service.try_record_journey_event,
+                owner_id,
+                workspace_id,
+                name="workspace_opened",
+                idempotency_key="delete-race",
+            )
+            assert entered.wait(timeout=5)
+            delete_future = executor.submit(
+                app.state.workspace_service.delete,
+                owner_id,
+                workspace_id,
+            )
+            time.sleep(0.05)
+            assert not delete_future.done()
+            release.set()
+            assert event_future.result(timeout=5) is not None
+            delete_future.result(timeout=5)
+
+    assert app.state.journey_events.list(owner_id, workspace_id) == []
+    with pytest.raises(RecordNotFoundError):
+        app.state.workspaces.get(owner_id, workspace_id)
+
+
 class BlockingRoutingTransport:
     def __init__(self) -> None:
         self.started = Event()

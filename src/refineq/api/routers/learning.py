@@ -185,7 +185,11 @@ def pending_workspace_question(
     user: CurrentUser,
 ) -> QuestionResponse:
     try:
-        return request.app.state.workspace_learning_service.pending_question(user.id, workspace_id)
+        return request.app.state.workspace_learning_service.pending_question(
+            user.id,
+            workspace_id,
+            require_material_grounding=True,
+        )
     except LearningServiceError as error:
         _raise_api_error(error)
 
@@ -219,6 +223,7 @@ def workspace_answer(
             user.id,
             workspace_id,
             payload,
+            require_material_grounding=True,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -277,6 +282,7 @@ def retry_workspace_question(
             user.id,
             workspace_id,
             question_id,
+            require_material_grounding=True,
         )
     except LearningServiceError as error:
         _raise_api_error(error)

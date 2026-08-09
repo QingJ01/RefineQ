@@ -57,6 +57,9 @@ invalidate an in-flight question. Event-write failures are logged without changi
 result of resolve, upload, question, grade, or snapshot operations. Treat these metrics as
 product-flow and retention proxies only: they do not provide an external truth for mastery
 calibration.
+Event writes share the workspace lifecycle lock with deletion. A failed workspace deletion restores
+the event snapshot alongside workspace, learning, and session state; a successful deletion cannot be
+followed by a late request recreating an orphan event record.
 
 ## Demo data
 

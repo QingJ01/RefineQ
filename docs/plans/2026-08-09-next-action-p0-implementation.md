@@ -66,6 +66,8 @@ Expected: FAIL because the endpoint currently returns a fallback question.
 
 Add an owner-scoped `WorkspaceMaterialRequiredError` and `WorkspaceService.require_searchable_material`. Call it only from the workspace question creation endpoint before model or fallback work begins. After retrieval, enforce a second invariant: the generated workspace question must be material-grounded and carry real sources; otherwise return `material_insufficient` without storing a generic question. This closes irrelevant-material and check/delete race windows.
 
+On workspace reads and material-only question creation, quarantine upgrade-era general pending questions and remove request mappings that point to general history. Workspace answer and retry paths reject those questions, while reusing the original request ID can atomically bind it to a newly generated grounded question.
+
 **Step 3: Update fixtures that intentionally exercise later workspace-question behavior**
 
 Give those scenarios an indexed material instead of weakening the production invariant.
@@ -200,6 +202,8 @@ Expected: FAIL because the event timeline and metric endpoint do not exist.
 **Step 2: Implement atomic event recording**
 
 Store a bounded, idempotent event array in a separate owner/workspace journey record. Product analytics must not advance the learning-domain version, invalidate in-flight model work, or turn an already committed resolve/upload/question/grade/snapshot into a user-visible failure. Add a narrow authenticated endpoint for the client to mark a grade as shown; validate the attempt and its grounding before recording.
+
+Serialize event writes with workspace deletion through the workspace lifecycle lock. Snapshot and restore the event record in deletion compensation so failed material deletion commits restore the complete workspace, while successful deletion cannot race with a late event append and leave an orphan metric record.
 
 **Step 3: Implement the admin-only metric read model**
 

@@ -33,7 +33,7 @@ from refineq.learning.models import (
 )
 from refineq.learning.planning import build_study_plan
 from refineq.storage.journey_events import JourneyEventRepository
-from refineq.storage.json_store import RecordNotFoundError
+from refineq.storage.json_store import RecordNotFoundError, StoredRecord
 from refineq.storage.learning import LearningRepository
 from refineq.storage.projects import ProjectRepository
 
@@ -794,6 +794,53 @@ class LearningService:
         return Grounding.MATERIAL if cls._question_sources(question) else Grounding.GENERAL
 
     @classmethod
+    def _is_material_question(cls, question: dict[str, Any]) -> bool:
+        return (
+            cls._question_grounding(question) == Grounding.MATERIAL
+            and bool(cls._question_sources(question))
+        )
+
+    def quarantine_ungrounded_pending(self, owner_id: str, project_id: str) -> bool:
+        """Remove legacy general pending state from material-only workspaces."""
+
+        changed = False
+        with self._learning.question_transaction(owner_id, project_id):
+            self._require_project(owner_id, project_id)
+            current = self._learning.get(owner_id, project_id)
+            progress = self._progress(current.data)
+            pending = progress.get("pending_question")
+            history = progress.get("question_history", {})
+            requests = progress.get("question_requests", {})
+            invalid_request_ids = {
+                request_key
+                for request_key, question_id in requests.items()
+                if (question := history.get(question_id)) is not None
+                and not self._is_material_question(question)
+            }
+            pending_is_invalid = pending is not None and not self._is_material_question(pending)
+            if not pending_is_invalid and not invalid_request_ids:
+                return False
+
+            def quarantine(data: dict[str, Any]) -> dict[str, Any]:
+                nonlocal changed
+                inner_progress = self._progress(data)
+                inner_pending = inner_progress.get("pending_question")
+                if inner_pending is not None and not self._is_material_question(inner_pending):
+                    inner_progress["pending_question"] = None
+                    changed = True
+                inner_history = inner_progress.get("question_history", {})
+                inner_requests = inner_progress.get("question_requests", {})
+                for request_key, question_id in list(inner_requests.items()):
+                    question = inner_history.get(question_id)
+                    if question is not None and not self._is_material_question(question):
+                        inner_requests.pop(request_key, None)
+                        changed = True
+                return data
+
+            self._learning.mutate(owner_id, project_id, quarantine)
+        return changed
+
+    @classmethod
     def _public_question(
         cls,
         question: dict[str, Any],
@@ -831,6 +878,8 @@ class LearningService:
         require_material_grounding: bool = False,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
+        if require_material_grounding:
+            self.quarantine_ungrounded_pending(owner_id, project_id)
 
         def public_question(question: dict[str, Any], saved_at: str | None) -> QuestionResponse:
             response = self._public_question(question, saved_at=saved_at)
@@ -1042,8 +1091,16 @@ class LearningService:
             )
             return public_question(selected, selected_saved_at)
 
-    def pending_question(self, owner_id: str, project_id: str) -> QuestionResponse:
+    def pending_question(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        require_material_grounding: bool = False,
+    ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
+        if require_material_grounding:
+            self.quarantine_ungrounded_pending(owner_id, project_id)
         progress = self._progress(self._learning.get(owner_id, project_id).data)
         pending = progress.get("pending_question")
         if pending is None:
@@ -1058,6 +1115,8 @@ class LearningService:
         owner_id: str,
         project_id: str,
         question_id: str,
+        *,
+        require_material_grounding: bool = False,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
         selected: dict[str, Any] | None = None
@@ -1080,6 +1139,10 @@ class LearningService:
                 )
             if stored_question is None:
                 raise QuestionNotFoundError("Practice question not found")
+            if require_material_grounding and not self._is_material_question(stored_question):
+                raise MaterialGroundingRequiredError(
+                    "This legacy question is not grounded in uploaded material; start a new task"
+                )
             selected = deepcopy(stored_question)
             selected.pop("review_session_id", None)
             selected.pop("plan_session_id", None)
@@ -1166,6 +1229,8 @@ class LearningService:
         owner_id: str,
         project_id: str,
         payload: AnswerRequest,
+        *,
+        require_material_grounding: bool = False,
     ) -> AnswerResponse:
         self._require_project(owner_id, project_id)
         current = self._learning.get(owner_id, project_id)
@@ -1193,6 +1258,11 @@ class LearningService:
         current_question = current_progress.get("pending_question")
         if current_question is None or current_question["id"] != payload.question_id:
             raise LearningConflictError("Question is not pending")
+        if require_material_grounding and not self._is_material_question(current_question):
+            self.quarantine_ungrounded_pending(owner_id, project_id)
+            raise MaterialGroundingRequiredError(
+                "This legacy question is not grounded in uploaded material; start a new task"
+            )
         if "grading" in current_question:
             generated = GeneratedQuestion.model_validate(current_question["grading"])
             grade = (
@@ -1537,7 +1607,6 @@ class LearningService:
         occurred_at: datetime | None = None,
         ref_id: str | None = None,
     ) -> JourneyEvent:
-        self._require_project(owner_id, project_id)
         if self._journey_events is None:
             raise LearningServiceError("Journey event storage is unavailable")
         proposed = build_journey_event(
@@ -1547,7 +1616,9 @@ class LearningService:
             occurred_at=occurred_at or datetime.now(UTC),
             ref_id=ref_id,
         )
-        return self._journey_events.append(owner_id, project_id, proposed)
+        with self._learning.plan_transaction(owner_id, project_id):
+            self._require_project(owner_id, project_id)
+            return self._journey_events.append(owner_id, project_id, proposed)
 
     def try_record_journey_event(
         self,
@@ -1584,7 +1655,6 @@ class LearningService:
         *,
         occurred_at: datetime | None = None,
     ) -> JourneyEvent:
-        self._require_project(owner_id, project_id)
         proposed = build_journey_event(
             workspace_id=project_id,
             name="grounded_grade_shown",
@@ -1592,15 +1662,35 @@ class LearningService:
             occurred_at=occurred_at or datetime.now(UTC),
             ref_id=attempt_id,
         )
-        current = self._learning.get(owner_id, project_id).data
-        attempt = current.get("attempts", {}).get(attempt_id)
-        if attempt is None:
-            raise AttemptNotFoundError("Learning attempt not found")
-        if attempt.get("grounding") != Grounding.MATERIAL.value:
-            raise LearningConflictError("Only a material-grounded grade can be shown")
         if self._journey_events is None:
             raise LearningServiceError("Journey event storage is unavailable")
-        return self._journey_events.append(owner_id, project_id, proposed)
+        with self._learning.plan_transaction(owner_id, project_id):
+            self._require_project(owner_id, project_id)
+            current = self._learning.get(owner_id, project_id).data
+            attempt = current.get("attempts", {}).get(attempt_id)
+            if attempt is None:
+                raise AttemptNotFoundError("Learning attempt not found")
+            if attempt.get("grounding") != Grounding.MATERIAL.value:
+                raise LearningConflictError("Only a material-grounded grade can be shown")
+            return self._journey_events.append(owner_id, project_id, proposed)
+
+    def snapshot_journey_events(
+        self,
+        owner_id: str,
+        project_id: str,
+    ) -> StoredRecord | None:
+        if self._journey_events is None:
+            return None
+        return self._journey_events.snapshot(owner_id, project_id)
+
+    def restore_journey_events(
+        self,
+        owner_id: str,
+        project_id: str,
+        record: StoredRecord,
+    ) -> None:
+        if self._journey_events is not None:
+            self._journey_events.restore(owner_id, project_id, record)
 
     def delete_journey_events(self, owner_id: str, project_id: str) -> None:
         if self._journey_events is not None:

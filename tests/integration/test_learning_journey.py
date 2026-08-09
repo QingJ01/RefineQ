@@ -169,6 +169,107 @@ def test_workspace_question_rejects_indexed_but_irrelevant_material(
     ).data["progress"]["pending_question"] is None
 
 
+def test_workspace_hides_and_rejects_a_legacy_general_pending_question(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "legacy-general-pending@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        legacy = app.state.workspace_learning_service.next_question(
+            learner["user_id"],
+            workspace_id,
+            request_id="legacy-general-request",
+        )
+
+        rejected = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "legacy-general-attempt",
+                "question_id": legacy.id,
+                "answer": "A generic answer that must not be graded.",
+            },
+        )
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        )
+        retry = client.post(
+            f"/workspaces/{workspace_id}/learning/questions/{legacy.id}/retry",
+            headers=headers,
+        )
+
+    assert legacy.grounding.value == "general"
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "material_insufficient"
+    assert snapshot.status_code == 200
+    assert snapshot.json()["active_question"] is None
+    assert retry.status_code == 409
+    assert retry.json()["error"]["code"] == "material_insufficient"
+    record = app.state.learning.get(learner["user_id"], workspace_id)
+    assert record.data["progress"]["pending_question"] is None
+    assert "legacy-general-attempt" not in record.data["attempts"]
+
+
+def test_workspace_replaces_legacy_general_request_with_a_grounded_question(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "legacy-general-replacement@example.com")
+        headers = _authorization(learner["token"])
+        workspace = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]
+        workspace_id = workspace["id"]
+        legacy = app.state.workspace_learning_service.next_question(
+            learner["user_id"],
+            workspace_id,
+            request_id="legacy-reused-request",
+        )
+        topic = workspace["topics"][0]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "relevant.txt",
+                    f"{topic} is explained in this study source with examples.".encode(),
+                    "text/plain",
+                )
+            },
+        )
+
+        replacement = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "legacy-reused-request"},
+        )
+        replay = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "legacy-reused-request"},
+        )
+
+    assert legacy.grounding.value == "general"
+    assert uploaded.status_code == 201
+    assert replacement.status_code == 200, replacement.json()
+    assert replacement.json()["id"] != legacy.id
+    assert replacement.json()["grounding"] == "material"
+    assert replacement.json()["sources"]
+    assert replay.json()["id"] == replacement.json()["id"]
+
+
 def test_complete_learning_journey_is_owner_scoped_and_idempotent(
     tmp_path: Path,
 ) -> None:

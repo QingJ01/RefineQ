@@ -77,5 +77,19 @@ class JourneyEventRepository:
             return []
         return [JourneyEvent.model_validate(item) for item in record.data.get("events", [])]
 
+    def snapshot(self, owner_id: str, workspace_id: str) -> StoredRecord | None:
+        try:
+            return self._store.read(owner_id, "journey_events", workspace_id)
+        except RecordNotFoundError:
+            return None
+
+    def restore(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        record: StoredRecord,
+    ) -> StoredRecord:
+        return self._store.restore(owner_id, "journey_events", workspace_id, record)
+
     def delete(self, owner_id: str, workspace_id: str) -> None:
         self._store.delete(owner_id, "journey_events", workspace_id)
