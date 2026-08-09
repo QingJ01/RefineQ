@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from refineq.api.dependencies import CurrentUser
+from refineq.knowledge.index import MaterialNotFoundError
 from refineq.learning.events import JourneyEvent
 from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
-from refineq.learning.personalized import TargetedPlanRequest
+from refineq.learning.personalized import MaterialMutationBusyError, TargetedPlanRequest
 from refineq.learning.service import (
     AnswerRequest,
     AnswerResponse,
@@ -31,6 +32,7 @@ from refineq.learning.service import (
     SavedQuestionResponse,
     SeedRequest,
 )
+from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.service import (
     WorkspaceMaterialRequiredError,
     WorkspaceNotFoundError,
@@ -116,7 +118,34 @@ def create_targeted_plan(
 ) -> StudyPlan:
     try:
         request.app.state.workspaces.get(user.id, workspace_id)
+    except RecordNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "workspace_not_found", "message": "Learning space not found"},
+        ) from error
+    try:
         return request.app.state.targeted_plans.generate(user.id, workspace_id, payload)
+    except MaterialNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "material_not_found", "message": "Material is not linked here"},
+        ) from error
+    except RecordNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "material_analysis_required",
+                "message": "Analyze this material before generating a targeted plan",
+            },
+        ) from error
+    except MaterialMutationBusyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "material_mutation_busy",
+                "message": "Another material operation is in progress",
+            },
+        ) from error
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

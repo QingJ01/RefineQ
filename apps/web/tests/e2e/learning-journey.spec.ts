@@ -73,7 +73,6 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await completeInitialDiagnostic(page);
   await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
@@ -283,7 +282,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       name: "computer-architecture-notes.txt",
       mimeType: "text/plain",
       buffer: Buffer.from(
-        "Computer Architecture midterm review: pipelines overlap fetch, decode, execute, memory, and write-back to improve throughput; caches use temporal and spatial locality. 流水线的数据冒险可以通过转发或停顿处理，缓存利用局部性降低平均访存时间。",
+        "Chapter 1 Pipelines\nComputer Architecture midterm review: pipelines overlap fetch, decode, execute, memory, and write-back to improve throughput; caches use temporal and spatial locality. 流水线的数据冒险可以通过转发或停顿处理，缓存利用局部性降低平均访存时间。",
       ),
     });
     await expect(
@@ -311,12 +310,25 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("material-sort").selectOption("title");
     await page.getByTestId("material-filter-tag").selectOption("all");
     await expect(page.locator(".material-list li")).toHaveCount(2);
+    const architectureMaterial = page.locator(".material-list li").filter({
+      hasText: "computer-architecture-notes.txt",
+    });
+    await architectureMaterial.locator('[data-testid^="material-analyze-"]').click();
+    await expect(architectureMaterial.getByTestId("targeted-plan-builder")).toBeVisible();
+    await architectureMaterial.getByTestId("targeted-plan-builder").getByRole("button").click();
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/calendar$/);
+    await expect(page.getByTestId("plan-view-calendar")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("nav-materials").click();
     await page.getByTestId("material-search").fill("流水线 数据冒险");
     await page.locator(".material-search button").click();
     await expect(page.locator(".material-search-results")).toContainText("computer-architecture-notes.txt");
     await page.getByTestId("nav-today").click();
-    await expect(page.getByTestId("next-action-start_session")).toBeVisible();
-    await page.getByTestId("next-action-start_session").click();
+    await completeInitialDiagnostic(page);
+    const firstLearningAction = page.locator(
+      '[data-testid="next-action-start_session"], [data-testid="next-action-start_practice"]',
+    );
+    await expect(firstLearningAction).toBeVisible();
+    await firstLearningAction.click();
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
     await expect(page.locator(".session-steps li")).toHaveCount(4);
     const initialExamDays = Number.parseInt(
@@ -331,6 +343,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("learning-mode-exam").click();
     await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+    await expect(page.getByTestId("practice-answer")).toBeEnabled();
     await page.screenshot({ path: testInfo.outputPath("exam-learning-practice.png") });
     const firstQuestionId = await page.getByTestId("session-practice-stage").getAttribute("data-question-id");
     expect(firstQuestionId).toBeTruthy();
@@ -388,7 +401,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("nav-progress").click();
     await expect(page).toHaveURL(/\/progress$/);
     await expect(page.locator('[data-testid^="attempt-rubric-"]').first()).toBeVisible();
-    await expect(page.locator(".evidence-timeline > li")).toHaveCount(2);
+    await expect(page.locator(".evidence-timeline > li")).toHaveCount(6);
     await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
     await expect(page.getByTestId("review-queue")).toHaveCount(0);
     await expect(page.locator("#learning-record")).toBeVisible();
@@ -922,7 +935,6 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await completeInitialDiagnostic(page);
   await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
   const routeNotice = page.getByTestId("workspace-route-notice");
   if (await routeNotice.isVisible()) await routeNotice.getByRole("button").last().click();
@@ -945,6 +957,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
 
   await page.getByTestId("mobile-shortcut-today").click();
   await expect(page).toHaveURL(/\/today$/);
+  await completeInitialDiagnostic(page);
   await expect(page.getByTestId("next-action-start_session")).toBeVisible();
   await page.getByTestId("next-action-start_session").click();
   await expect(page.getByTestId("learning-session-canvas")).toBeVisible({ timeout: 15_000 });

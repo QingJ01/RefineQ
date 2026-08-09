@@ -1442,11 +1442,11 @@ class LearningService:
                 },
             )
             raw_plan = progress.get("plan")
-            if raw_plan:
+            if raw_plan and mastery_updated:
                 originating_session_id = question.get("plan_session_id") or question.get(
                     "review_session_id"
                 )
-                if mastery_updated and originating_session_id is not None:
+                if originating_session_id is not None:
                     originating_session = next(
                         (
                             session

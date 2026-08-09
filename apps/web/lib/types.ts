@@ -493,6 +493,7 @@ export interface MaterialRecord {
   chunk_count: number;
   content_sha256: string;
   indexed_at: string;
+  workspace_ids?: string[];
 }
 
 export type MaterialType =

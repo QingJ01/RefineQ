@@ -210,6 +210,11 @@ class SqlRecordStore:
             session.execute(delete(records).filter_by(**identity))
 
     def list(self, owner_id: str, collection: str) -> list[StoredRecord]:
+        return list(self.list_items(owner_id, collection).values())
+
+    def list_items(self, owner_id: str, collection: str) -> dict[str, StoredRecord]:
+        """Return valid records keyed by their owner-scoped record identifier."""
+
         owner_id = validate_identifier(owner_id, field="owner_id")
         collection = validate_identifier(collection, field="collection")
         with self._session() as session:
@@ -221,7 +226,7 @@ class SqlRecordStore:
                 )
                 .order_by(records.c.record_id)
             ).all()
-            return [self._stored(row) for row in rows]
+            return {str(row.record_id): self._stored(row) for row in rows}
 
     def read_many(
         self,

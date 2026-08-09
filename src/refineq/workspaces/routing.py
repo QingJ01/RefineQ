@@ -15,6 +15,10 @@ _SUBJECT_HINTS: dict[str, tuple[str, ...]] = {
         "导数",
         "积分",
         "代数",
+        "线性代数",
+        "特征值",
+        "正交投影",
+        "最小二乘",
         "geometry",
         "calculus",
         "limit",
@@ -26,6 +30,10 @@ _SUBJECT_HINTS: dict[str, tuple[str, ...]] = {
         "cross product",
         "vector",
         "vectors",
+        "linear algebra",
+        "eigenvalue",
+        "orthogonal projection",
+        "least squares",
         "math",
     ),
     "language": (
@@ -247,6 +255,11 @@ def _keywords(intent: str) -> list[str]:
 
 def _capability_topics(subject: str, normalized: str) -> list[str]:
     mappings: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
+        "mathematics": (
+            (("特征值", "eigenvalue"), "特征值与特征向量"),
+            (("正交投影", "orthogonal projection"), "正交投影"),
+            (("最小二乘", "least squares"), "最小二乘"),
+        ),
         "product": (
             (("用户需求", "需求验证", "user needs", "validate", "validation"), "用户需求验证"),
             (("用户访谈", "访谈", "interview"), "用户访谈分析"),
@@ -318,6 +331,20 @@ def _suggested_title(intent: str, subject: str) -> str:
         matched = [hint for hint in _SUBJECT_HINTS["computing"] if hint.casefold() in normalized]
         return max(matched, key=len) if matched else "计算机学习"
     if subject == "mathematics":
+        if any(
+            key in normalized
+            for key in (
+                "线性代数",
+                "特征值",
+                "正交投影",
+                "最小二乘",
+                "linear algebra",
+                "eigenvalue",
+                "orthogonal projection",
+                "least squares",
+            )
+        ):
+            return "线性代数"
         is_advanced = any(key in normalized for key in ("高数", "微积分", "极限"))
         return "高等数学" if is_advanced else "数学学习"
     if subject == "language":

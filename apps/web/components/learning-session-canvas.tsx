@@ -375,6 +375,7 @@ export function LearningSessionCanvas({
                 id="session-answer"
                 data-testid="practice-answer"
                 value={answer}
+                disabled={busy}
                 onChange={(event) => onAnswerChange(event.target.value)}
                 placeholder={text.answerPlaceholder}
                 rows={6}

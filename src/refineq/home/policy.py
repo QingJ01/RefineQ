@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 
+from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.models import LearningWorkspace
 
 MAX_DISPATCH_CANDIDATES = 8
@@ -66,19 +68,6 @@ _LEARNING_VERB = re.compile(
     re.IGNORECASE,
 )
 _EXAM_CONTEXT = re.compile(r"考试|期中|期末|备考|\b(?:exam|midterm|final)\b", re.IGNORECASE)
-_TIME_CONSTRAINT = re.compile(
-    r"\d{4}[-/年]\d{1,2}(?:[-/月]\d{1,2})?|\d{1,2}\s*月\s*\d{1,2}\s*日|"
-    r"(?:明天|后天|下周|本周|月底|期末|考试|截止)|"
-    r"(?:每天|每日|每周)(?:\s*(?:能|可|要|计划)?\s*(?:学|学习|复习))?\s*\d+\s*"
-    r"(?:分钟|小时|次)|"
-    r"\d+\s*(?:天|周|星期|个月|月)\s*(?:内|后|系统|坚持)?|"
-    r"by\s+\w+|(?:exam|midterm|final|test)\s+on|deadline|daily\s+\d+|"
-    r"\d+\s*(?:minutes?|hours?)\s+(?:a|per)\s+(?:day|week)|"
-    r"\d+\s*(?:minutes?|hours?)\s+daily|"
-    r"for\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*"
-    r"(?:days?|weeks?|months?)",
-    re.IGNORECASE,
-)
 _DIRECT_TASK = re.compile(
     r"是什么|什么意思|解释|区别|为什么|总结|概括|翻译|改写|润色|举例|"
     r"what\s+is|what\s+does|explain|difference\s+between|why\s+does|"
@@ -86,8 +75,17 @@ _DIRECT_TASK = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_TEXT_TRANSFORM = re.compile(
-    r"(?:总结|概括|翻译|改写|润色)(?:下面|以下|这段|这份|这篇).{0,12}(?:文字|文本|内容|文章|：|:)|"
-    r"(?:summari[sz]e|translate|rewrite|paraphrase)\s+(?:the\s+)?(?:following|below|this\s+text)",
+    r"(?:总结|概括|翻译|改写|润色)(?:一下)?(?:我)?(?:粘贴(?:的)?|贴出(?:的)?)?"
+    r"(?:下面|以下|这段|这份|这篇).{0,12}(?:文字|文本|内容|文章|：|:)|"
+    r"(?:summari[sz]e|translate|rewrite|paraphrase)\s+(?:the\s+)?"
+    r"(?:following|below|this(?:\s+pasted)?\s+text)",
+    re.IGNORECASE,
+)
+_EXPLICIT_QUOTED_EXPLANATION = re.compile(
+    r"(?:[“\"「『].{1,500}[”\"」』]\s*(?:是什么意思|表示什么|如何理解)|"
+    r"(?:解释|说明|解读).{0,6}(?:这句(?:话)?|这段(?:话|文字|内容)?|以下|下面).{0,8}[：:]|"
+    r"what\s+does\s+[\"“].{1,500}[\"”]\s+mean|"
+    r"explain\s+(?:this|the\s+following)\s+(?:sentence|text|passage))",
     re.IGNORECASE,
 )
 _ONE_SHOT_STUDY_PLAN = re.compile(
@@ -178,11 +176,19 @@ class HomeRoutingPolicy:
         normalized = _normalized(text)
         return not (_DESTRUCTIVE.search(normalized) or _HIGH_RISK_OR_REALTIME.search(normalized))
 
-    def decide(self, text: str, workspaces: list[LearningWorkspace]) -> PolicyDecision:
+    def decide(
+        self,
+        text: str,
+        workspaces: list[LearningWorkspace],
+        *,
+        now: datetime | None = None,
+    ) -> PolicyDecision:
         normalized = _normalized(text)
         named = _named_workspaces(text, workspaces)
 
-        if _EXPLICIT_TEXT_TRANSFORM.search(normalized):
+        if _EXPLICIT_TEXT_TRANSFORM.search(
+            normalized
+        ) or _EXPLICIT_QUOTED_EXPLANATION.search(normalized):
             return PolicyDecision(
                 PolicyKind.DIRECT_ANSWER,
                 "这是对本次明确标记文本的一次性转换；正文只作为不可信数据处理。",
@@ -246,7 +252,10 @@ class HomeRoutingPolicy:
             bool(_LATIN_LEARNING_OBJECT.search(normalized))
             and (has_learning_verb or has_exam_context)
         )
-        has_time_constraint = bool(_TIME_CONSTRAINT.search(normalized))
+        constraints = infer_intent_constraints(text, now=now or datetime.now(UTC))
+        has_time_constraint = (
+            constraints.exam_at is not None or constraints.daily_minutes is not None
+        )
         if has_learning_object and has_time_constraint:
             return PolicyDecision(
                 PolicyKind.STRONG_LONG_TERM,

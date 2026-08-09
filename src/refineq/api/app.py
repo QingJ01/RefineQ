@@ -180,6 +180,7 @@ def create_app(
         data_root=app.state.settings.data_root,
         knowledge=app.state.knowledge,
         object_storage=app.state.object_storage,
+        analyses=app.state.material_analyses,
     )
     app.state.material_deletions.recover_pending()
     app.state.model_settings = PlatformModelSettingsRepository(
@@ -189,21 +190,24 @@ def create_app(
     app.state.learning_intelligence = LearningIntelligenceService(
         app.state.knowledge,
         app.state.model_settings,
-        learning_model_transport or OpenAICompatibleStructuredTransport(),
+        learning_model_transport
+        or OpenAICompatibleStructuredTransport(timeout=15.0, max_retries=0),
     )
     app.state.material_analysis = MaterialAnalysisService(
         app.state.knowledge,
         app.state.material_analyses,
         app.state.model_settings,
         learning_model_transport
-        or OpenAICompatibleStructuredTransport(timeout=90.0, max_retries=0),
+        or OpenAICompatibleStructuredTransport(timeout=20.0, max_retries=0),
     )
     app.state.targeted_plans = TargetedPlanService(
         app.state.learning,
         app.state.material_analyses,
+        app.state.knowledge,
         app.state.model_settings,
         learning_model_transport
-        or OpenAICompatibleStructuredTransport(timeout=30.0, max_retries=0),
+        or OpenAICompatibleStructuredTransport(timeout=15.0, max_retries=0),
+        material_mutation_lease_path=app.state.material_deletions.lease_path,
     )
     app.state.learning_service = LearningService(
         app.state.projects,
@@ -233,7 +237,8 @@ def create_app(
         sessions=app.state.sessions,
         routing=WorkspaceRoutingIntelligence(
             app.state.model_settings,
-            learning_model_transport or OpenAICompatibleStructuredTransport(),
+            learning_model_transport
+            or OpenAICompatibleStructuredTransport(timeout=10.0, max_retries=0),
         ),
         max_workspaces=app.state.settings.max_workspaces_per_user,
     )
@@ -244,11 +249,11 @@ def create_app(
         app.state.model_settings,
         classifier=(
             home_classifier_transport
-            or OpenAICompatibleStructuredTransport(timeout=5.0, max_retries=0)
+            or OpenAICompatibleStructuredTransport(timeout=10.0, max_retries=0)
         ),
         answerer=(
             home_answer_transport
-            or OpenAICompatibleStructuredTransport(timeout=15.0, max_retries=1)
+            or OpenAICompatibleStructuredTransport(timeout=15.0, max_retries=0)
         ),
     )
     app.state.home_dispatch = HomeDispatchService(

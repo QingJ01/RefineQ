@@ -24,6 +24,10 @@ import { ConfirmDialog } from "../components/confirm-dialog";
 import { CoachActionCard, SessionCoach } from "../components/session-coach";
 import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { ScheduleCalendar } from "../components/schedule-calendar";
+import {
+  initialTargetedPlanTopics,
+  TargetedPlanBuilder,
+} from "../components/targeted-plan-builder";
 import { translator } from "../lib/i18n";
 import type { SearchSource } from "../lib/types";
 
@@ -1725,5 +1729,30 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="coach-configure-model"');
     expect(html).toContain('data-testid="session-upload-prompt"');
     expect(html).toContain('data-testid="saved-question-empty"');
+  });
+
+  it("turns an evidence-backed material analysis into a targeted plan form", () => {
+    const html = renderToStaticMarkup(
+      <TargetedPlanBuilder
+        locale="en"
+        materialId="material-1"
+        topics={["Eigenvalues", "Least squares"]}
+        onCreate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="targeted-plan-builder"');
+    expect(html).toContain("Eigenvalues");
+    expect(html).toContain("Least squares");
+    expect(html).toContain('type="date"');
+    expect(html).toContain('type="number"');
+    expect(html).toContain("Generate targeted plan");
+  });
+
+  it("caps the initial targeted-plan selection at the API maximum", () => {
+    const topics = Array.from({ length: 35 }, (_, index) => `Topic ${index + 1}`);
+
+    expect(initialTargetedPlanTopics(topics)).toHaveLength(30);
+    expect(initialTargetedPlanTopics([...topics, topics[0]])).toHaveLength(30);
   });
 });

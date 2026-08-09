@@ -50,6 +50,13 @@ class FakeLearningModel:
                     "citations": ["material-1#0"],
                 }
             )
+        if response_model.__name__ == "TrustedAnswerKeyOutput":
+            return response_model.model_validate(
+                {
+                    "supported": True,
+                    "expected_answer": "函数极限是函数值趋近的目标。",
+                }
+            )
         if response_model.__name__ == "MaterialAnalysisModelOutput":
             return response_model.model_validate(
                 {
@@ -121,7 +128,7 @@ class SequencedGradingLearningModel(FakeLearningModel):
         self.scores = iter(scores)
 
     def complete(self, *, settings, messages, response_model):
-        if response_model.__name__ == "QuestionModelOutput":
+        if response_model.__name__ in {"QuestionModelOutput", "TrustedAnswerKeyOutput"}:
             return super().complete(
                 settings=settings,
                 messages=messages,
@@ -330,6 +337,7 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         grade = answer.json()
         assert grade["score"] == 88
         assert grade["is_correct"] is True
+        assert grade["mastery_updated"] is True
         assert grade["feedback"] == "回答正确，下一步练习形式化定义。"
         assert grade["strengths"] == ["准确说明趋近"]
         assert grade["gaps"] == ["可以补充形式化定义"]
@@ -348,10 +356,11 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
     assert replay.status_code == 200
     assert replay.json()["replayed"] is True
     assert replay.json()["score"] == 88
-    assert model.calls == [
+    assert sorted(model.calls) == [
+        "GradingModelOutput",
         "MaterialAnalysisModelOutput",
         "QuestionModelOutput",
-        "GradingModelOutput",
+        "TrustedAnswerKeyOutput",
     ]
 
 
@@ -429,7 +438,7 @@ def test_retrying_one_question_cannot_update_mastery_or_difficulty_twice(
         app.state.knowledge.add_document(
             owner_id=owner_id,
             project_id=workspace_id,
-            material_id="limits-evidence",
+            material_id="material-1",
             filename="limits.txt",
             text="函数极限描述函数值趋近的目标，函数在该点不一定等于极限值。",
         )

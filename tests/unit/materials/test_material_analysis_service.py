@@ -80,6 +80,42 @@ class FailingTransport:
         raise EndpointSecurityError("provider unavailable")
 
 
+class HallucinatingTransport:
+    def complete(self, **_):
+        return MaterialAnalysisModelOutput(
+            material_type=MaterialType.TEXTBOOK,
+            title="虚构教材",
+            summary="声称覆盖资料中不存在的量子力学。",
+            sections=[
+                MaterialSection(
+                    title="量子隧穿",
+                    topics=["量子隧穿"],
+                    citation_ids=["invented#9"],
+                )
+            ],
+            topics=["量子隧穿", "函数极限"],
+            confidence=0.99,
+        )
+
+
+class CitationWashingTransport:
+    def complete(self, **_):
+        return MaterialAnalysisModelOutput(
+            material_type=MaterialType.TEXTBOOK,
+            title="虚构量子教材",
+            summary="把无关引文包装成量子隧穿证据。",
+            sections=[
+                MaterialSection(
+                    title="Quantum tunneling",
+                    topics=["Quantum tunneling"],
+                    citation_ids=["material_demo#0"],
+                )
+            ],
+            topics=["Quantum tunneling"],
+            confidence=0.99,
+        )
+
+
 def sources() -> list[SearchResult]:
     return [
         SearchResult(
@@ -87,7 +123,7 @@ def sources() -> list[SearchResult]:
             material_id="material_demo",
             filename="高等数学教材.pdf",
             chunk_index=0,
-            text="第一章 函数极限\n1.1 极限定义\n函数极限描述局部趋势。",
+            text="第一章 函数极限\n1.1 极限定义\n函数极限描述局部趋势，并讨论连续。",
             score=1.0,
         )
     ]
@@ -151,3 +187,41 @@ def test_provider_endpoint_failure_returns_fallback_instead_of_http_500() -> Non
 
     assert result.mode == "fallback"
     assert result.material_type is MaterialType.TEXTBOOK
+
+
+def test_analysis_rejects_sections_and_topics_without_valid_evidence() -> None:
+    service = MaterialAnalysisService(
+        FakeKnowledge(sources()),
+        FakeAnalyses(),
+        FakeSettings(configured=True),
+        HallucinatingTransport(),
+    )
+
+    result = service.analyze(
+        owner_id="learner",
+        workspace_id="workspace_demo",
+        material_id="material_demo",
+    )
+
+    assert result.mode == "fallback"
+    assert result.sections[0].title == "第一章 函数极限"
+    assert "量子隧穿" not in result.topics
+    assert result.topics == [section.title for section in result.sections]
+
+
+def test_analysis_rejects_unrelated_claims_that_reuse_a_valid_citation() -> None:
+    service = MaterialAnalysisService(
+        FakeKnowledge(sources()),
+        FakeAnalyses(),
+        FakeSettings(configured=True),
+        CitationWashingTransport(),
+    )
+
+    result = service.analyze(
+        owner_id="learner",
+        workspace_id="workspace_demo",
+        material_id="material_demo",
+    )
+
+    assert result.mode == "fallback"
+    assert "Quantum tunneling" not in result.topics

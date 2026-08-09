@@ -134,6 +134,7 @@ def test_list_delete_and_missing_record_match_existing_contract(store: SqlRecord
         "One",
         "Two",
     ]
+    assert list(store.list_items("owner", "workspaces")) == ["one", "two"]
     store.delete("owner", "workspaces", "one")
 
     with pytest.raises(RecordNotFoundError):

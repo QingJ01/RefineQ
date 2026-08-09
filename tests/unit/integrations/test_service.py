@@ -34,6 +34,46 @@ class _Repository:
         self.recorded.append((status, message))
 
 
+class _ChatRepository(_Repository):
+    def load(self, kind: IntegrationKind) -> IntegrationSettings:
+        assert kind is IntegrationKind.CHAT
+        return IntegrationSettings(
+            kind=kind,
+            enabled=True,
+            config={
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+                "temperature": 0.2,
+                "allow_private_network": False,
+            },
+            secrets={"api_key": SecretStr("chat-secret")},
+        )
+
+
+class _StructuredChatTransport:
+    def __init__(self) -> None:
+        self.response_model = None
+
+    def complete(self, *, settings, messages, response_model):
+        del settings, messages
+        self.response_model = response_model
+        return response_model.model_validate(
+            {
+                "status": "ok",
+                "classification": {
+                    "kind": "direct_answer",
+                    "reason": "stable one-shot question",
+                    "confidence": 0.99,
+                },
+                "answer": {
+                    "content": "A bounded answer",
+                    "basis": "stable knowledge",
+                    "convertible_goal": False,
+                },
+            }
+        )
+
+
 def test_embedding_connection_check_omits_unsupported_dimensions_parameter(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -80,3 +120,22 @@ def test_embedding_connection_check_rejects_an_unexpected_vector_dimension(monke
     assert result.status == "failed"
     assert "expected 1024" in result.message
     assert repository.recorded == [("failed", result.message)]
+
+
+def test_chat_connection_check_exercises_the_structured_capability_contract() -> None:
+    repository = _ChatRepository()
+    transport = _StructuredChatTransport()
+
+    result = IntegrationTester(repository, chat_transport=transport).test(
+        IntegrationKind.CHAT,
+        actor_id="admin",
+    )
+
+    assert result.status == "ok"
+    assert transport.response_model is not None
+    assert set(transport.response_model.model_fields) == {
+        "status",
+        "classification",
+        "answer",
+    }
+    assert repository.recorded == [("ok", "Structured chat capability succeeded")]

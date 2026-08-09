@@ -303,12 +303,15 @@ class HomeDispatchService:
                                 "automatically undone"
                             )
 
-                    deferred_delete = self._workspace_service.delete(
-                        owner_id,
-                        payload.workspace_id,
-                        precondition=require_unchanged_workspace,
-                        defer_material_finalization=True,
-                    )
+                    try:
+                        deferred_delete = self._workspace_service.delete(
+                            owner_id,
+                            payload.workspace_id,
+                            precondition=require_unchanged_workspace,
+                            defer_material_finalization=True,
+                        )
+                    except WorkspaceConflictError as error:
+                        raise HomeActionConflictError(str(error)) from error
                 receipt = HomeActionReceipt(
                     request_id=payload.request_id,
                     idempotency_key=idempotency_key,

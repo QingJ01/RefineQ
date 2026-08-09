@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from functools import partial
 from hashlib import sha256
@@ -41,6 +42,7 @@ workspace_router = APIRouter(
 library_router = APIRouter(prefix="/materials/library", tags=["materials"])
 LIBRARY_SCOPE_ID = "library"
 _policy = MaterialPolicy()
+logger = logging.getLogger(__name__)
 
 
 class MaterialUpdateRequest(BaseModel):
@@ -105,13 +107,60 @@ def _require_project(request: Request, owner_id: str, project_id: str) -> None:
         try:
             request.app.state.workspaces.get(owner_id, project_id)
         except RecordNotFoundError:
-            workspace_route = request.url.path.startswith("/workspaces/")
+            workspace_route = (
+                request.url.path.startswith("/workspaces/")
+                or "/attach/" in request.url.path
+            )
             code = "workspace_not_found" if workspace_route else "project_not_found"
             message = "Learning space not found" if workspace_route else "Project not found"
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": code, "message": message},
             ) from error
+
+
+def _link_materials_to_workspace(
+    request: Request,
+    *,
+    owner_id: str,
+    workspace_id: str,
+    material_ids: list[str],
+    source_scope: str = LIBRARY_SCOPE_ID,
+) -> list[MaterialRecord]:
+    lease = RecoveryLease.acquire_wait(request.app.state.material_deletions.lease_path)
+    if lease is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "material_mutation_busy",
+                "message": "Another material operation is in progress",
+            },
+        )
+    try:
+        _require_project(request, owner_id, workspace_id)
+        try:
+            sources = [
+                request.app.state.knowledge.get_material(
+                    owner_id=owner_id,
+                    project_id=source_scope,
+                    material_id=material_id,
+                )
+                for material_id in material_ids
+            ]
+            for source in sources:
+                request.app.state.knowledge.link_material(
+                    owner_id=owner_id,
+                    workspace_id=workspace_id,
+                    material_id=source.id,
+                )
+        except MaterialNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "material_not_found", "message": "Material not found"},
+            ) from error
+        return sources
+    finally:
+        lease.release()
 
 
 def _material_error(error: MaterialPolicyError) -> HTTPException:
@@ -266,12 +315,12 @@ async def upload_materials(
         if len(existing_by_id) == len(loaded):
             existing = [existing_by_id[material_id] for material_id in material_ids]
             if project_id != LIBRARY_SCOPE_ID:
-                for material in existing:
-                    request.app.state.knowledge.link_material(
-                        owner_id=user.id,
-                        workspace_id=project_id,
-                        material_id=material.id,
-                    )
+                existing = _link_materials_to_workspace(
+                    request,
+                    owner_id=user.id,
+                    workspace_id=project_id,
+                    material_ids=[material.id for material in existing],
+                )
             return existing
 
         limits = _extraction_limits(request)
@@ -376,12 +425,12 @@ async def upload_materials(
             indexed_by_id.update(existing_by_id)
             indexed = [indexed_by_id[material_id] for material_id in material_ids]
             if project_id != LIBRARY_SCOPE_ID:
-                for material in indexed:
-                    request.app.state.knowledge.link_material(
-                        owner_id=user.id,
-                        workspace_id=project_id,
-                        material_id=material.id,
-                    )
+                indexed = _link_materials_to_workspace(
+                    request,
+                    owner_id=user.id,
+                    workspace_id=project_id,
+                    material_ids=[material.id for material in indexed],
+                )
             return indexed
         except MaterialQuotaExceededError as error:
             _raise_quota_error(error)
@@ -450,23 +499,13 @@ async def attach_library_material(
     """Copy an owned material into a learning space so retrieval remains space-isolated."""
 
     _require_project(request, user.id, workspace_id)
-    try:
-        source = request.app.state.knowledge.get_material(
-            owner_id=user.id,
-            project_id=source_scope,
-            material_id=material_id,
-        )
-    except MaterialNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "material_not_found", "message": "Material not found"},
-        ) from error
-    request.app.state.knowledge.link_material(
+    return _link_materials_to_workspace(
+        request,
         owner_id=user.id,
         workspace_id=workspace_id,
-        material_id=source.id,
-    )
-    return source
+        material_ids=[material_id],
+        source_scope=source_scope,
+    )[0]
 
 
 @router.get("/search", response_model=list[SearchResult])
@@ -570,11 +609,23 @@ def _bulk_delete_materials(
 ) -> Response:
     _require_project(request, user.id, project_id)
     if project_id != LIBRARY_SCOPE_ID:
-        request.app.state.knowledge.unlink_materials(
-            owner_id=user.id,
-            workspace_id=project_id,
-            material_ids=payload.material_ids,
-        )
+        lease = RecoveryLease.acquire_wait(request.app.state.material_deletions.lease_path)
+        if lease is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "material_mutation_busy",
+                    "message": "Another material operation is in progress",
+                },
+            )
+        try:
+            request.app.state.knowledge.unlink_materials(
+                owner_id=user.id,
+                workspace_id=project_id,
+                material_ids=payload.material_ids,
+            )
+        finally:
+            lease.release()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     try:
         pending = request.app.state.material_deletions.prepare(
@@ -616,13 +667,30 @@ def bulk_delete_workspace_materials(
     request: Request,
     user: CurrentUser,
 ) -> Response:
-    _require_project(request, user.id, workspace_id)
-    request.app.state.knowledge.unlink_materials(
-        owner_id=user.id,
-        workspace_id=workspace_id,
-        material_ids=payload.material_ids,
+    return _bulk_delete_materials(workspace_id, payload, request, user)
+
+
+@library_router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+def bulk_delete_library_materials(
+    payload: MaterialBulkDeleteRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _bulk_delete_materials(LIBRARY_SCOPE_ID, payload, request, user)
+
+
+@library_router.delete("/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_library_material(
+    material_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    return _bulk_delete_materials(
+        LIBRARY_SCOPE_ID,
+        MaterialBulkDeleteRequest(material_ids=[material_id]),
+        request,
+        user,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @workspace_router.get("/search", response_model=list[SearchResult])
@@ -680,11 +748,35 @@ def _analyze_material(
             project_id=project_id,
             material_id=material_id,
         )
-        return request.app.state.material_analysis.analyze(
+        analysis = request.app.state.material_analysis.analyze(
             owner_id=user.id,
             workspace_id=material.project_id,
             material_id=material_id,
+            persist=False,
         )
+        lease = RecoveryLease.acquire_wait(request.app.state.material_deletions.lease_path)
+        if lease is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "material_mutation_busy",
+                    "message": "Another material operation is in progress",
+                },
+            )
+        try:
+            _require_project(request, user.id, project_id)
+            current = request.app.state.knowledge.get_material(
+                owner_id=user.id,
+                project_id=project_id,
+                material_id=material_id,
+            )
+            return request.app.state.material_analysis.save(
+                owner_id=user.id,
+                workspace_id=current.project_id,
+                analysis=analysis,
+            )
+        finally:
+            lease.release()
     except MaterialNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -844,10 +936,4 @@ def delete_workspace_material(
     request: Request,
     user: CurrentUser,
 ) -> Response:
-    _require_project(request, user.id, workspace_id)
-    request.app.state.knowledge.unlink_materials(
-        owner_id=user.id,
-        workspace_id=workspace_id,
-        material_ids=[material_id],
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return _delete_material(workspace_id, material_id, request, user)

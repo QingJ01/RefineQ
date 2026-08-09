@@ -707,6 +707,26 @@ export class ApiClient {
     return this.request("/materials/library", {}, token);
   }
 
+  deleteLibraryMaterial(token: string, materialId: string): Promise<void> {
+    return this.request(
+      `/materials/library/${encodeURIComponent(materialId)}`,
+      { method: "DELETE" },
+      token,
+    );
+  }
+
+  bulkDeleteLibraryMaterials(token: string, materialIds: string[]): Promise<void> {
+    return this.request(
+      "/materials/library",
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ material_ids: materialIds }),
+      },
+      token,
+    );
+  }
+
   attachLibraryMaterial(
     token: string,
     sourceScope: string,

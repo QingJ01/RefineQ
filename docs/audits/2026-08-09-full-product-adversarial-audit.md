@@ -1,8 +1,8 @@
 # RefineQ 全产品对抗性审查
 
-审查日期：2026-08-09  
-审查对象：`main`，基线提交 `5b15a23`（Merge PR #9）  
-版本：v2（经独立复核补全）  
+审查日期：2026-08-09
+审查对象：`main`，基线提交 `5b15a23`（Merge PR #9）
+版本：v5（已完成材料分析 PR 的最终独立对抗复核与并发处置）
 
 **修订记录**
 
@@ -10,12 +10,56 @@
 | --- | --- |
 | v1 | 初版：4 个 P0、5 个 P1、6 组 P2，含实测截图与结构化证据 |
 | v2 | 独立复核后补全：新增 **P0-5 注入文本成为标准答案**（v1 只记录到展示层）；P0-1 补超时值来源与 canary 反推定值；P0-2 补第三层根因并拆成快修/结构修；P1-2 点破“70 分是天花板兼必然失败”；发布口径按是否配置模型拆分；北极星剔除自陈信号；新增第零阶段快修与离线回归测试 |
+| v3 | 审阅同事的材料分析版本并完成落地：修复 canonical library 迁移与删除、资料分析证据边界、针对性计划、评分污染、主页路由、结构化模型 canary、首用主行动与全局资料库；浏览器复测又补出考试日期被重置、模式切换中作答竞态两项问题 |
+| v4 | 独立 reviewer 再发现 10 个 P1：迁移回滚键漂移、分析删除崩溃窗口、计划历史/幂等/API 错码、有效 citation 洗白、AI 生成答案键污染、跨空间异步写入、31+ topic 与引用文本误建空间；全部建立失败用例后修复，并补齐 canonical 唯一索引、legacy 分析并发迁移、稀疏计划和资料关联可见性 |
+| v5 | 最终复核继续攻击修复本身：发现可信 key 全关闭导致掌握度永不更新、同源材料可诱导答案键、旧 pending session 违反新约束，以及分析/定向计划与删除并发产生迟到写入；改为与材料隔离的 topic-only key compiler、可疑控制型 topic 拒绝晋级、pending 约束重验，以及“模型在锁外、提交时短租约重验”的两阶段协议 |
 
-> 复核方式：逐条回查 v1 引用的每一处 `file:line`，全部成立；`pytest` 独立重跑得 472 passed / 3 skipped，与 v1 记录一致。v2 的新增结论同样附代码证据。
+> v2 复核方式：逐条回查 v1 引用的每一处 `file:line`，全部成立；当时 `pytest` 独立重跑得 472 passed / 3 skipped。v3 在隔离工作树中重新建立失败用例、实施修复并运行全量后端、前端和浏览器回归；最终数字见 §9。
 
-结论：**当前不建议按“真实模型已接入、可稳定完成学习闭环”的口径发布。** 账号、安全隔离、资料索引、计划管理和后台运维基础扎实；但模型能力契约、主页信任边界、学习目标保真度、长耗时任务状态语义，以及评估基准被材料污染，共 5 个发布阻断问题。
+结论：**v2 与三轮材料分析 PR 复核识别出的确定性发布阻断均已关闭；持久化 Agent Operation 仍是下一阶段的架构工作。** 出题模型返回的 `expected_answer` 永远不再成为判分权威；可信 key 由不接触材料、题目、既有反馈或学习者答案的独立 topic-only compiler 并行生成，并在短主题形态、控制语言、topic overlap 与有效题目 citation 边界内晋级。可疑或无可信 key 的结果仍可提供 coaching，但不能改 mastery。结构化模型调用附上真实 schema，能力探针替代“Reply OK”，主页强创建信号也已收紧，并保证无资料时只展示上传这一项首要动作。长耗时调用现在有后端有界超时和确定性降级，不再先由前端宣告失败；但它还不是可跨刷新、跨设备接续的持久化 operation，因此不能把当前版本描述为“后台 Agent 任务系统已经完成”。
 
-**发布口径需按是否配置模型拆开**——两种模式的风险面不同，这直接决定演示与提交时的取舍：
+### v3 落地处置摘要
+
+| 问题 | 处置 | 回归边界 |
+|---|---|---|
+| v2→v3 canonical migration 会撞唯一键 | 迁移前按 owner/material 去重，保留确定性 canonical 行、chunk 与全部 workspace links | `tests/unit/database/test_engine.py` |
+| workspace 统计、物理删除与批量事务不一致 | 统计改为 link→canonical join；物理删除清全部 links；批量 SQL 在一个事务内提交；空删除批次保持合法 no-op | `tests/unit/knowledge/test_index.py`、`tests/integration/test_material_upload.py`、主页撤销并发用例 |
+| 同一资料在不同空间重复/丢失分析，重传继承旧分析 | 分析改为 owner-scoped canonical projection；全局物理删除后清理投影 | `tests/unit/storage/test_material_analyses.py`、`tests/integration/test_material_upload.py` |
+| 无效引文和模型自报 topic 可进入分析 | 无有效 citation 的 section 丢弃；公开 topic 只从保留下来的 section 派生 | `tests/unit/materials/test_material_analysis_service.py` |
+| 针对性计划可越过资料链接、忽略约束或被既有日程卡死 | 强制 workspace link 与已分析边界；校验 topic、日期、工作日、小时、日预算与不重叠；显式生成会重排未来计划 | `tests/unit/learning/test_personalized_plan.py`、`tests/integration/test_learning_journey.py` |
+| 目标计划默认把原考试日期改成 14 天后 | 资料页表单继承当前计划的 `exam_at`，仅在没有有效目标时使用 14 天兜底 | `apps/web/tests/e2e/learning-journey.spec.ts` |
+| 检索正文成为 fallback 标准答案并污染 mastery | fallback 不再携带材料原文答案；无可信 key 只能给 coaching，不更新 mastery；70 分通过不再依赖重复的 example gate | `tests/unit/learning/test_intelligence.py`、`tests/integration/test_learning_journey.py` |
+| 粘贴数据误触发强创建、线性代数目标坍缩 | 强信号必须解析出日期或分钟数；扩充 pasted/粘贴边界；补齐线性代数概念路由 | `tests/unit/home/test_policy.py`、`tests/unit/workspaces/test_routing.py` |
+| “连接成功”不能证明结构化能力 | transport 注入 Pydantic JSON Schema；后台聊天检测改为真实嵌套结构化 canary；各模型路径使用有界、无重试 transport | `tests/unit/agent/test_structured.py`、`tests/unit/integrations/test_service.py`、`tests/unit/api/test_model_timeouts.py` |
+| 新用户同时看到上传与诊断 | 首行动仲裁为：无资料→上传，有资料且未诊断→诊断，之后→NextAction | `apps/web/tests/workspace-primary-action.test.ts`、两条首用 E2E |
+| 筛选后批量删除包含隐藏资料；全局删除语义缺失 | selection 只取可见交集且筛选变化清空；全局资料库提供明确“所有空间删除”确认和 API | `apps/web/tests/material-selection.test.ts`、`apps/web/tests/contracts.test.ts` |
+| 切换学习模式时新题未稳定仍可输入 | 生成期间禁用作答框和题目操作，稳定后再接受草稿 | `apps/web/tests/e2e/learning-journey.spec.ts` |
+| 前端超时先于服务端最终提交 | 当前以 8–20 秒后端能力预算和确定性降级消除已复现假失败；持久化 operation 尚未实现 | `tests/unit/api/test_model_timeouts.py`；长期方案保留在 §7.2E |
+
+### v4 独立复核追加处置
+
+| 独立复核 finding | 最终不变量 | 回归边界 |
+|---|---|---|
+| 迁移后 SQL 保留旧对象键，删除失败却恢复到新键 | 删除 journal 保存并校验原始 `storage_key`；补偿严格恢复原键，不按迁移后的 scope 猜测 | `test_migrated_legacy_storage_key_rollback_restores_the_original_object` |
+| 物理删除完成后才 best-effort 删除分析 | 对象、canonical/legacy analysis 快照和 SQL 索引进入同一 recovery journal；崩溃时按 SQL 是否提交统一恢复或完成删除 | `test_pending_library_delete_restores_analysis_after_crash_before_index_commit` |
+| 分析可用真实 citation ID 洗白无关主题 | section/title/topic 必须与所引 chunk 存在词法证据；无支持结论降级为确定性分析 | `test_analysis_rejects_unrelated_claims_that_reuse_a_valid_citation` |
+| 定向计划覆盖 completed session、悬空 pending 题引用 | 只替换可替换的未来 session；completed 与当前 pending 所属 session 必须保留，冲突新 session 丢弃 | `test_targeted_plan_preserves_completed_and_pending_plan_sessions` |
+| 同请求不同模型日程共用 plan ID 并静默覆盖 | plan ID 包含完整日程指纹；当前同一请求持久化 request→plan 映射并直接 replay | `test_targeted_plan_replays_the_current_request_without_regenerating` |
+| 不存在 workspace 被误报为“资料未分析” | workspace authorization 单独捕获并返回 `404 workspace_not_found` | `test_targeted_plan_requires_a_linked_and_analyzed_material` |
+| AI 出题模型生成的 `expected_answer` 仍可无条件成为判分权威 | 出题模型 key 一律忽略；独立 topic-only compiler 不接触材料、题目、反馈或答案，且只在 topic 不是控制型文本、编译结果与 topic 重叠并且题目有有效 citation 时产生可信 key；分数/作答门槛与 mastery evidence 分离，非可信结果不改 BKT、difficulty、plan 或 review queue | `test_grounded_ai_answer_key_can_support_fallback_grading`、`test_injected_ai_answer_key_is_rejected_even_with_a_valid_citation`、`test_instruction_shaped_material_topic_cannot_create_a_trusted_answer_key`、`test_retrying_one_question_cannot_update_mastery_or_difficulty_twice` |
+| A 空间迟到响应写进 B 空间，多个材料卡并发提交 | 请求绑定 workspace、auth token、generation；写状态前二次校验；所有 builder 共享同步 busy ref | `targeted plan request isolation` contract |
+| 分析超过 30 topics 时默认提交必然 422；合法模型碎片形成严重稀疏计划 | 默认最多选 30 个；超限给明确反馈；模型覆盖少于确定性可用日程时采用完整 fallback | `caps the initial targeted-plan selection`、`test_targeted_plan_does_not_accept_a_sparse_model_fragment` |
+| “解释这句话”中的日期/分钟被当成真实创建约束 | 引号和“这句话/这段文本”显式形成数据边界，优先于强长期信号 | `test_quoted_text_constraints_are_data_not_workspace_creation_signals` |
+| legacy 分析首次读取竞态、无关坏记录阻断迁移、canonical 只靠应用约定 | owner transaction 串行 lazy migration；先按 raw `material_id` 隔离再验证；数据库增加 `(owner_id, material_id)` 唯一索引 | `tests/unit/storage/test_material_analyses.py`、`tests/unit/database/test_engine.py` |
+| 总资料库无法判断资料已关联到哪些空间 | library projection 返回 `workspace_ids`；UI 显示关联空间并禁用已加入选项 | `test_global_library_uploads_before_a_workspace_and_attaches_later` |
+| 一刀切取消可信 key 后，正常学习永远不能更新 mastery 或完成计划 | 恢复独立编译的可信 key；问题模型失败或可疑 topic 只降级当前题，不影响安全 topic 的正常学习闭环 | `test_grounded_ai_answer_key_can_support_fallback_grading`、`tests/integration/test_ai_practice.py` |
+| 旧 pending session 可超过新日预算或落在新考试日期/工作日之外 | 只保留满足新约束的 pending；不兼容时原子解除 pending question 的 plan/review 引用，completed 仍作为历史保留 | `test_targeted_plan_detaches_pending_question_when_new_constraints_are_incompatible` |
+| 分析或定向计划在长模型调用后越过 unlink/物理删除提交迟到状态 | 模型工作不持有全局 mutation lease；最终提交获取短租约并重验 workspace link、material 与 analysis topic。所有 workspace 单条/批量删除统一复用同一租约入口 | `test_analysis_finishing_after_physical_delete_cannot_recreate_orphan_state`、`test_targeted_plan_revalidates_the_material_link_after_model_work` |
+| 评分模型故障时，复制完整题干并补通用 filler 可被 fallback 当作可信掌握证据 | fallback 比较题干与作答的归一化包含关系和有序 token 重合；完整复制及最小冠词改写都被压到通过线以下，且 `mastery_evidence=false` | `test_fallback_grading_rejects_a_full_prompt_echo_with_generic_filler`、`test_model_error_fallback_cannot_credit_a_full_generated_prompt_echo` |
+
+仍明确保留为 P2/后续架构工作：迁移前已经遗留且失去 SQL 引用的重复对象需要独立 storage reconciliation job；多个 legacy analysis 迁移时尚未按 `analyzed_at`、AI mode 和 confidence 择优；topic-only compiler 仍依赖受限 label 与模型遵循隔离提示；物理删除尚未清理历史题目中持久化的 derived source 文本；复合 topic 的证据支持仍是 token 级启发式；旧空间请求完成前会短暂占用全局 targeted-plan busy 状态。完整 citation entailment verifier、derived-data 生命周期、版本化计划历史与跨刷新持久化 Agent Operation 见 §7.2/§8。它们不应被本 PR 的“阻断已关闭”表述伪装成已经完成。
+
+**下表保留 v2 修复前的发布判断，作为问题证据，不代表 v3 当前状态。** 两种模式当时的风险面不同：
 
 | 模式 | 稳定性 | 阻断问题 | 结论 |
 |---|---|---|---|
@@ -380,28 +424,20 @@ UI 对应拆成主指令框和“粘贴内容/添加资料”区。任何 `trust
 
 ## 9. 自动化与实测证据
 
-现有自动化全部通过：
+v5 最终验证矩阵：
 
-- Python：472 passed，3 skipped。
-- Ruff：通过。
-- 前端 Vitest：14 个文件、192 个测试通过。
+- Python：531 passed，3 skipped。
+- Ruff：`src`、`tests`、`scripts` 全部通过。
+- 前端 Vitest：16 个文件、205 个测试通过。
 - ESLint：通过。
 - Next.js production build：通过。
+- Playwright Chromium：14 条完整 E2E 通过，包括桌面/移动主旅程、主页确认竞态、撤销、会话恢复、全局资料库/日历、账号和管理员流程。
 
-这组结果说明代码基础和现有回归较稳定，也同时暴露了测试缺口：真实供应商 schema、真实延迟、HTTP 超时后的最终提交、提示注入下的路由，以及检索相关性没有进入 CI。
+P0-5 的注入→`expected_answer` 链路已由离线回归锁死：含注入文本的首条 SearchResult 不会成为 grading key；没有可信答案、可疑 control-language topic 或高重合题干复述时，反馈不得改变 BKT、difficulty、计划完成度或复习队列。针对真实供应商，本轮实现补上了 schema 注入和结构化 canary，但最终回归没有把用户密钥写入命令、日志或仓库，也没有再次消费真实供应商额度。
 
-**其中一条缺口不需要真实供应商就能补，且优先级最高**：P0-5 的注入→`expected_answer` 链路完全发生在确定性代码里，可以用纯离线单元测试锁死：
+最终独立复核还关闭了两类跨边界问题：资料关联现在与物理删除、空间删除共享恢复租约，并在持有 owner 级数据库写锁时重新验证 canonical material，上传/关联/删除无法再产生悬空 `workspace_materials`；答案键主题过滤改为识别命令式控制短语，而不是误杀 `操作系统`、`System design`、`Instruction set architecture`、`Rule of law` 等合法学科名称。锁冲突通过可重试的 `409 material_mutation_busy` 暴露，不再成为 500。
 
-```
-给定一条含注入文本的 SearchResult 排在第一位
-当调用 fallback_question(...)
-则 expected_answer 不得包含该来源正文
-且判分提示词中不得以 "Expected answer:" 标签承载材料片段
-```
-
-这条测试今天就能写，不依赖模型、不产生费用，且能防止修复后回归。
-
-建议新增一组可选但发布前必跑的 live-provider eval：使用低成本固定样本，验证字段合同、P95 延迟（同时用于反推各能力的超时值，见 P0-1）、日期/语言保真、粘贴文本不触发副作用、相关引文、无引用不做材料事实判断，以及前端中断后 operation 状态一致。
+发布流水线仍建议保留一组显式启用的 live-provider eval：使用低成本固定样本，验证字段合同、P95 延迟（同时用于反推各能力的超时值，见 P0-1）、日期/语言保真、粘贴文本不触发副作用、相关引文、无引用不做材料事实判断，以及未来持久化 operation 的跨刷新状态一致性。它不应成为普通离线 CI 的隐式网络依赖。
 
 ## 10. 截图证据索引
 
@@ -427,4 +463,3 @@ UI 对应拆成主指令框和“粘贴内容/添加资料”区。任何 `trust
 - 学习资料来自 [MIT OCW Linear Algebra](https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/)、[MIT ZoomNotes PDF](https://live.ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/c501620f128ab205bc267770934d707a_MIT18_06SCF11_ZoomNotes.pdf) 和 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.txt)。
 
 限制：本次在本地 SQLite/Fallback 向量后端运行，真实 embedding 仍用于索引与相似度，但没有覆盖 PostgreSQL/pgvector 的性能；管理端恢复只执行到确认与校验，没有覆盖真实覆盖恢复；没有模拟多人高并发或移动端实体设备辅助技术；也没有覆盖“部分能力健康”（如分类可用但出题不可用）的混合状态。以上限制不影响本报告 5 个 P0 的成立——其中 P0-2、P0-3、P0-5 完全发生在确定性代码路径中，可离线复现，与供应商和向量后端无关。
-

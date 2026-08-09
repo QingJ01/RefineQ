@@ -1452,6 +1452,13 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         assert saved.json()["saved"] is True
         assert saved.json()["saved_at"]
         assert "expected_answer" not in saved.text
+        reviews_before = {
+            session["id"]
+            for session in client.get(
+                f"/workspaces/{workspace_id}/snapshot", headers=headers
+            ).json()["plan"]["sessions"]
+            if session["activity"] == "review"
+        }
 
         answer = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
@@ -1463,7 +1470,8 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             },
         )
         assert answer.status_code == 200
-        assert answer.json()["next_review_at"]
+        assert answer.json()["next_review_at"] is None
+        assert answer.json()["mastery_updated"] is False
 
         listed = client.get(
             f"/workspaces/{workspace_id}/learning/questions/saved",
@@ -1475,11 +1483,11 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         assert snapshot.json()["active_question"]["id"] == question["id"]
         assert snapshot.json()["active_question"]["prompt"] == question["prompt"]
         assert snapshot.json()["last_answer"]["attempt_id"] == "saved-attempt"
-        assert any(
-            session["activity"] == "review"
-            and session["planned_at"] == answer.json()["next_review_at"]
+        assert {
+            session["id"]
             for session in snapshot.json()["plan"]["sessions"]
-        )
+            if session["activity"] == "review"
+        } == reviews_before
 
         bob = client.post(
             "/auth/register",

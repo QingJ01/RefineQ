@@ -88,9 +88,11 @@ import type {
   PracticeRequest,
   SearchSource,
   StudySession,
+  TargetedPlanInput,
   TopicSuggestion,
 } from "@/lib/types";
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
+import { chooseWorkspacePrimaryAction } from "@/lib/workspace-primary-action";
 import {
   clearWorkspaceSnapshots,
   consumeWorkspaceSnapshot,
@@ -183,6 +185,7 @@ export function StudyWorkspace({
   const [focusedPlanSessionId, setFocusedPlanSessionId] = useState<string | null>(null);
   const [planView, setPlanView] = useState<"list" | "calendar">("list");
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
+  const [targetedPlanBusy, setTargetedPlanBusy] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [snapshotConflict, setSnapshotConflict] = useState(false);
   const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
@@ -207,6 +210,8 @@ export function StudyWorkspace({
   ) => void>(() => undefined);
   const latestHomeRequestIdRef = useRef<string | null>(null);
   const workspaceOpenGenerationRef = useRef(0);
+  const targetedPlanGenerationRef = useRef(0);
+  const targetedPlanBusyRef = useRef(false);
   const authRef = useRef(auth);
   const workspaceRef = useRef(workspace);
   const localeRef = useRef(locale);
@@ -1164,6 +1169,47 @@ export function StudyWorkspace({
     }
   }
 
+  async function createTargetedPlan(input: TargetedPlanInput) {
+    if (!auth || !workspace || targetedPlanBusyRef.current) return;
+    const targetWorkspaceId = workspace.id;
+    const targetToken = auth.access_token;
+    const generation = ++targetedPlanGenerationRef.current;
+    targetedPlanBusyRef.current = true;
+    setTargetedPlanBusy(true);
+    setError("");
+    try {
+      const created = await api.createTargetedPlan(targetToken, targetWorkspaceId, input);
+      if (
+        targetedPlanGenerationRef.current !== generation
+        || workspaceRef.current?.id !== targetWorkspaceId
+        || authRef.current?.access_token !== targetToken
+      ) return;
+      const snapshot = await api.getWorkspaceSnapshot(targetToken, targetWorkspaceId);
+      if (
+        targetedPlanGenerationRef.current !== generation
+        || workspaceRef.current?.id !== targetWorkspaceId
+        || authRef.current?.access_token !== targetToken
+      ) return;
+      setPlan(created);
+      setProgress(snapshot.progress);
+      setEvidence(snapshot.evidence);
+      setNextAction(snapshot.next_action);
+      setPlanView("calendar");
+      router.push(`/learn/${encodeURIComponent(targetWorkspaceId)}/calendar`);
+    } catch (caught) {
+      if (
+        targetedPlanGenerationRef.current === generation
+        && workspaceRef.current?.id === targetWorkspaceId
+      ) reportError(caught);
+      throw caught;
+    } finally {
+      if (targetedPlanGenerationRef.current === generation) {
+        targetedPlanBusyRef.current = false;
+        setTargetedPlanBusy(false);
+      }
+    }
+  }
+
   async function addCalendarSession(input: { topic_name: string; planned_at: string; minutes: number; activity: string }) {
     if (!auth || !workspace) return false;
     await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
@@ -1708,6 +1754,11 @@ export function StudyWorkspace({
   const averageMastery = masteryValues.reduce((sum, value) => sum + value, 0)
     / Math.max(1, masteryValues.length);
   const selectedTopic = insights?.topics.find((item) => item.topic_id === selectedTopicId);
+  const primaryAction = progress ? chooseWorkspacePrimaryAction({
+    diagnosticCount: progress.diagnostic_count,
+    attemptCount: progress.attempt_count,
+    nextActionType: nextAction?.action_type ?? null,
+  }) : "none";
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
     { id: "plan", icon: CalendarDays },
@@ -1821,8 +1872,7 @@ export function StudyWorkspace({
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
           {section === "today" && !question && !result && nextAction
-            && progress
-            && (progress.diagnostic_count !== 0 || progress.attempt_count !== 0) && (
+            && primaryAction === "next_action" && (
             <NextActionCard
               locale={locale}
               action={nextAction}
@@ -1843,8 +1893,8 @@ export function StudyWorkspace({
             />
           )}
           {section === "today"
-            && progress?.diagnostic_count === 0
-            && progress.attempt_count === 0
+            && primaryAction === "diagnostic"
+            && progress
             && (
             <InitialDiagnostic
               locale={locale}
@@ -1958,6 +2008,9 @@ export function StudyWorkspace({
               onUpload={uploadMaterials}
               onSearch={searchMaterials}
               onAnalyze={analyzeMaterial}
+              onCreateTargetedPlan={createTargetedPlan}
+              targetedPlanBusy={targetedPlanBusy}
+              targetExamAt={plan?.exam_at}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
               onUpdate={updateMaterial}

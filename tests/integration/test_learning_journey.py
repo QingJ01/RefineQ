@@ -333,7 +333,7 @@ def test_complete_learning_journey_is_owner_scoped_and_idempotent(
         assert "expected_answer" not in question
 
         raw_learning = app.state.learning.get(alice["user_id"], project_id)
-        assert raw_learning.data["progress"]["pending_question"]["expected_answer"]
+        assert raw_learning.data["progress"]["pending_question"]["expected_answer"] == ""
 
         answer_payload = {
             "attempt_id": "attempt-1",
@@ -516,10 +516,70 @@ def test_plan_sessions_control_practice_mode_and_complete_only_on_evidence(
 
     assert snapshot.status_code == 200
     assert evidence.status_code == 200
-    assert evidence.json()["mastery_updated"] is True
-    assert evidence.json()["completed_plan_session_id"] == sessions["practice"]["id"]
+    assert evidence.json()["mastery_updated"] is False
+    assert evidence.json()["completed_plan_session_id"] is None
     assert statuses[sessions["learn"]["id"]] == "planned"
-    assert statuses[sessions["practice"]["id"]] == "completed"
+    assert statuses[sessions["practice"]["id"]] == "planned"
+
+
+def test_targeted_plan_requires_a_linked_and_analyzed_material(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        learner = _register(client, "targeted-plan-boundary@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study linear algebra"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            "/materials/library",
+            headers=headers,
+            files={
+                "files": (
+                    "linear-algebra.txt",
+                    b"Chapter 1 Eigenvalues\nEigenvalues describe invariant directions.",
+                    "text/plain",
+                )
+            },
+        ).json()[0]
+        payload = {
+            "material_id": material["id"],
+            "focus_topics": ["Eigenvalues"],
+            "exam_at": (datetime.now(UTC) + timedelta(days=14)).isoformat(),
+            "daily_minutes": 45,
+            "study_weekdays": [0, 1, 2, 3, 4],
+            "preferred_hour": 19,
+            "timezone_offset_minutes": 480,
+            "routine_notes": "",
+        }
+        missing_workspace = client.post(
+            "/workspaces/missing-workspace/learning/plan/targeted",
+            headers=headers,
+            json=payload,
+        )
+
+        unlinked = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload,
+        )
+        client.post(
+            f"/materials/library/library/{material['id']}/attach/{workspace_id}",
+            headers=headers,
+        )
+        unanalyzed = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload,
+        )
+
+    assert missing_workspace.status_code == 404
+    assert missing_workspace.json()["error"]["code"] == "workspace_not_found"
+    assert unlinked.status_code == 404
+    assert unlinked.json()["error"]["code"] == "material_not_found"
+    assert unanalyzed.status_code == 409
+    assert unanalyzed.json()["error"]["code"] == "material_analysis_required"
 
 
 def test_workspace_initial_diagnostic_is_reachable_and_owner_scoped(tmp_path: Path) -> None:
@@ -659,6 +719,18 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             },
         )
         assert second.status_code == 200
+
+        manual_review = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=alice_headers,
+            json={
+                "topic_name": initial["progress"]["topics"][question["topic_id"]],
+                "planned_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "minutes": 20,
+                "activity": "review",
+            },
+        )
+        assert manual_review.status_code == 200
 
         snapshot = client.get(
             f"/workspaces/{workspace_id}/snapshot",

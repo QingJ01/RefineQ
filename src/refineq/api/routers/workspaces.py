@@ -155,4 +155,6 @@ def delete_workspace(workspace_id: str, request: Request, user: CurrentUser) -> 
         request.app.state.workspace_service.delete(user.id, workspace_id)
     except WorkspaceNotFoundError as error:
         _raise_workspace_error(error, status.HTTP_404_NOT_FOUND, error.code)
+    except WorkspaceConflictError as error:
+        _raise_workspace_error(error, status.HTTP_409_CONFLICT, error.code)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

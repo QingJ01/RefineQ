@@ -83,6 +83,22 @@ describe("workspace state boundaries", () => {
 });
 
 
+describe("global material library recovery and destructive actions", () => {
+  it("shows load failures and exposes an explicit global delete flow", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../components/global-material-library-route.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).not.toContain("if (loading || !token)");
+    expect(source).toContain("api.deleteLibraryMaterial");
+    expect(source).toContain("<ConfirmDialog");
+    expect(source).not.toContain("来自 ${new Set");
+    expect(source).not.toContain("Across ${new Set");
+  });
+});
+
+
 describe("administrator integration status", () => {
   it("projects a connection test result into the visible integration status", () => {
     const setting = {
@@ -2126,5 +2142,24 @@ describe("navigation efficiency remediation", () => {
     expect(adminSource).not.toContain("window.location.assign(pendingHref)");
     expect(cssSource).not.toContain(".app-spaces-all");
     expect(cssSource).not.toContain(".app-recent-spaces > small");
+  });
+});
+
+
+describe("targeted plan request isolation", () => {
+  it("checks workspace and request generation before applying an async plan", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceGuard = workspaceSource.indexOf(
+      "workspaceRef.current?.id !== targetWorkspaceId",
+    );
+    const planCommit = workspaceSource.indexOf("setPlan(created)");
+
+    expect(workspaceSource).toContain("targetedPlanBusyRef.current");
+    expect(workspaceSource).toContain("targetedPlanGenerationRef.current !== generation");
+    expect(workspaceGuard).toBeGreaterThan(-1);
+    expect(planCommit).toBeGreaterThan(workspaceGuard);
   });
 });

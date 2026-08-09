@@ -79,9 +79,26 @@ class OpenAICompatibleStructuredTransport:
             max_retries=self._max_retries,
             http_client=DefaultHttpxClient(follow_redirects=False),
         )
+        schema = json.dumps(
+            response_model.model_json_schema(),
+            ensure_ascii=False,
+            indent=2,
+        )
+        schema_messages = [
+            *messages,
+            {
+                "role": "system",
+                "content": (
+                    "Return exactly one JSON object that validates against the following JSON "
+                    "Schema. Include every required field, do not add fields, and do not wrap "
+                    f"the JSON in Markdown.\n<response_json_schema>\n{schema}\n"
+                    "</response_json_schema>"
+                ),
+            },
+        ]
         response = client.chat.completions.create(
             model=settings.model,
-            messages=messages,
+            messages=schema_messages,
             temperature=settings.temperature,
             response_format={"type": "json_object"},
             max_tokens=4_000,

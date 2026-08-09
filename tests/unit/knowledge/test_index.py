@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, get_ident
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
-from refineq.database.schema import material_chunks
+from refineq.database.schema import material_chunks, workspace_materials
 from refineq.knowledge import index as index_module
 from refineq.knowledge.index import (
     KnowledgeIndex,
+    MaterialNotFoundError,
     MaterialQuotaExceededError,
     _postgres_cosine_distance,
 )
@@ -297,3 +300,110 @@ def test_bulk_material_delete_is_atomic_and_owner_scoped(tmp_path: Path) -> None
     assert [
         material.filename for material in index.list_materials(owner_id="bob", project_id="project")
     ] == ["bob.txt"]
+
+
+def test_workspace_status_counts_follow_canonical_library_links(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="library",
+        material_id="material-1",
+        filename="notes.txt",
+        text="Evidence-backed notes.",
+    )
+    index.link_material(owner_id="owner", workspace_id="workspace-a", material_id="material-1")
+    index.link_material(owner_id="owner", workspace_id="workspace-b", material_id="material-1")
+
+    counts = index.material_status_counts_for_projects(
+        owner_id="owner",
+        project_ids=["workspace-a", "workspace-b", "workspace-empty"],
+    )
+
+    assert counts == {
+        "workspace-a": {"indexed": 1},
+        "workspace-b": {"indexed": 1},
+        "workspace-empty": {},
+    }
+
+
+def test_deleting_a_library_material_removes_every_workspace_link(tmp_path: Path) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="library",
+        material_id="material-1",
+        filename="notes.txt",
+        text="Evidence-backed notes.",
+    )
+    index.link_material(owner_id="owner", workspace_id="workspace-a", material_id="material-1")
+    index.link_material(owner_id="owner", workspace_id="workspace-b", material_id="material-1")
+
+    index.delete_materials(
+        owner_id="owner",
+        project_id="library",
+        material_ids=["material-1"],
+    )
+
+    with index.database.session() as session:
+        links = session.execute(
+            select(workspace_materials).where(
+                workspace_materials.c.owner_id == "owner",
+                workspace_materials.c.material_id == "material-1",
+            )
+        ).all()
+    assert links == []
+
+
+def test_link_revalidates_material_after_a_concurrent_library_delete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    index = KnowledgeIndex(tmp_path)
+    index.add_document(
+        owner_id="owner",
+        project_id="library",
+        material_id="material-1",
+        filename="notes.txt",
+        text="Evidence-backed notes.",
+    )
+    original_lock_for = index._lock_for
+    link_thread_id: list[int] = []
+    link_reached_owner_lock = Event()
+    continue_link = Event()
+
+    def controlled_lock_for(owner_id: str):
+        if link_thread_id and get_ident() == link_thread_id[0]:
+            link_reached_owner_lock.set()
+            assert continue_link.wait(timeout=3)
+        return original_lock_for(owner_id)
+
+    monkeypatch.setattr(index, "_lock_for", controlled_lock_for)
+
+    def link_material() -> None:
+        link_thread_id.append(get_ident())
+        index.link_material(
+            owner_id="owner",
+            workspace_id="workspace-a",
+            material_id="material-1",
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        linked = executor.submit(link_material)
+        assert link_reached_owner_lock.wait(timeout=3)
+        index.delete_materials(
+            owner_id="owner",
+            project_id="library",
+            material_ids=["material-1"],
+        )
+        continue_link.set()
+        with pytest.raises(MaterialNotFoundError):
+            linked.result(timeout=3)
+
+    with index.database.session() as session:
+        links = session.execute(
+            select(workspace_materials).where(
+                workspace_materials.c.owner_id == "owner",
+                workspace_materials.c.material_id == "material-1",
+            )
+        ).all()
+    assert links == []
