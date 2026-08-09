@@ -66,6 +66,7 @@ class EvaluationLearningIntelligence:
         workspace_id: str,
         topic_id: str,
         topic_name: str,
+        trusted_topic_subject: str | None = None,
         mastery: float,
         difficulty_level: int,
         learning_mode: LearningMode = LearningMode.CONCEPT,
@@ -77,6 +78,7 @@ class EvaluationLearningIntelligence:
                 workspace_id=workspace_id,
                 topic_id=topic_id,
                 topic_name=topic_name,
+                trusted_topic_subject=trusted_topic_subject,
                 mastery=mastery,
                 difficulty_level=difficulty_level,
                 learning_mode=learning_mode,
@@ -114,6 +116,7 @@ class EvaluationLearningIntelligence:
             prompt=_VERIFIABLE_INSTRUCTION,
             expected_answer=_VERIFIABLE_ANSWER,
             answer_key_trusted=True,
+            answer_key_subject=trusted_topic_subject,
             rubric=[
                 RubricCriterion(criterion="Identifies the limit", max_points=40),
                 RubricCriterion(criterion="Identifies the point value", max_points=40),

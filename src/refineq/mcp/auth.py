@@ -12,8 +12,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Match, NoMatchFound, get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from refineq.api.limits import SlidingWindowRateLimiter
 from refineq.mcp.observability import McpTelemetry
+from refineq.rate_limits import SlidingWindowRateLimiter
 
 _READ_TOOLS = {
     "refineq_get_learning_context",

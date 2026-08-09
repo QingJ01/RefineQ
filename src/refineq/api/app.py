@@ -24,7 +24,6 @@ from refineq.api.errors import (
 from refineq.api.limits import (
     RequestBodyLimitMiddleware,
     RequestLimitMiddleware,
-    SlidingWindowRateLimiter,
     UploadAdmissionController,
 )
 from refineq.api.routers.admin import router as admin_router
@@ -74,6 +73,7 @@ from refineq.mcp.sandbox import EvaluationSandboxService, McpSandboxRepository
 from refineq.mcp.server import create_mcp_server
 from refineq.mcp.tools import McpToolService
 from refineq.operations.admin import AdminOperations
+from refineq.rate_limits import SlidingWindowRateLimiter
 from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
