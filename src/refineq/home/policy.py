@@ -54,7 +54,8 @@ _EVALUATION = re.compile(
     re.IGNORECASE,
 )
 _LEARNING_OBJECT = re.compile(
-    r"数学|高数|微积分|英语|雅思|托福|编程|算法|物理|化学|生物|历史|"
+    r"数学|高数|微积分|英语|雅思|托福|编程|算法|计算机|组成原理|操作系统|数据库|"
+    r"机器学习|人工智能|网络|物理|化学|生物|历史|"
     r"经济学|产品|写作|研究|[A-Za-z][A-Za-z0-9+#.-]{1,30}",
     re.IGNORECASE,
 )
@@ -64,11 +65,16 @@ _LEARNING_VERB = re.compile(
     re.IGNORECASE,
 )
 _TIME_CONSTRAINT = re.compile(
-    r"\d{4}[-/年]\d{1,2}(?:[-/月]\d{1,2})?|\d{1,2}月\d{1,2}日|"
+    r"\d{4}[-/年]\d{1,2}(?:[-/月]\d{1,2})?|\d{1,2}\s*月\s*\d{1,2}\s*日|"
     r"(?:明天|后天|下周|本周|月底|期末|考试|截止)|"
-    r"(?:每天|每日|每周)\s*\d+\s*(?:分钟|小时|次)|"
+    r"(?:每天|每日|每周)(?:\s*(?:能|可|要|计划)?\s*(?:学|学习|复习))?\s*\d+\s*"
+    r"(?:分钟|小时|次)|"
     r"\d+\s*(?:天|周|星期|个月|月)\s*(?:内|后|系统|坚持)?|"
-    r"by\s+\w+|exam\s+on|deadline|daily\s+\d+|for\s+\d+\s*(?:days?|weeks?|months?)",
+    r"by\s+\w+|(?:exam|midterm|final|test)\s+on|deadline|daily\s+\d+|"
+    r"\d+\s*(?:minutes?|hours?)\s+(?:a|per)\s+(?:day|week)|"
+    r"\d+\s*(?:minutes?|hours?)\s+daily|"
+    r"for\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*"
+    r"(?:days?|weeks?|months?)",
     re.IGNORECASE,
 )
 _DIRECT_TASK = re.compile(
@@ -77,9 +83,20 @@ _DIRECT_TASK = re.compile(
     r"summari[sz]e|translate|rewrite|paraphrase|give\s+an\s+example",
     re.IGNORECASE,
 )
+_EXPLICIT_TEXT_TRANSFORM = re.compile(
+    r"(?:总结|概括|翻译|改写|润色)(?:下面|以下|这段|这份|这篇).{0,12}(?:文字|文本|内容|文章|：|:)|"
+    r"(?:summari[sz]e|translate|rewrite|paraphrase)\s+(?:the\s+)?(?:following|below|this\s+text)",
+    re.IGNORECASE,
+)
+_ONE_SHOT_STUDY_PLAN = re.compile(
+    r"(?:今天|今晚|今夜).{0,20}[一二两三四五六七八九十\d]+\s*(?:分钟|小时)"
+    r".{0,20}(?:临时)?(?:安排|计划)|"
+    r"(?:one[- ]off|just\s+for\s+tonight|tonight).{0,30}(?:study\s+)?(?:plan|schedule)",
+    re.IGNORECASE,
+)
 _HIGH_RISK_OR_REALTIME = re.compile(
     r"今天.*(?:天气|新闻|股价|汇率)|最新(?:新闻|价格|政策)|实时|"
-    r"诊断|处方|用药|法律意见|投资建议|买哪只股|"
+    r"诊断|处方|用药|医疗建议|医嘱|法律意见|投资建议|买哪只股|"
     r"weather|latest\s+news|current\s+(?:price|rate)|medical\s+advice|"
     r"legal\s+advice|investment\s+advice|stock\s+pick",
     re.IGNORECASE,
@@ -109,6 +126,22 @@ def _named_workspaces(text: str, workspaces: list[LearningWorkspace]) -> list[Le
     return [item for item in workspaces if _normalized(item.title) in normalized]
 
 
+def _topic_matched_workspaces(
+    text: str,
+    workspaces: list[LearningWorkspace],
+) -> list[LearningWorkspace]:
+    normalized = _normalized(text)
+    return [
+        item
+        for item in workspaces
+        if not item.archived
+        and any(
+            len(_normalized(term)) >= 2 and _normalized(term) in normalized
+            for term in (*item.topics, *item.keywords)
+        )
+    ]
+
+
 def select_dispatch_candidates(
     text: str,
     workspaces: list[LearningWorkspace],
@@ -121,7 +154,7 @@ def select_dispatch_candidates(
         reverse=True,
     )
     selected = ordered[:MAX_DISPATCH_CANDIDATES]
-    named = _named_workspaces(text, ordered)
+    named = _named_workspaces(text, workspaces)
     for workspace in named:
         if workspace in selected:
             continue
@@ -135,9 +168,22 @@ def select_dispatch_candidates(
 class HomeRoutingPolicy:
     """Classify non-negotiable boundaries before optional semantic assistance."""
 
+    @staticmethod
+    def allows_learning_recovery(text: str) -> bool:
+        """Return whether an out-of-scope result may be reclaimed as a learning task."""
+
+        normalized = _normalized(text)
+        return not (_DESTRUCTIVE.search(normalized) or _HIGH_RISK_OR_REALTIME.search(normalized))
+
     def decide(self, text: str, workspaces: list[LearningWorkspace]) -> PolicyDecision:
         normalized = _normalized(text)
         named = _named_workspaces(text, workspaces)
+
+        if _EXPLICIT_TEXT_TRANSFORM.search(normalized):
+            return PolicyDecision(
+                PolicyKind.DIRECT_ANSWER,
+                "这是对本次明确标记文本的一次性转换；正文只作为不可信数据处理。",
+            )
 
         if _DESTRUCTIVE.search(normalized) or _HIGH_RISK_OR_REALTIME.search(normalized):
             return PolicyDecision(
@@ -172,10 +218,17 @@ class HomeRoutingPolicy:
             )
 
         if _EVALUATION.search(normalized):
+            matched = named or _topic_matched_workspaces(text, workspaces)
             return PolicyDecision(
                 PolicyKind.EVALUATION,
                 "出题、评分和掌握度更新必须在有资料约束的学习空间完成。",
-                tuple(item.id for item in named[:1]),
+                tuple(item.id for item in matched[:3]),
+            )
+
+        if _ONE_SHOT_STUDY_PLAN.search(normalized) and not named:
+            return PolicyDecision(
+                PolicyKind.DIRECT_ANSWER,
+                "这是不依赖既有长期状态的一次性学习时间建议。",
             )
 
         has_learning_object = bool(_LEARNING_OBJECT.search(normalized))

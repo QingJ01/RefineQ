@@ -129,9 +129,7 @@ class HomeTokenSigner:
     ) -> HomeTokenClaims:
         try:
             encoded, supplied_signature = token.split(".", 1)
-            expected_signature = _encode(
-                hmac.new(self._secret, encoded.encode(), sha256).digest()
-            )
+            expected_signature = _encode(hmac.new(self._secret, encoded.encode(), sha256).digest())
             if not hmac.compare_digest(supplied_signature, expected_signature):
                 raise HomeTokenError("Confirmation token signature is invalid")
             claims = HomeTokenClaims.model_validate_json(_decode(encoded))
@@ -147,4 +145,3 @@ class HomeTokenSigner:
         if operation is not None and claims.operation != operation:
             raise HomeTokenError("Confirmation token operation does not match")
         return claims
-

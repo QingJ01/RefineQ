@@ -33,6 +33,7 @@ class HomeDispatchEvent(BaseModel):
     latency_bucket: Literal["lt_1s", "1_6s", "6_18s", "gt_18s"]
     latency_ms: int = Field(ge=0)
     candidate_count: int = Field(ge=0, le=8)
+    candidate_truncated: bool = False
     proposal_confirmed: bool | None = None
     error_code: str | None = Field(default=None, max_length=100)
     occurred_at: datetime
@@ -60,16 +61,27 @@ def latency_bucket(latency_ms: int) -> Literal["lt_1s", "1_6s", "6_18s", "gt_18s
 
 
 class HomeEventRepository:
-    def __init__(self, store: AtomicJsonStore) -> None:
+    def __init__(self, store: AtomicJsonStore, *, max_events: int = 1_000) -> None:
+        if max_events < 1:
+            raise ValueError("max_events must be positive")
         self._store = store
+        self._max_events = max_events
 
     def record(self, owner_id: str, event: HomeDispatchEvent) -> HomeDispatchEvent:
-        with suppress(RecordAlreadyExistsError):
-            self._store.create(
+        with self._store.owner_transaction(owner_id, "home-dispatch-events"):
+            with suppress(RecordAlreadyExistsError):
+                self._store.create(
+                    owner_id,
+                    "home_dispatch_events",
+                    event.request_id_hash,
+                    event.model_dump(mode="json"),
+                )
+            self._store.trim_collection(
                 owner_id,
                 "home_dispatch_events",
-                event.request_id_hash,
-                event.model_dump(mode="json"),
+                self._max_events,
+                order_field="occurred_at",
+                record_id_field="request_id_hash",
             )
         return event
 
@@ -78,6 +90,46 @@ class HomeEventRepository:
             HomeDispatchEvent.model_validate(record.data)
             for record in self._store.list(owner_id, "home_dispatch_events")
         ]
+
+    def _mark_proposal_state(
+        self,
+        owner_id: str,
+        request_id: str,
+        *,
+        confirmed: bool,
+    ) -> HomeDispatchEvent | None:
+        record_id = request_id_hash(request_id)
+        with self._store.owner_transaction(owner_id, "home-dispatch-events"):
+            try:
+                record = self._store.read(owner_id, "home_dispatch_events", record_id)
+            except RecordNotFoundError:
+                return None
+            current = HomeDispatchEvent.model_validate(record.data)
+            if current.result_kind not in {"workspace_action", "propose_workspace"}:
+                return None
+            event = current.model_copy(update={"proposal_confirmed": confirmed})
+            self._store.save(
+                owner_id,
+                "home_dispatch_events",
+                record_id,
+                event.model_dump(mode="json"),
+                expected_version=record.version,
+            )
+        return event
+
+    def mark_proposal_confirmed(
+        self,
+        owner_id: str,
+        request_id: str,
+    ) -> HomeDispatchEvent | None:
+        return self._mark_proposal_state(owner_id, request_id, confirmed=True)
+
+    def mark_proposal_cancelled(
+        self,
+        owner_id: str,
+        request_id: str,
+    ) -> HomeDispatchEvent | None:
+        return self._mark_proposal_state(owner_id, request_id, confirmed=False)
 
 
 class HomeReceiptRepository:

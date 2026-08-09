@@ -31,4 +31,3 @@ def test_result_requires_payload_matching_kind() -> None:
                 convertible_goal="goal",
             ),
         )
-

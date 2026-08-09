@@ -353,17 +353,19 @@ describe("durable learner routing", () => {
     const authenticatedStart = workspaceSource.indexOf("async function authenticated");
     const restoreSource = workspaceSource.slice(restoreStart, authenticatedStart);
     const openStart = workspaceSource.indexOf("async function openWorkspace");
-    const resolveStart = workspaceSource.indexOf("async function resolveIntent");
-    const uploadStart = workspaceSource.indexOf("async function uploadMaterials");
-    const openSource = workspaceSource.slice(openStart, resolveStart);
-    const resolveSource = workspaceSource.slice(resolveStart, uploadStart);
+    const dispatchStart = workspaceSource.indexOf("async function dispatchHome");
+    const confirmStart = workspaceSource.indexOf("async function confirmHomeResult");
+    const openSource = workspaceSource.slice(openStart, dispatchStart);
+    const dispatchSource = workspaceSource.slice(dispatchStart, confirmStart);
 
     expect(restoreSource.indexOf("clearWorkspaceState()"))
       .toBeLessThan(restoreSource.indexOf("api.getWorkspaceSnapshot"));
     expect(openSource).toContain("removeWorkspaceSnapshot(window.sessionStorage, target.id)");
     expect(openSource).not.toContain("saveWorkspaceSnapshot");
-    expect(resolveSource).toContain("removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id)");
-    expect(resolveSource).not.toContain("saveWorkspaceSnapshot");
+    expect(dispatchSource).toContain("api.dispatchHome(token, input, signal)");
+    expect(dispatchSource).toContain("authRef.current?.access_token !== token");
+    expect(dispatchSource).toContain("await openWorkspace(target, token)");
+    expect(dispatchSource).not.toContain("saveWorkspaceSnapshot");
   });
 
   it("hands off every volatile learning field and resets user-scoped state on exit", () => {

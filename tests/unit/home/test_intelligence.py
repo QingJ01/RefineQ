@@ -26,9 +26,7 @@ class CaptureTransport:
 
 def test_classifier_receives_only_first_five_hundred_characters() -> None:
     classifier = CaptureTransport(
-        HomeClassification(
-            kind="direct_answer", reason="one-shot", confidence=0.9
-        ).model_dump()
+        HomeClassification(kind="direct_answer", reason="one-shot", confidence=0.9).model_dump()
     )
     answerer = CaptureTransport(
         HomeAnswerDraft(

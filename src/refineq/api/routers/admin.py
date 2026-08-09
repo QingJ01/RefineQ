@@ -110,6 +110,11 @@ class HomeDispatchMetricsResponse(BaseModel):
     total_dispatches: int = Field(ge=0)
     result_kind_counts: dict[str, int]
     candidate_limit_count: int = Field(ge=0)
+    candidate_truncation_count: int = Field(ge=0)
+    proposal_confirmed_count: int = Field(ge=0)
+    proposal_cancelled_count: int = Field(ge=0)
+    proposal_expired_count: int = Field(ge=0)
+    proposal_confirmation_rate: float = Field(ge=0, le=1)
     error_rate: float = Field(ge=0, le=1)
     direct_answer_seconds: DurationPercentiles
 

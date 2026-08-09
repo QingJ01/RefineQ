@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import logging
 import re
-from contextlib import suppress
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from hashlib import sha256
 from time import perf_counter
@@ -28,6 +28,7 @@ from refineq.home.models import (
     HomeConfirmRequest,
     HomeDispatchRequest,
     HomeDispatchResult,
+    HomeProposalRevisionRequest,
     WorkspaceActionProposal,
     WorkspaceDispatchSummary,
     WorkspaceProposal,
@@ -43,7 +44,11 @@ from refineq.home.tokens import HomeTokenError, HomeTokenSigner, proposal_hash
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.models import BKTState, StudyPlan
 from refineq.learning.next_action import select_next_action
-from refineq.learning.service import LearningService, PlanSessionUpdate
+from refineq.learning.service import (
+    LearningConflictError,
+    LearningService,
+    PlanSessionUpdate,
+)
 from refineq.storage.learning import LearningRepository
 from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.models import LearningWorkspace, WorkspaceRoutingDecision
@@ -54,6 +59,8 @@ from refineq.workspaces.service import (
     WorkspaceResolveRequest,
     WorkspaceService,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class HomeServiceError(RuntimeError):
@@ -143,6 +150,39 @@ class HomeDispatchService:
         self._events = events
         self._receipts = receipts
         self._policy = policy or HomeRoutingPolicy()
+
+    def _record_event_best_effort(
+        self,
+        owner_id: str,
+        event: HomeDispatchEvent,
+    ) -> None:
+        try:
+            self._events.record(owner_id, event)
+        except Exception as error:
+            logger.warning(
+                "event=home_dispatch_event_write_failed reason=%s",
+                type(error).__name__,
+            )
+
+    def _mark_confirmed_best_effort(self, owner_id: str, request_id: str) -> None:
+        try:
+            self._events.mark_proposal_confirmed(owner_id, request_id)
+        except Exception as error:
+            logger.warning(
+                "event=home_dispatch_confirmation_event_write_failed reason=%s",
+                type(error).__name__,
+            )
+
+    def cancel_proposal(self, owner_id: str, request_id: str) -> None:
+        """Record an explicit UI cancellation without affecting the proposed domain state."""
+
+        try:
+            self._events.mark_proposal_cancelled(owner_id, request_id)
+        except Exception as error:
+            logger.warning(
+                "event=home_dispatch_cancellation_event_write_failed reason=%s",
+                type(error).__name__,
+            )
 
     def load_dispatch_summaries(
         self,
@@ -255,6 +295,23 @@ class HomeDispatchService:
                     is_admin=is_admin,
                     now=observed_at,
                 )
+        except HomeModelUnavailableError as error:
+            elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
+            self._record_event_best_effort(
+                owner_id,
+                HomeDispatchEvent(
+                    request_id_hash=request_id_hash(payload.request_id),
+                    result_kind="direct_answer",
+                    decided_by="hybrid",
+                    latency_bucket=latency_bucket(elapsed_ms),
+                    latency_ms=elapsed_ms,
+                    candidate_count=len(candidates),
+                    candidate_truncated=truncated,
+                    error_code=error.code,
+                    occurred_at=observed_at,
+                ),
+            )
+            raise
         except (OpenAIError, StructuredModelResponseError, ValidationError, TimeoutError):
             result = self._deterministic_model_fallback(
                 owner_id,
@@ -264,19 +321,19 @@ class HomeDispatchService:
                 now=observed_at,
             )
         elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
-        with suppress(Exception):
-            self._events.record(
-                owner_id,
-                HomeDispatchEvent(
-                    request_id_hash=request_id_hash(payload.request_id),
-                    result_kind=result.kind,
-                    decided_by=result.decided_by,
-                    latency_bucket=latency_bucket(elapsed_ms),
-                    latency_ms=elapsed_ms,
-                    candidate_count=len(candidates),
-                    occurred_at=observed_at,
-                ),
-            )
+        self._record_event_best_effort(
+            owner_id,
+            HomeDispatchEvent(
+                request_id_hash=request_id_hash(payload.request_id),
+                result_kind=result.kind,
+                decided_by=result.decided_by,
+                latency_bucket=latency_bucket(elapsed_ms),
+                latency_ms=elapsed_ms,
+                candidate_count=len(candidates),
+                candidate_truncated=truncated,
+                occurred_at=observed_at,
+            ),
+        )
         return result
 
     def _dispatch_decision(
@@ -310,11 +367,9 @@ class HomeDispatchService:
                 owner_id, payload, candidates, decision=decision, now=now
             )
         if decision.kind == PolicyKind.STRONG_LONG_TERM:
-            return self._long_term_result(
-                owner_id, payload, strong=True, now=now
-            )
+            return self._long_term_result(owner_id, payload, strong=True, now=now)
         if decision.kind in {PolicyKind.AMBIGUOUS_LONG_TERM, PolicyKind.EVALUATION}:
-            if decision.workspace_ids:
+            if len(decision.workspace_ids) == 1:
                 return self._open_workspace_result(
                     owner_id,
                     payload,
@@ -325,14 +380,33 @@ class HomeDispatchService:
                     truncated=truncated,
                     now=now,
                 )
+            if decision.workspace_ids:
+                return self._clarify_result(
+                    owner_id,
+                    payload,
+                    candidates,
+                    reason="多个学习空间都包含相关主题，请选择资料所在的空间。",
+                    now=now,
+                    workspace_ids=decision.workspace_ids,
+                )
             return self._long_term_result(owner_id, payload, strong=False, now=now)
         if decision.kind == PolicyKind.DIRECT_ANSWER:
             return self._direct_answer_result(
-                owner_id, payload, reason=decision.reason, is_admin=is_admin, now=now
+                owner_id,
+                payload,
+                candidates,
+                reason=decision.reason,
+                is_admin=is_admin,
+                now=now,
             )
         if decision.kind == PolicyKind.CLARIFY:
             return self._clarify_result(
-                owner_id, payload, candidates, reason=decision.reason, now=now
+                owner_id,
+                payload,
+                candidates,
+                reason=decision.reason,
+                now=now,
+                workspace_ids=decision.workspace_ids,
             )
         if decision.kind == PolicyKind.OUT_OF_SCOPE:
             return self._out_of_scope_result(
@@ -370,6 +444,7 @@ class HomeDispatchService:
             return self._direct_answer_result(
                 owner_id,
                 payload,
+                candidates,
                 reason=semantic.reason,
                 is_admin=is_admin,
                 now=now,
@@ -381,9 +456,7 @@ class HomeDispatchService:
             return self._out_of_scope_result(
                 owner_id, payload, candidates, reason=semantic.reason, now=now
             )
-        return self._clarify_result(
-            owner_id, payload, candidates, reason=semantic.reason, now=now
-        )
+        return self._clarify_result(owner_id, payload, candidates, reason=semantic.reason, now=now)
 
     def _dispatch_clarified(
         self,
@@ -412,11 +485,16 @@ class HomeDispatchService:
             raise HomeConfirmationError("Clarification does not match this request")
         current_state = _state_hash(self._workspace_service.list(owner_id, include_archived=True))
         if claims.state_hash != current_state:
-            return self._clarify_result(
+            return self._dispatch_decision(
                 owner_id,
                 payload,
+                self._policy.decide(
+                    payload.text,
+                    self._workspace_service.list(owner_id, include_archived=True),
+                ),
                 candidates,
-                reason="学习空间列表已经变化，请重新选择。",
+                truncated=truncated,
+                is_admin=is_admin,
                 now=now,
             )
         if selection.option_id == "direct_answer":
@@ -432,8 +510,55 @@ class HomeDispatchService:
             return self._direct_answer_result(
                 owner_id,
                 payload,
+                candidates,
                 reason="用户明确选择把它作为一次性学习问题处理。",
                 is_admin=is_admin,
+                now=now,
+            )
+        if selection.option_id.startswith("workspace:"):
+            workspace_id = selection.option_id.removeprefix("workspace:")
+            if workspace_id not in {item.id for item in candidates}:
+                raise HomeConfirmationError("Selected workspace is no longer available")
+            return self._open_workspace_result(
+                owner_id,
+                payload,
+                workspace_id,
+                candidates,
+                reason="用户从真实候选中明确选择了这个学习空间。",
+                explicit=True,
+                truncated=truncated,
+                now=now,
+            )
+        if selection.option_id.startswith("action_workspace:"):
+            workspace_id = selection.option_id.removeprefix("action_workspace:")
+            if workspace_id not in {item.id for item in candidates}:
+                raise HomeConfirmationError("Selected workspace is no longer available")
+            return self._workspace_action_result(
+                owner_id,
+                payload,
+                candidates,
+                decision=PolicyDecision(
+                    PolicyKind.WORKSPACE_ACTION,
+                    "用户明确选择了要修改计划的学习空间。",
+                    (workspace_id,),
+                ),
+                now=now,
+            )
+        if selection.option_id == "recover_learning":
+            if not self._policy.allows_learning_recovery(payload.text):
+                return self._out_of_scope_result(
+                    owner_id,
+                    payload,
+                    candidates,
+                    reason="即使声明为学习任务，实时、高风险或破坏性请求仍不能在主页处理。",
+                    now=now,
+                    offer_recovery=False,
+                )
+            return self._clarify_result(
+                owner_id,
+                payload,
+                candidates,
+                reason="你已确认这是学习任务，请选择直接解释或进入长期学习。",
                 now=now,
             )
         if selection.option_id == "choose_workspace":
@@ -450,6 +575,7 @@ class HomeDispatchService:
         self,
         owner_id: str,
         payload: HomeDispatchRequest,
+        candidates: list[LearningWorkspace],
         *,
         reason: str,
         is_admin: bool,
@@ -459,9 +585,17 @@ class HomeDispatchService:
         try:
             answer = self._intelligence.answer(owner_id, payload.text)
         except ModelNotConfiguredError:
-            return self._model_unconfigured_result(
-                owner_id, payload, [], is_admin=is_admin, now=now
+            summaries = self.load_dispatch_summaries(
+                owner_id,
+                candidates,
+                now=now,
+                timezone_offset_minutes=payload.timezone_offset_minutes,
             )
+            return self._model_unconfigured_result(
+                owner_id, payload, summaries, is_admin=is_admin, now=now
+            )
+        except (OpenAIError, StructuredModelResponseError, ValidationError, TimeoutError) as error:
+            raise HomeModelUnavailableError("一次性回答暂时不可用，请重试。") from error
         return HomeDispatchResult(
             request_id=payload.request_id,
             kind="direct_answer",
@@ -497,7 +631,8 @@ class HomeDispatchService:
             now=now,
             timezone_offset_minutes=payload.timezone_offset_minutes,
         )
-        next_action = summaries[0].next_action if summaries else None
+        summary = summaries[0] if summaries else None
+        next_action = summary.next_action if summary else None
         limitations = ["仅比较了最近活跃的 8 个学习空间"] if truncated else []
         return HomeDispatchResult(
             request_id=payload.request_id,
@@ -509,11 +644,14 @@ class HomeDispatchService:
             workspace_target=WorkspaceTarget(
                 workspace_id=target.id,
                 title=target.title,
+                goal=target.goal,
                 reason=reason,
                 match_kind="explicit_command" if explicit else "semantic_match",
                 auto_navigate=explicit,
                 route_action=route_action,
                 next_action=next_action,
+                exam_at=summary.exam_at if summary else None,
+                pace_risk=summary.pace_risk if summary else "low",
             ),
             limitations=limitations,
         )
@@ -553,17 +691,18 @@ class HomeDispatchService:
             workspace_target=WorkspaceTarget(
                 workspace_id=chosen.id,
                 title=chosen.title,
+                goal=chosen.goal,
                 reason=reason,
                 match_kind="semantic_match",
                 auto_navigate=False,
                 route_action="reused",
                 next_action=chosen.next_action,
+                exam_at=chosen.exam_at,
+                pace_risk=chosen.pace_risk,
                 deferred_workspace_title=deferred,
             ),
             limitations=(
-                ["仅比较了最近活跃的 8 个学习空间，可从下方查看全部空间"]
-                if truncated
-                else []
+                ["仅比较了最近活跃的 8 个学习空间，可从下方查看全部空间"] if truncated else []
             ),
         )
 
@@ -580,6 +719,7 @@ class HomeDispatchService:
             owner_id,
             WorkspaceResolveRequest(intent=intent),
             now=now,
+            use_model=False,
         )
         if preview.decision.workspace_id is not None:
             candidates, truncated = select_dispatch_candidates(
@@ -684,6 +824,8 @@ class HomeDispatchService:
                 candidates,
                 reason="请先选择要修改计划的学习空间。",
                 now=now,
+                workspace_ids=tuple(item.id for item in candidates[:3]),
+                workspace_action=True,
             )
         record = self._learning.get(owner_id, target.id)
         raw_plan = (record.data.get("progress") or {}).get("plan")
@@ -695,11 +837,7 @@ class HomeDispatchService:
             key=lambda item: (item.planned_at, item.id),
         )
         session = next(
-            (
-                item
-                for item in planned
-                if str(item.topic_id).casefold() in payload.text.casefold()
-            ),
+            (item for item in planned if str(item.topic_id).casefold() in payload.text.casefold()),
             planned[0] if planned else None,
         )
         if session is None:
@@ -832,6 +970,8 @@ class HomeDispatchService:
         *,
         reason: str,
         now: datetime,
+        workspace_ids: tuple[str, ...] = (),
+        workspace_action: bool = False,
     ) -> HomeDispatchResult:
         token, expires_at = self._signer.issue(
             owner_id=owner_id,
@@ -840,14 +980,45 @@ class HomeDispatchService:
             state_hash=_state_hash(self._workspace_service.list(owner_id, include_archived=True)),
             now=now,
         )
-        options = [
+        candidate_by_id = {item.id: item for item in candidates}
+        named_options = [
+            ClarificationOption(
+                id=(
+                    f"action_workspace:{workspace_id}"
+                    if workspace_action
+                    else f"workspace:{workspace_id}"
+                ),
+                label=(
+                    f"修改 {candidate_by_id[workspace_id].title} 的计划"
+                    if workspace_action
+                    else f"打开 {candidate_by_id[workspace_id].title}"
+                ),
+            )
+            for workspace_id in workspace_ids
+            if workspace_id in candidate_by_id
+        ]
+        options = named_options or [
             ClarificationOption(id="direct_answer", label="直接解释这一次"),
             ClarificationOption(id="create_workspace", label="作为长期目标新建空间"),
         ]
-        if candidates:
-            options.insert(1, ClarificationOption(id="choose_workspace", label="选择已有学习空间"))
+        if not named_options and candidates:
+            options.insert(
+                1,
+                ClarificationOption(
+                    id=f"workspace:{candidates[0].id}",
+                    label=f"进入 {candidates[0].title}",
+                ),
+            )
         clarification = Clarification(
-            question="你想快速了解这一次，还是把它作为持续学习任务？",
+            question=(
+                "请选择要修改计划的学习空间。"
+                if workspace_action
+                else (
+                    "请选择你明确点名的学习空间。"
+                    if named_options
+                    else "你想快速了解这一次，还是把它作为持续学习任务？"
+                )
+            ),
             options=options[:3],
             continuation_token=token,
         )
@@ -869,21 +1040,35 @@ class HomeDispatchService:
         *,
         reason: str,
         now: datetime,
+        offer_recovery: bool = True,
     ) -> HomeDispatchResult:
-        recovery = self._clarify_result(
-            owner_id,
-            payload,
-            candidates,
-            reason=reason,
-            now=now,
-        ).clarification
+        recovery = None
+        expires_at = now + timedelta(minutes=10)
+        if offer_recovery:
+            token, expires_at = self._signer.issue(
+                owner_id=owner_id,
+                operation="clarify",
+                proposal={"text_hash": sha256(payload.text.encode()).hexdigest()},
+                state_hash=_state_hash(
+                    self._workspace_service.list(owner_id, include_archived=True)
+                ),
+                now=now,
+            )
+            recovery = Clarification(
+                question="如果这是你的学习任务，可以声明后选择安全的处理方式。",
+                options=[
+                    ClarificationOption(id="recover_learning", label="这其实是我的学习任务"),
+                    ClarificationOption(id="change_question", label="换一个问题"),
+                ],
+                continuation_token=token,
+            )
         return HomeDispatchResult(
             request_id=payload.request_id,
             kind="out_of_scope",
             reason=reason,
             confidence=0.98,
             decided_by="rule",
-            expires_at=now + timedelta(minutes=10),
+            expires_at=expires_at,
             manual_recovery=recovery,
             limitations=["不提供实时事实、医疗、法律、投资或破坏性操作"],
         )
@@ -897,7 +1082,7 @@ class HomeDispatchService:
         is_admin: bool,
         now: datetime,
     ) -> HomeDispatchResult:
-        if summaries:
+        if summaries and not is_admin:
             chosen = sorted(summaries, key=lambda item: self._rank_summary(item, now))[0]
             candidates = self._workspace_service.list(owner_id)
             return self._open_workspace_result(
@@ -912,13 +1097,40 @@ class HomeDispatchService:
                 confidence=1,
                 decided_by="rule",
             )
+        token, expires_at = self._signer.issue(
+            owner_id=owner_id,
+            operation="clarify",
+            proposal={"text_hash": sha256(payload.text.encode()).hexdigest()},
+            state_hash=_state_hash(self._workspace_service.list(owner_id, include_archived=True)),
+            now=now,
+        )
+        recovery = Clarification(
+            question=(
+                "一次性回答尚未启用，请先配置模型或换一个问题。"
+                if is_admin
+                else "一次性回答尚未启用，你可以先建立学习空间，或换一个问题。"
+            ),
+            options=(
+                [
+                    ClarificationOption(id="configure_model", label="配置模型"),
+                    ClarificationOption(id="change_question", label="换一个问题"),
+                ]
+                if is_admin
+                else [
+                    ClarificationOption(id="create_workspace", label="创建学习空间"),
+                    ClarificationOption(id="change_question", label="换一个问题"),
+                ]
+            ),
+            continuation_token=token,
+        )
         return HomeDispatchResult(
             request_id=payload.request_id,
             kind="out_of_scope",
             reason="这类一次性问题需要管理员启用模型。",
             confidence=1,
             decided_by="rule",
-            expires_at=now + timedelta(minutes=10),
+            expires_at=expires_at,
+            manual_recovery=recovery,
             limitations=[
                 "管理员可前往 /admin/integrations/chat 配置模型"
                 if is_admin
@@ -969,6 +1181,7 @@ class HomeDispatchService:
         if existing is not None:
             if existing.request_id != payload.request_id:
                 raise HomeConfirmationError("Idempotency key belongs to another request")
+            self._mark_confirmed_best_effort(owner_id, payload.request_id)
             return existing.model_copy(update={"replayed": True})
         proposal_type = payload.proposal.get("proposal_type")
         try:
@@ -994,19 +1207,73 @@ class HomeDispatchService:
             raise HomeConfirmationError("Proposal token does not match request token")
         if proposal.idempotency_key != payload.idempotency_key:
             raise HomeConfirmationError("Proposal idempotency key does not match")
+        expected_key = (
+            f"create-{request_id_hash(payload.request_id)}"
+            if operation == "create_workspace"
+            else f"action-{request_id_hash(payload.request_id)}"
+        )
+        if proposal.idempotency_key != expected_key:
+            raise HomeConfirmationError("Proposal does not match this dispatch request")
         if claims.proposal_hash != proposal_hash(signed_payload):
             raise HomeConfirmationError("Proposal fields were changed after signing")
+        if operation != "create_workspace" and claims.target != proposal.workspace_id:
+            raise HomeConfirmationError("Proposal target does not match its signature")
         if operation == "create_workspace":
-            return self._confirm_workspace(
+            receipt = self._confirm_workspace(
                 owner_id,
                 payload,
                 proposal,
                 claims.state_hash,
                 observed_at,
             )
-        return self._confirm_workspace_action(
-            owner_id, payload, proposal, claims.state_hash, observed_at
+        else:
+            receipt = self._confirm_workspace_action(
+                owner_id, payload, proposal, claims.state_hash, observed_at
+            )
+        self._mark_confirmed_best_effort(owner_id, payload.request_id)
+        return receipt
+
+    def revise_workspace_proposal(
+        self,
+        owner_id: str,
+        payload: HomeProposalRevisionRequest,
+        *,
+        now: datetime | None = None,
+    ) -> WorkspaceProposal:
+        """Validate an editable preview and re-sign the exact revised fields."""
+
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        original = payload.original_proposal
+        if original.confirmation_token != payload.confirmation_token:
+            raise HomeConfirmationError("Proposal token does not match request token")
+        if original.idempotency_key != f"create-{request_id_hash(payload.request_id)}":
+            raise HomeConfirmationError("Proposal does not match this dispatch request")
+        try:
+            claims = self._signer.verify(
+                payload.confirmation_token,
+                owner_id=owner_id,
+                operation="create_workspace",
+                now=observed_at,
+            )
+        except HomeTokenError as error:
+            raise HomeConfirmationError(str(error)) from error
+        if claims.proposal_hash != proposal_hash(_workspace_proposal_payload(original)):
+            raise HomeConfirmationError("Original proposal fields do not match their signature")
+        current_state = _state_hash(self._workspace_service.list(owner_id, include_archived=True))
+        if current_state != claims.state_hash:
+            raise HomeActionConflictError("Learning spaces changed; generate a new preview")
+        changes = payload.changes.model_dump(exclude_none=True, mode="json")
+        revised_data = {**original.model_dump(mode="json"), **changes}
+        revised_data["confirmation_token"] = payload.confirmation_token
+        revised = WorkspaceProposal.model_validate(revised_data)
+        token, expires_at = self._signer.issue(
+            owner_id=owner_id,
+            operation="create_workspace",
+            proposal=_workspace_proposal_payload(revised),
+            state_hash=claims.state_hash,
+            now=observed_at,
         )
+        return revised.model_copy(update={"confirmation_token": token, "expires_at": expires_at})
 
     def _confirm_workspace(
         self,
@@ -1041,6 +1308,7 @@ class HomeDispatchService:
         target = WorkspaceTarget(
             workspace_id=route.workspace.id,
             title=route.workspace.title,
+            goal=route.workspace.goal,
             reason=route.reason,
             match_kind="explicit_command",
             auto_navigate=True,
@@ -1087,12 +1355,18 @@ class HomeDispatchService:
                 else None
             ),
         )
-        self._learning_service.update_plan_session(
-            owner_id,
-            proposal.workspace_id,
-            session_id,
-            update,
-        )
+        try:
+            self._learning_service.update_plan_session(
+                owner_id,
+                proposal.workspace_id,
+                session_id,
+                update,
+                expected_version=before_record.version,
+            )
+        except LearningConflictError as error:
+            raise HomeActionConflictError(
+                "Learning plan changed; generate a new preview"
+            ) from error
         after_record = self._learning.get(owner_id, proposal.workspace_id)
         receipt = HomeActionReceipt(
             request_id=request.request_id,

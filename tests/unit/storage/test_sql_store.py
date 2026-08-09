@@ -34,6 +34,58 @@ def test_records_are_isolated_by_owner_and_collection(store: SqlRecordStore) -> 
     assert store.read("alice", "sessions", "shared").data == {"name": "Session"}
 
 
+def test_read_many_projection_fetches_only_requested_nested_fields(
+    store: SqlRecordStore,
+) -> None:
+    store.create(
+        "owner",
+        "learning",
+        "space",
+        {
+            "progress": {"plan": {"id": "plan"}, "topics": {"t": {"name": "T"}}},
+            "attempts": {"secret": {"answer": "never project"}},
+        },
+    )
+
+    records = store.read_many_projection(
+        "owner",
+        "learning",
+        ["space", "missing"],
+        (("progress", "plan"), ("progress", "topics")),
+    )
+
+    assert records["space"].data == {
+        "progress": {"plan": {"id": "plan"}, "topics": {"t": {"name": "T"}}}
+    }
+    assert "attempts" not in records["space"].data
+
+
+def test_trim_collection_keeps_the_newest_bounded_records(store: SqlRecordStore) -> None:
+    for index in range(3):
+        store.create(
+            "owner",
+            "events",
+            f"event-{index}",
+            {
+                "request_id_hash": f"event-{index}",
+                "occurred_at": f"2026-08-09T00:00:0{index}+00:00",
+            },
+        )
+
+    store.trim_collection(
+        "owner",
+        "events",
+        2,
+        order_field="occurred_at",
+        record_id_field="request_id_hash",
+    )
+
+    assert {item.data["request_id_hash"] for item in store.list("owner", "events")} == {
+        "event-1",
+        "event-2",
+    }
+
+
 def test_compare_and_swap_preserves_record_versions(store: SqlRecordStore) -> None:
     original = store.create("owner", "learning", "space", {"count": 0})
     updated = store.save(

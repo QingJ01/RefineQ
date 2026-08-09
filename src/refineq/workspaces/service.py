@@ -222,6 +222,7 @@ class WorkspaceService:
         payload: WorkspaceResolveRequest,
         *,
         now: datetime | None = None,
+        use_model: bool = True,
     ) -> WorkspaceResolutionPreview:
         """Resolve against an owner snapshot without touching or creating state."""
 
@@ -229,7 +230,7 @@ class WorkspaceService:
         workspaces = self._workspaces.list(owner_id)
         decision = (
             self._routing.route(payload.intent, owner_id, workspaces)
-            if self._routing is not None
+            if use_model and self._routing is not None
             else route_workspace(payload.intent, workspaces)
         )
         return WorkspaceResolutionPreview(

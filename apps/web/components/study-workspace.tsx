@@ -77,6 +77,8 @@ import type {
   AuthResponse,
   DueReviewInsight,
   DiagnosticResultInput,
+  HomeActionReceipt,
+  HomeDispatchResult,
   LearningMode,
   LearningWorkspace,
   MaterialRecord,
@@ -616,35 +618,111 @@ export function StudyWorkspace({
     }
   }
 
-  async function resolveIntent(intent: string) {
-    if (!auth) return;
-    setHomeBusy(true);
-    setError("");
-    try {
-      const route = await api.resolveWorkspace(auth.access_token, intent);
-      const saved = loadLearningSession(window.sessionStorage);
-      const previousId = workspace?.id ?? saved?.workspaceId ?? null;
-      removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id);
-      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
-      applySnapshot(snapshot);
-      setRoute(route);
-      setPreviousWorkspaceId(previousId === route.workspace.id ? null : previousId);
-      writeWorkspaceRouteNotice(window.sessionStorage, {
-        route,
-        previousWorkspaceId: previousId === route.workspace.id ? null : previousId,
-      });
-      setWorkspaces(await api.listWorkspaces(auth.access_token));
-      saveLearningSession(window.sessionStorage, {
-        token: auth.access_token,
-        workspaceId: route.workspace.id,
-        locale,
-      });
-      router.push(learningPath(route.workspace.id, "today"));
-    } catch (caught) {
-      reportError(caught);
-    } finally {
-      setHomeBusy(false);
+  async function dispatchHome(
+    input: {
+      request_id: string;
+      text: string;
+      timezone_offset_minutes: number;
+      clarification?: { continuation_token: string; option_id: string } | null;
+    },
+    signal: AbortSignal,
+  ): Promise<HomeDispatchResult | null> {
+    const token = auth?.access_token;
+    if (!token) return null;
+    const result = await api.dispatchHome(token, input, signal);
+    if (signal.aborted || authRef.current?.access_token !== token) return null;
+    if (result.kind !== "open_workspace" || !result.workspace_target.auto_navigate) {
+      return result;
     }
+    const recent = await api.listWorkspaces(token, true);
+    if (signal.aborted || authRef.current?.access_token !== token) return null;
+    const target = recent.find((item) => item.id === result.workspace_target.workspace_id);
+    if (!target) {
+      throw new Error(localeRef.current === "zh"
+        ? "目标学习空间已不存在，请重新选择。"
+        : "That learning space no longer exists. Choose again.");
+    }
+    const saved = loadLearningSession(window.sessionStorage);
+    const previousId = workspaceRef.current?.id ?? saved?.workspaceId ?? null;
+    const routeForNotice = {
+      action: result.workspace_target.route_action,
+      confidence: result.confidence,
+      reason: result.reason,
+      workspace: target,
+    };
+    setRoute(routeForNotice);
+    setPreviousWorkspaceId(previousId === target.id ? null : previousId);
+    setWorkspaces(recent);
+    writeWorkspaceRouteNotice(window.sessionStorage, {
+      route: routeForNotice,
+      previousWorkspaceId: previousId === target.id ? null : previousId,
+    });
+    await openWorkspace(target, token);
+    return null;
+  }
+
+  async function confirmHomeResult(
+    result: HomeDispatchResult,
+    proposalChanges?: {
+      title?: string;
+      goal?: string;
+      exam_at?: string;
+      daily_minutes?: number;
+    },
+  ): Promise<HomeActionReceipt> {
+    const token = auth?.access_token;
+    if (!token) throw new Error("Authentication required");
+    let proposal = result.kind === "workspace_action"
+      ? result.action_proposal
+      : result.kind === "propose_workspace"
+        ? result.workspace_proposal
+        : null;
+    if (!proposal) throw new Error("This result has no confirmable action");
+    if (result.kind === "propose_workspace" && proposalChanges) {
+      proposal = await api.reviseHomeWorkspaceProposal(token, {
+        request_id: result.request_id,
+        confirmation_token: result.workspace_proposal.confirmation_token,
+        original_proposal: result.workspace_proposal,
+        changes: proposalChanges,
+      });
+      if (authRef.current?.access_token !== token) {
+        throw new Error("User session changed before confirmation");
+      }
+    }
+    const receipt = await api.confirmHomeAction(token, {
+      request_id: result.request_id,
+      confirmation_token: proposal.confirmation_token,
+      proposal: proposal as unknown as Record<string, unknown>,
+      idempotency_key: proposal.idempotency_key,
+    });
+    if (authRef.current?.access_token !== token) return receipt;
+    if (receipt.route?.auto_navigate) {
+      const recent = await api.listWorkspaces(token);
+      if (authRef.current?.access_token !== token) return receipt;
+      const target = recent.find((item) => item.id === receipt.workspace_id);
+      if (target) {
+        const routeForNotice = {
+          action: receipt.route.route_action,
+          confidence: 1,
+          reason: receipt.route.reason,
+          workspace: target,
+        };
+        setWorkspaces(recent);
+        setRoute(routeForNotice);
+        writeWorkspaceRouteNotice(window.sessionStorage, {
+          route: routeForNotice,
+          previousWorkspaceId: null,
+        });
+        await openWorkspace(target, token);
+      }
+    }
+    return receipt;
+  }
+
+  async function cancelHomeResult(result: HomeDispatchResult): Promise<void> {
+    const token = auth?.access_token;
+    if (!token) return;
+    await api.cancelHomeAction(token, result.request_id);
   }
 
   async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
@@ -1437,7 +1515,9 @@ export function StudyWorkspace({
           t={t}
           busy={homeBusy}
           workspaces={workspaces}
-          onResolve={resolveIntent}
+            onDispatch={dispatchHome}
+            onConfirm={confirmHomeResult}
+            onCancel={cancelHomeResult}
           onOpen={openWorkspace}
           onUpdate={updateLearningWorkspace}
           onDelete={deleteLearningWorkspace}

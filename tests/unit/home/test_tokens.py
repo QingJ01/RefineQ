@@ -44,4 +44,3 @@ def test_token_rejects_tampering() -> None:
     )
     with pytest.raises(HomeTokenError):
         signer.verify(f"a{token}", owner_id="owner-a", now=NOW)
-

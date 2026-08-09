@@ -240,6 +240,66 @@ class AtomicJsonStore:
                 continue
         return results
 
+    def read_many_projection(
+        self,
+        owner_id: str,
+        collection: str,
+        record_ids: list[str],
+        field_paths: tuple[tuple[str, ...], ...],
+    ) -> dict[str, StoredRecord]:
+        """Read selected nested fields; file storage projects after its bounded reads."""
+
+        projected: dict[str, StoredRecord] = {}
+        for record_id, record in self.read_many(owner_id, collection, record_ids).items():
+            data: dict[str, Any] = {}
+            for path in field_paths:
+                source: Any = record.data
+                try:
+                    for part in path:
+                        source = source[part]
+                except (KeyError, TypeError):
+                    continue
+                target = data
+                for part in path[:-1]:
+                    target = target.setdefault(part, {})
+                target[path[-1]] = deepcopy(source)
+            projected[record_id] = StoredRecord(
+                schema_version=record.schema_version,
+                version=record.version,
+                data=data,
+            )
+        return projected
+
+    def trim_collection(
+        self,
+        owner_id: str,
+        collection: str,
+        max_records: int,
+        *,
+        order_field: str,
+        record_id_field: str,
+    ) -> None:
+        """Delete oldest records beyond a collection bound."""
+
+        if max_records < 1:
+            raise ValueError("max_records must be positive")
+        order_field = validate_identifier(order_field, field="order_field")
+        record_id_field = validate_identifier(record_id_field, field="record_id_field")
+        current = self.list(owner_id, collection)
+        overflow = len(current) - max_records
+        if overflow <= 0:
+            return
+        oldest = sorted(
+            current,
+            key=lambda item: (
+                str(item.data.get(order_field, "")),
+                str(item.data.get(record_id_field, "")),
+            ),
+        )[:overflow]
+        for item in oldest:
+            record_id = str(item.data[record_id_field])
+            self.delete(owner_id, collection, record_id)
+
     def save(
         self,
         owner_id: str,

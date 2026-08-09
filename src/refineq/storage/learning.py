@@ -55,9 +55,18 @@ class LearningRepository:
         owner_id: str,
         workspace_ids: list[str],
     ) -> dict[str, StoredRecord]:
-        """Load bounded dispatch inputs without N per-space reads."""
+        """Load only NextAction inputs without full evidence, attempts, or histories."""
 
-        return self._store.read_many(owner_id, "learning", workspace_ids)
+        return self._store.read_many_projection(
+            owner_id,
+            "learning",
+            workspace_ids,
+            (
+                ("progress", "plan"),
+                ("progress", "bkt_states"),
+                ("progress", "topics"),
+            ),
+        )
 
     def delete(self, owner_id: str, project_id: str) -> None:
         self._store.delete(owner_id, "learning", project_id)

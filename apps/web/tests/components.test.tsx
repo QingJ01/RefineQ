@@ -1014,14 +1014,15 @@ describe("focused learning components", () => {
         t={translator("zh")}
         busy={false}
         workspaces={[]}
-        onResolve={() => undefined}
+        onDispatch={async () => null}
+        onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}
       />,
     );
 
-    expect(html).toContain("今天想学什么");
+    expect(html).toContain("现在需要我帮你解决什么？");
     expect(html).not.toContain("项目名称");
     expect(html).toContain('class="home-shell"');
       expect(html).toContain('class="home-sidebar"');
@@ -1049,7 +1050,8 @@ describe("focused learning components", () => {
           created_at: "2026-08-07T00:00:00Z",
           last_active_at: "2026-08-07T00:00:00Z",
         }]}
-        onResolve={() => undefined}
+        onDispatch={async () => null}
+        onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onUpdate={() => undefined}
         onDelete={() => undefined}

@@ -62,6 +62,137 @@ export interface WorkspaceRoute {
   workspace: LearningWorkspace;
 }
 
+export interface HomeDirectAnswer {
+  content: string;
+  basis: "general_knowledge" | "pasted_text";
+  material_grounded: false;
+  convertible_goal: string;
+}
+
+export interface HomeWorkspaceTarget {
+  workspace_id: string;
+  title: string;
+  goal: string;
+  reason: string;
+  match_kind: "explicit_command" | "semantic_match";
+  auto_navigate: boolean;
+  route_action: "created" | "switched" | "reused";
+  next_action: NextAction | null;
+  exam_at: string | null;
+  pace_risk: "low" | "medium" | "high";
+  deferred_workspace_title: string | null;
+}
+
+export interface HomeWorkspaceProposal {
+  proposal_type: "create_workspace";
+  title: string;
+  goal: string;
+  subject: string;
+  topics: string[];
+  keywords: string[];
+  exam_at: string;
+  daily_minutes: number;
+  material_hint: string;
+  reason: string;
+  idempotency_key: string;
+  confirmation_token: string;
+  expires_at: string;
+}
+
+export interface HomeWorkspaceActionProposal {
+  proposal_type: "workspace_action";
+  action_type: "reschedule_session" | "adjust_session_minutes";
+  risk_level: "medium";
+  workspace_id: string;
+  workspace_title: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  affected_refs: string[];
+  idempotency_key: string;
+  confirmation_token: string;
+  expires_at: string;
+}
+
+export interface HomeClarification {
+  question: string;
+  options: Array<{ id: string; label: string }>;
+  continuation_token: string;
+}
+
+interface HomeDispatchCommon {
+  request_id: string;
+  reason: string;
+  confidence: number;
+  decided_by: "rule" | "model" | "hybrid";
+  expires_at: string;
+  limitations: string[];
+  manual_recovery: HomeClarification | null;
+}
+
+export type HomeDispatchResult =
+  | (HomeDispatchCommon & {
+      kind: "direct_answer";
+      answer: HomeDirectAnswer;
+      workspace_target: null;
+      action_proposal: null;
+      workspace_proposal: null;
+      clarification: null;
+    })
+  | (HomeDispatchCommon & {
+      kind: "open_workspace";
+      answer: null;
+      workspace_target: HomeWorkspaceTarget;
+      action_proposal: null;
+      workspace_proposal: null;
+      clarification: null;
+    })
+  | (HomeDispatchCommon & {
+      kind: "workspace_action";
+      answer: null;
+      workspace_target: null;
+      action_proposal: HomeWorkspaceActionProposal;
+      workspace_proposal: null;
+      clarification: null;
+    })
+  | (HomeDispatchCommon & {
+      kind: "propose_workspace";
+      answer: null;
+      workspace_target: null;
+      action_proposal: null;
+      workspace_proposal: HomeWorkspaceProposal;
+      clarification: null;
+    })
+  | (HomeDispatchCommon & {
+      kind: "clarify";
+      answer: null;
+      workspace_target: null;
+      action_proposal: null;
+      workspace_proposal: null;
+      clarification: HomeClarification;
+    })
+  | (HomeDispatchCommon & {
+      kind: "out_of_scope";
+      answer: null;
+      workspace_target: null;
+      action_proposal: null;
+      workspace_proposal: null;
+      clarification: null;
+    });
+
+export interface HomeActionReceipt {
+  request_id: string;
+  idempotency_key: string;
+  operation: "create_workspace" | "reschedule_session" | "adjust_session_minutes";
+  status: "succeeded" | "conflict" | "failed";
+  workspace_id: string;
+  affected_refs: string[];
+  before_version: number | null;
+  after_version: number | null;
+  undoable: boolean;
+  replayed: boolean;
+  route: HomeWorkspaceTarget | null;
+}
+
 export interface WorkspaceSnapshot {
   workspace: LearningWorkspace;
   progress: Progress;

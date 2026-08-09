@@ -14,7 +14,8 @@ describe("dialog-first learning home", () => {
         t={translator("zh")}
         busy={false}
         workspaces={[]}
-        onResolve={() => undefined}
+        onDispatch={async () => null}
+        onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}
@@ -30,23 +31,24 @@ describe("dialog-first learning home", () => {
     expect(html).not.toContain('href="#recent-learning"');
   });
 
-  it("anchors the submission-facing prompt in one dated exam story", () => {
+  it("frames the composer as a supervisor plus one-shot learning entry", () => {
     const html = renderToStaticMarkup(
       <LearningHome
         t={translator("zh")}
         busy={false}
         workspaces={[]}
-        onResolve={() => undefined}
+        onDispatch={async () => null}
+        onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}
       />,
     );
 
-    expect(html).toContain("10 月 25 日考计算机组成原理期中");
-    expect(html).toContain("每天能学 90 分钟");
-    expect(html).toContain("计划、练习和掌握证据");
-    expect(html).not.toContain("访谈分析");
+    expect(html).toContain("今天只有 30 分钟先学什么");
+    expect(html).toContain("解释一下边际效用");
+    expect(html).toContain("一次性问题");
+    expect(html).toContain("长期学习计划");
   });
 
   it("uses the same desktop sidebar width as the learning workspace", () => {
@@ -75,7 +77,8 @@ describe("dialog-first learning home", () => {
           created_at: "2026-08-07T00:00:00Z",
           last_active_at: "2026-08-08T00:00:00Z",
         }]}
-        onResolve={() => undefined}
+        onDispatch={async () => null}
+        onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}
         onToggleLocale={() => undefined}

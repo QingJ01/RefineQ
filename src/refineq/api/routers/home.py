@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from refineq.api.dependencies import CurrentUser
 from refineq.home.models import (
     HomeActionReceipt,
+    HomeCancelRequest,
     HomeConfirmRequest,
     HomeDispatchRequest,
     HomeDispatchResult,
+    HomeProposalRevisionRequest,
+    WorkspaceProposal,
 )
 from refineq.home.service import (
     HomeActionConflictError,
@@ -62,3 +65,28 @@ def confirm_home_action(
     except HomeServiceError as error:
         _raise(error, status.HTTP_500_INTERNAL_SERVER_ERROR, error.code)
 
+
+@router.post("/actions/revise", response_model=WorkspaceProposal)
+def revise_home_proposal(
+    payload: HomeProposalRevisionRequest,
+    request: Request,
+    user: CurrentUser,
+) -> WorkspaceProposal:
+    try:
+        return request.app.state.home_dispatch.revise_workspace_proposal(user.id, payload)
+    except HomeConfirmationError as error:
+        _raise(error, status.HTTP_422_UNPROCESSABLE_CONTENT, error.code)
+    except HomeActionConflictError as error:
+        _raise(error, status.HTTP_409_CONFLICT, error.code)
+    except HomeServiceError as error:
+        _raise(error, status.HTTP_500_INTERNAL_SERVER_ERROR, error.code)
+
+
+@router.post("/actions/cancel", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_home_action(
+    payload: HomeCancelRequest,
+    request: Request,
+    user: CurrentUser,
+) -> Response:
+    request.app.state.home_dispatch.cancel_proposal(user.id, payload.request_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

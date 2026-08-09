@@ -62,12 +62,24 @@ class WorkspaceTarget(BaseModel):
 
     workspace_id: str
     title: str
+    goal: str
     reason: str = Field(min_length=1, max_length=500)
     match_kind: Literal["explicit_command", "semantic_match"]
     auto_navigate: bool
     route_action: Literal["created", "switched", "reused"] = "reused"
     next_action: NextAction | None = None
+    exam_at: datetime | None = None
+    pace_risk: Literal["low", "medium", "high"] = "low"
     deferred_workspace_title: str | None = None
+
+    @field_validator("exam_at", mode="after")
+    @classmethod
+    def normalize_exam_at(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("exam_at must be timezone-aware")
+        return value.astimezone(UTC)
 
     @model_validator(mode="after")
     def explicit_navigation_only(self):
@@ -182,6 +194,8 @@ class HomeDispatchResult(BaseModel):
         for variant, value in fields.items():
             if (variant == self.kind) != (value is not None):
                 raise ValueError(f"{variant} payload does not match result kind")
+        if self.kind != "out_of_scope" and self.manual_recovery is not None:
+            raise ValueError("manual_recovery is only valid for out_of_scope")
         return self
 
 
@@ -192,6 +206,39 @@ class HomeConfirmRequest(BaseModel):
     confirmation_token: str = Field(min_length=1, max_length=4_096)
     proposal: dict[str, Any]
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class HomeCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+
+
+class WorkspaceProposalChanges(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    goal: str | None = Field(default=None, min_length=1, max_length=500)
+    exam_at: datetime | None = None
+    daily_minutes: int | None = Field(default=None, ge=5, le=480)
+
+    @field_validator("exam_at", mode="after")
+    @classmethod
+    def normalize_optional_datetime(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("exam_at must be timezone-aware")
+        return value.astimezone(UTC)
+
+
+class HomeProposalRevisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    confirmation_token: str = Field(min_length=1, max_length=4_096)
+    original_proposal: WorkspaceProposal
+    changes: WorkspaceProposalChanges
 
 
 class HomeActionReceipt(BaseModel):
