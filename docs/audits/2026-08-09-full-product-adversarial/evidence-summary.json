@@ -1,0 +1,57 @@
+{
+  "audit_date": "2026-08-09",
+  "baseline_commit": "5b15a23",
+  "runtime": "isolated local runtime",
+  "providers": {
+    "chat": "DeepSeek official API / deepseek-v4-flash",
+    "embedding": "SiliconFlow / BAAI/bge-m3"
+  },
+  "release_recommendation": "do_not_release_as_stable_ai_learning_loop",
+  "findings": {
+    "p0": 5,
+    "p1": 5,
+    "p2_groups": 6
+  },
+  "p0_index": [
+    "P0-1 structured capability contract unverified by connection test",
+    "P0-2 home has no typed trust boundary; pasted data triggers mutation",
+    "P0-3 learning goal collapses silently during workspace creation",
+    "P0-4 frontend reports failure after backend already committed",
+    "P0-5 injected material becomes expected_answer and poisons grading"
+  ],
+  "release_recommendation_by_mode": {
+    "model_unconfigured": "runnable but low learning value; P0-2, P0-3, P0-5 still apply",
+    "model_configured": "not releasable as an AI learning loop; additionally triggers P0-1 and P0-4"
+  },
+  "live_observations": {
+    "home_direct_answer_http_status": 500,
+    "home_direct_answer_seconds": 4.2,
+    "home_classifier_seconds": 6.1,
+    "grounded_question_seconds": 62.1,
+    "intent_to_grounded_grade_seconds": 131.597,
+    "indexed_chunks": 31,
+    "fallback_grade_score": 70,
+    "mastery_before_percent": 20,
+    "mastery_after_percent": 18
+  },
+  "verified_healthy_flows": [
+    "register_login_password_reset",
+    "profile_update_export_password_change_logout_all_account_delete",
+    "material_upload_index_and_unsupported_file_rejection",
+    "plan_constraint_save_complete_defer_edit_regenerate",
+    "workspace_rename_archive_restore",
+    "cross_user_workspace_isolation",
+    "learner_admin_forbidden",
+    "admin_secret_redaction",
+    "backup_create_and_restore_confirmation_validation",
+    "desktop_and_mobile_calendar_layout"
+  ],
+  "automated_verification": {
+    "pytest": "472 passed, 3 skipped",
+    "ruff": "passed",
+    "vitest": "14 files, 192 tests passed",
+    "eslint": "passed",
+    "next_build": "passed"
+  },
+  "secret_material_in_repository": false
+}
