@@ -117,6 +117,7 @@ export function LearningHome({
               onChange={(event) => setIntent(event.target.value)}
               placeholder={t("learningIntentPlaceholder")}
               rows={3}
+              maxLength={2000}
               autoFocus
             />
             <div className="composer-footer">

@@ -30,6 +30,22 @@ describe("dialog-first learning home", () => {
     expect(html).not.toContain('href="#recent-learning"');
   });
 
+  it("caps the learning intent at the backend length limit", () => {
+    const html = renderToStaticMarkup(
+      <LearningHome
+        t={translator("zh")}
+        busy={false}
+        workspaces={[]}
+        onResolve={() => undefined}
+        onOpen={() => undefined}
+        onLogout={() => undefined}
+        onToggleLocale={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/data-testid="learning-intent"[^>]*maxLength="2000"/);
+  });
+
   it("anchors the submission-facing prompt in one dated exam story", () => {
     const html = renderToStaticMarkup(
       <LearningHome
