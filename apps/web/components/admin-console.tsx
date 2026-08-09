@@ -11,11 +11,9 @@ import {
   FileScan,
   Gauge,
   HardDrive,
-  Languages,
   LayoutDashboard,
   ListChecks,
   LoaderCircle,
-  LogOut,
   PlugZap,
   Save,
   ShieldCheck,
@@ -25,7 +23,7 @@ import {
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { BrandMark, BrandName } from "@/components/brand";
+import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
@@ -35,6 +33,7 @@ import type {
   AdminOverview,
   AdminUsersPage,
   IntegrationKind,
+  LearningWorkspace,
   Locale,
   ManagedBackup,
   ManagedBackupsResponse,
@@ -559,6 +558,7 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
   const [backups, setBackups] = useState<ManagedBackupsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadFailure, setLoadFailure] = useState<unknown>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<"create" | "validate" | null>(null);
   const [selectedBackup, setSelectedBackup] = useState<ManagedBackup | null>(null);
@@ -573,17 +573,18 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
       api.listAdminBackups(token),
     ]).then(([nextUsers, nextJobs, nextAudit, nextBackups]) => {
       if (!active) return;
+      setLoadFailure(null);
       setUsers(nextUsers);
       setJobs(nextJobs);
       setAudit(nextAudit);
       setBackups(nextBackups);
     }).catch((caught: unknown) => {
-      if (active) setError(errorMessage(caught, locale));
+      if (active) setLoadFailure(caught);
     }).finally(() => {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [locale, nonce, token]);
+  }, [nonce, token]);
 
   async function loadUsers(page: number) {
     try {
@@ -647,15 +648,17 @@ function AdminOperationsPanel({ token, locale }: { token: string; locale: Locale
     dateStyle: "medium",
     timeStyle: "short",
   });
+  const visibleError = error || (loadFailure ? errorMessage(loadFailure, locale) : "");
 
   return (
     <div className="admin-operations" data-testid="admin-operations" aria-busy={loading}>
-      {(error || notice) && (
-        <div className={error ? "admin-operations-notice error" : "admin-operations-notice"} role={error ? "alert" : "status"}>
-          <span>{error || notice}</span>
-          {error && <button type="button" onClick={() => {
+      {(visibleError || notice) && (
+        <div className={visibleError ? "admin-operations-notice error" : "admin-operations-notice"} role={visibleError ? "alert" : "status"}>
+          <span>{visibleError || notice}</span>
+          {visibleError && <button type="button" onClick={() => {
             setLoading(true);
             setError("");
+            setLoadFailure(null);
             setNonce((value) => value + 1);
           }}>{c.retry}</button>}
         </div>
@@ -710,6 +713,7 @@ function IntegrationCard({
   setting,
   locale,
   onChange,
+  onNavigate,
   locked = false,
 }: {
   token: string;
@@ -717,6 +721,7 @@ function IntegrationCard({
   setting: PublicIntegrationSettings;
   locale: Locale;
   onChange: (setting: PublicIntegrationSettings) => void;
+  onNavigate: (href: string) => void;
   locked?: boolean;
 }) {
   const c = copy[locale];
@@ -749,7 +754,7 @@ function IntegrationCard({
       window.removeEventListener("beforeunload", beforeunload);
       document.removeEventListener("click", guardNavigation, true);
     };
-  }, [c.unsavedWarning, isDirty]);
+  }, [isDirty]);
 
   async function persistConfiguration(): Promise<PublicIntegrationSettings> {
     return api.updateIntegration(token, definition.kind, { enabled, config, secrets });
@@ -990,7 +995,10 @@ function IntegrationCard({
         cancelLabel={c.stay}
         tone="danger"
         onConfirm={() => {
-          if (pendingHref) window.location.assign(pendingHref);
+          if (!pendingHref) return;
+          const destination = new URL(pendingHref);
+          setPendingHref(null);
+          onNavigate(`${destination.pathname}${destination.search}${destination.hash}`);
         }}
         onCancel={() => setPendingHref(null)}
       />
@@ -1003,20 +1011,24 @@ export function AdminConsole({
   locale,
   activeKind,
   activeSection,
+  workspaces = [],
   onLogout,
   onToggleLocale,
+  onNavigate = () => undefined,
 }: {
   token: string;
   locale: Locale;
   activeKind?: IntegrationKind;
   activeSection?: "overview" | "operations";
+  workspaces?: LearningWorkspace[];
   onLogout: () => void;
   onToggleLocale: () => void;
+  onNavigate?: (href: string) => void;
 }) {
   const c = copy[locale];
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [integrations, setIntegrations] = useState(defaults);
-  const [loadError, setLoadError] = useState("");
+  const [loadFailure, setLoadFailure] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [loadNonce, setLoadNonce] = useState(0);
   const byKind = useMemo(
@@ -1030,15 +1042,16 @@ export function AdminConsole({
     Promise.all([api.getAdminOverview(token), api.listIntegrations(token)])
       .then(([nextOverview, nextIntegrations]) => {
         if (!active) return;
+        setLoadFailure(null);
         setOverview(nextOverview);
         setIntegrations(nextIntegrations);
       })
       .catch((caught: unknown) => {
-        if (active) setLoadError(errorMessage(caught, locale));
+        if (active) setLoadFailure(caught);
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [activeSection, locale, token, loadNonce]);
+  }, [activeSection, token, loadNonce]);
 
   function updateIntegration(updated: PublicIntegrationSettings) {
     setIntegrations((current) => current.map((item) => (
@@ -1047,6 +1060,7 @@ export function AdminConsole({
   }
 
   const localizedDefinitions = definitions[locale];
+  const loadError = loadFailure ? errorMessage(loadFailure, locale) : "";
   const activeDefinition = activeKind
     ? localizedDefinitions.find((definition) => definition.kind === activeKind)
     : undefined;
@@ -1061,12 +1075,15 @@ export function AdminConsole({
   return (
     <main id="main-content" className="admin-console">
       <div className="admin-shell">
-        <aside className="admin-sidebar">
-          <Link className="admin-brand" href="/" aria-label="RefineQ">
-            <BrandMark size={34} />
-            <BrandName />
-          </Link>
-          <nav className="admin-nav" aria-label={c.title}>
+        <AppSidebar
+          locale={locale}
+          active="admin"
+          workspaces={workspaces}
+          isAdmin
+          contextOwnsActive
+          contextLabel={c.title}
+          contextNavigation={(
+          <div className="admin-nav">
             <Link className={!activeKind && activeSection !== "operations" ? "active" : ""} href="/admin">
               <LayoutDashboard size={18} />
               <span>{c.overview}</span>
@@ -1093,16 +1110,11 @@ export function AdminConsole({
               </Link>
               );
             })}
-          </nav>
-          <div className="admin-sidebar-actions">
-            <button className="quiet-button" onClick={onToggleLocale}>
-              <Languages size={16} /> {c.language}
-            </button>
-            <button data-testid="admin-logout" className="quiet-button" onClick={onLogout}>
-              <LogOut size={16} /> {c.logout}
-            </button>
           </div>
-        </aside>
+          )}
+          onToggleLocale={onToggleLocale}
+          onLogout={onLogout}
+        />
 
         <section className="admin-main">
           <header className="admin-page-header">
@@ -1123,7 +1135,7 @@ export function AdminConsole({
               <div><strong>{c.loadFailed}</strong><span>{loadError}</span></div>
               <button type="button" className="secondary-action" onClick={() => {
                 setLoading(true);
-                setLoadError("");
+                setLoadFailure(null);
                 setLoadNonce((current) => current + 1);
               }}>{c.reload}</button>
             </div>
@@ -1145,6 +1157,7 @@ export function AdminConsole({
                 setting={byKind.get(activeKind) ?? defaults[0]}
                 locale={locale}
                 onChange={updateIntegration}
+                onNavigate={onNavigate}
                 locked={loading}
               />
             </div>

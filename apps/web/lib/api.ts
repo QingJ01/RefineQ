@@ -13,13 +13,17 @@ import type {
   AttemptFeedbackResponse,
   AuthCapabilities,
   AuthResponse,
+  CalendarResponse,
   LearningWorkspace,
   LearningInsights,
   IntegrationKind,
   IntegrationTestResult,
   IntegrationUpdateInput,
   MaterialAnalysis,
+  JourneyEvent,
+  LearningMetricsResponse,
   MaterialRecord,
+  NextAction,
   MaterialUpdateInput,
   ManagedBackup,
   ManagedBackupsResponse,
@@ -27,6 +31,7 @@ import type {
   PlanUpdateInput,
   PracticeRequest,
   PracticeQuestion,
+  Progress,
   PublicIntegrationSettings,
   PublicModelSettings,
   SearchSource,
@@ -35,6 +40,7 @@ import type {
   StudyPlan,
   StudySession,
   TargetedPlanInput,
+  TopicSuggestion,
   User,
   WorkspaceRoute,
   WorkspaceSnapshot,
@@ -42,6 +48,24 @@ import type {
 
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type UnauthorizedListener = (token: string) => void;
+
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+export function subscribeUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
+function broadcastUnauthorized(token: string): void {
+  unauthorizedListeners.forEach((listener) => {
+    try {
+      listener(token);
+    } catch {
+      // Session reset listeners must not mask the original API error.
+    }
+  });
+}
 
 interface LongRequestTimeouts {
   model: number;
@@ -74,6 +98,12 @@ export function authHeaders(token: string | null): Record<string, string> {
 export class ApiClient {
   private readonly fetcher: Fetcher;
   private readonly longRequestTimeouts: LongRequestTimeouts;
+  private readonly profileCache = new Map<string, { expiresAt: number; value: Promise<User> }>();
+  private readonly workspaceCache = new Map<string, {
+    expiresAt: number;
+    value: Promise<LearningWorkspace[]>;
+  }>();
+  private readonly readCacheTtlMs = 5_000;
 
   constructor(
     private readonly baseUrl = "/api",
@@ -118,6 +148,10 @@ export class ApiClient {
       clearTimeout(timeout);
       if (!response.ok) {
         const body = await response.json().catch(() => null);
+        if (response.status === 401 && token) {
+          this.clearReadCache(token);
+          broadcastUnauthorized(token);
+        }
         throw new ApiError(
           response.status,
           body?.error?.code ?? "request_error",
@@ -134,6 +168,38 @@ export class ApiClient {
     } finally {
       clearTimeout(timeout);
       externalSignal?.removeEventListener("abort", abortFromCaller);
+    }
+  }
+
+  private cached<T>(
+    cache: Map<string, { expiresAt: number; value: Promise<T> }>,
+    key: string,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    const current = cache.get(key);
+    const now = Date.now();
+    if (current && current.expiresAt > now) return current.value;
+    const value = load().catch((caught) => {
+      if (cache.get(key)?.value === value) cache.delete(key);
+      throw caught;
+    });
+    cache.set(key, { expiresAt: now + this.readCacheTtlMs, value });
+    return value;
+  }
+
+  clearReadCache(token?: string): void {
+    if (!token) {
+      this.profileCache.clear();
+      this.workspaceCache.clear();
+      return;
+    }
+    this.profileCache.delete(token);
+    this.clearWorkspaceReadCache(token);
+  }
+
+  private clearWorkspaceReadCache(token: string): void {
+    for (const key of this.workspaceCache.keys()) {
+      if (key.startsWith(`${token}:`)) this.workspaceCache.delete(key);
     }
   }
 
@@ -170,15 +236,18 @@ export class ApiClient {
   }
 
   getProfile(token: string): Promise<User> {
-    return this.request("/auth/me", {}, token);
+    return this.cached(this.profileCache, token, () => this.request("/auth/me", {}, token));
   }
 
   updateProfile(token: string, displayName: string): Promise<User> {
-    return this.request(
+    return this.request<User>(
       "/auth/profile",
       { method: "PATCH", body: JSON.stringify({ display_name: displayName }) },
       token,
-    );
+    ).then((user) => {
+      this.profileCache.delete(token);
+      return user;
+    });
   }
 
   changePassword(token: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -223,7 +292,23 @@ export class ApiClient {
 
   listWorkspaces(token: string, includeArchived = false): Promise<LearningWorkspace[]> {
     const query = includeArchived ? "?include_archived=true" : "";
-    return this.request(`/workspaces${query}`, {}, token);
+    const key = `${token}:${includeArchived ? "archived" : "active"}`;
+    return this.cached(
+      this.workspaceCache,
+      key,
+      () => this.request(`/workspaces${query}`, {}, token),
+    );
+  }
+
+  getCalendar(
+    token: string,
+    startsAt: string,
+    endsAt: string,
+    includeArchived = false,
+  ): Promise<CalendarResponse> {
+    const query = new URLSearchParams({ starts_at: startsAt, ends_at: endsAt });
+    if (includeArchived) query.set("include_archived", "true");
+    return this.request(`/calendar?${query.toString()}`, {}, token);
   }
 
   updateWorkspace(
@@ -231,28 +316,91 @@ export class ApiClient {
     workspaceId: string,
     input: { title?: string; goal?: string; archived?: boolean },
   ): Promise<LearningWorkspace> {
-    return this.request(
+    return this.request<LearningWorkspace>(
       `/workspaces/${workspaceId}`,
       { method: "PATCH", body: JSON.stringify(input) },
       token,
-    );
+    ).then((workspace) => {
+      this.clearWorkspaceReadCache(token);
+      return workspace;
+    });
   }
 
   deleteWorkspace(token: string, workspaceId: string): Promise<void> {
-    return this.request(`/workspaces/${workspaceId}`, { method: "DELETE" }, token);
+    return this.request<void>(`/workspaces/${workspaceId}`, { method: "DELETE" }, token)
+      .then(() => {
+        this.clearWorkspaceReadCache(token);
+      });
   }
 
   resolveWorkspace(token: string, intent: string, signal?: AbortSignal): Promise<WorkspaceRoute> {
-    return this.request(
+    return this.request<WorkspaceRoute>(
       "/workspaces/resolve",
       { method: "POST", body: JSON.stringify({ intent }), signal },
       token,
       this.longRequestTimeouts.model,
+    ).then((route) => {
+      this.clearWorkspaceReadCache(token);
+      return route;
+    });
+  }
+
+  getWorkspaceSnapshot(
+    token: string,
+    workspaceId: string,
+    timezoneOffsetMinutes = -new Date().getTimezoneOffset(),
+  ): Promise<WorkspaceSnapshot> {
+    return this.request(
+      `/workspaces/${workspaceId}/snapshot?timezone_offset_minutes=${timezoneOffsetMinutes}`,
+      {},
+      token,
     );
   }
 
-  getWorkspaceSnapshot(token: string, workspaceId: string): Promise<WorkspaceSnapshot> {
-    return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
+  getWorkspaceNextAction(
+    token: string,
+    workspaceId: string,
+    timezoneOffsetMinutes = -new Date().getTimezoneOffset(),
+  ): Promise<NextAction> {
+    return this.request(
+      `/workspaces/${workspaceId}/next-action?timezone_offset_minutes=${timezoneOffsetMinutes}`,
+      {},
+      token,
+    );
+  }
+
+  listWorkspaceTopicSuggestions(
+    token: string,
+    workspaceId: string,
+  ): Promise<TopicSuggestion[]> {
+    return this.request(`/workspaces/${workspaceId}/topic-suggestions`, {}, token);
+  }
+
+  acceptWorkspaceTopicSuggestion(
+    token: string,
+    workspaceId: string,
+    suggestionId: string,
+  ): Promise<WorkspaceSnapshot> {
+    return this.request(
+      `/workspaces/${workspaceId}/topic-suggestions/${suggestionId}/accept`,
+      { method: "POST" },
+      token,
+    );
+  }
+
+  submitWorkspaceDiagnostic(
+    token: string,
+    workspaceId: string,
+    results: Array<{ topic_id: string; is_correct: boolean }>,
+  ): Promise<Progress> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/diagnostic`,
+      {
+        method: "POST",
+        body: JSON.stringify({ diagnostic_id: "initial", results }),
+      },
+      token,
+    );
   }
 
   getWorkspaceQuestion(
@@ -285,6 +433,7 @@ export class ApiClient {
           mode: options.learningMode ?? "concept",
           replace: options.replace ?? false,
           review_session_id: options.reviewSessionId,
+          plan_session_id: options.planSessionId,
         }),
       },
       token,
@@ -337,6 +486,18 @@ export class ApiClient {
       },
       token,
       this.longRequestTimeouts.model,
+    );
+  }
+
+  markWorkspaceGradeShown(
+    token: string,
+    workspaceId: string,
+    attemptId: string,
+  ): Promise<JourneyEvent> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/attempts/${attemptId}/shown`,
+      { method: "POST" },
+      token,
     );
   }
 
@@ -656,6 +817,15 @@ export class ApiClient {
 
   getAdminJobs(token: string): Promise<AdminJobsResponse> {
     return this.request("/admin/jobs", {}, token);
+  }
+
+  getAdminLearningMetrics(
+    token: string,
+    startsAt: string,
+    endsAt: string,
+  ): Promise<LearningMetricsResponse> {
+    const query = new URLSearchParams({ starts_at: startsAt, ends_at: endsAt });
+    return this.request(`/admin/metrics/learning?${query.toString()}`, {}, token);
   }
 
   listAdminAudit(token: string, page = 1, pageSize = 20): Promise<AdminAuditPage> {

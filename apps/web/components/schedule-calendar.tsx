@@ -21,23 +21,34 @@ export function ScheduleCalendar({
   locale,
   topicLabels = {},
   busySessionId,
+  focusedSessionId,
   onUpdateSession,
   onAddSession,
   onClearPlan,
+  onStartSession,
+  practiceBusy = false,
 }: {
   plan: StudyPlan | null;
   locale: Locale;
   topicLabels?: Record<string, string>;
   busySessionId?: string | null;
+  focusedSessionId?: string | null;
   onUpdateSession: (
     session: StudySession,
     input: { planned_at?: string; minutes?: number; status?: "planned" | "completed" },
   ) => void | boolean | Promise<void | boolean>;
   onAddSession?: (input: { topic_name: string; planned_at: string; minutes: number; activity: string }) => Promise<boolean>;
   onClearPlan?: () => Promise<boolean>;
+  onStartSession?: (session: StudySession) => void | Promise<void>;
+  practiceBusy?: boolean;
 }) {
   const zh = locale === "zh";
-  const initial = plan?.sessions[0] ? new Date(plan.sessions[0].planned_at) : new Date();
+  const focusedSession = plan?.sessions.find((session) => session.id === focusedSessionId);
+  const initial = focusedSession
+    ? new Date(focusedSession.planned_at)
+    : plan?.sessions[0]
+      ? new Date(plan.sessions[0].planned_at)
+      : new Date();
   const [month, setMonth] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(dateKey(initial));
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -103,7 +114,7 @@ export function ScheduleCalendar({
       <CalendarDays size={28} strokeWidth={1.5} />
       <span className="kicker">SCHEDULE / READY</span>
       <h2>{zh ? "还没有可安排的学习日程" : "No study schedule yet"}</h2>
-      <p>{zh ? "先在今日学习中确认目标。生成学习路径后，每次学习与复习会自动排进这里。" : "Confirm the goal in Today first. Learning and review sessions will appear here after the study path is generated."}</p>
+      <p>{zh ? "计划尚未生成。生成后，每次学习与复习都会自动排进这里，并可随时调整。" : "The plan is not ready yet. Once generated, learning and review sessions will appear here and remain editable."}</p>
     </section>
   );
 
@@ -112,7 +123,7 @@ export function ScheduleCalendar({
       <header className="calendar-toolbar">
         <div className="calendar-product-title">
           <span className="calendar-product-icon"><CalendarDays size={24} /></span>
-          <div><span>{zh ? "RefineQ 学习时间表" : "RefineQ Study Schedule"}</span><h2>{monthTitle}</h2></div>
+          <div><span>{zh ? "计划日历" : "Plan calendar"}</span><h2>{monthTitle}</h2></div>
         </div>
         <div className="calendar-toolbar-actions">
           <button type="button" className="calendar-clear-button" onClick={() => setConfirmingClear(true)}><Trash2 size={15} />{zh ? "一键清除" : "Clear plan"}</button>
@@ -134,7 +145,7 @@ export function ScheduleCalendar({
               return (
                 <button type="button" key={key} className={selectedDate === key ? "calendar-day selected" : "calendar-day"} onClick={() => setSelectedDate(key)}>
                   <span>{date.getDate()}</span>
-                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}`} data-activity={session.activity ?? "learn"} key={session.id}><time>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(session.planned_at))}</time>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</i>)}</div>
+                  <div>{events.slice(0, 3).map((session, eventIndex) => <i className={`calendar-event color-${eventIndex % 4} activity-${session.activity ?? "learn"}${session.id === focusedSessionId ? " focused" : ""}${session.status === "completed" ? " completed" : ""}`} data-activity={session.activity ?? "learn"} data-session-id={session.id} data-focused={session.id === focusedSessionId ? "true" : undefined} data-status={session.status} key={session.id}><time>{new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(session.planned_at))}</time>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</i>)}</div>
                 </button>
               );
             })}
@@ -175,16 +186,27 @@ export function ScheduleCalendar({
                 const height = Math.max(34, session.minutes);
                 const end = new Date(start.getTime() + session.minutes * 60_000);
                 const timeFormat = new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-                return <button
-                  type="button"
-                  className={`timeline-event color-${index % 4}${session.status === "completed" ? " completed" : ""}`}
+                return <div
+                  className={`timeline-event color-${index % 4}${session.id === focusedSessionId ? " focused" : ""}${session.status === "completed" ? " completed" : ""}`}
                   key={session.id}
+                  data-session-id={session.id}
+                  data-focused={session.id === focusedSessionId ? "true" : undefined}
+                  data-status={session.status}
                   style={{ top: `${top}px`, minHeight: `${height}px` }}
-                  onClick={() => beginEdit(session)}
                 >
                   <strong>{activityLabel(session.activity)} · {topicLabel(session.topic_id)}</strong>
                   <small>{timeFormat.format(start)}–{timeFormat.format(end)} · {session.minutes} {zh ? "分钟" : "min"}</small>
-                </button>;
+                  <div className="timeline-event-actions">
+                    <button type="button" data-testid={`start-calendar-session-${session.id}`} disabled={!onStartSession || practiceBusy || busySessionId === session.id} onClick={() => void onStartSession?.(session)}>{zh ? "开始" : "Start"}</button>
+                    <button type="button" data-testid={`complete-calendar-session-${session.id}`} disabled={busySessionId === session.id} onClick={() => void onUpdateSession(session, { status: session.status === "completed" ? "planned" : "completed" })}>{session.status === "completed" ? (zh ? "重新打开" : "Reopen") : (zh ? "完成" : "Complete")}</button>
+                    <button type="button" data-testid={`defer-calendar-session-${session.id}`} disabled={busySessionId === session.id} onClick={() => {
+                      const deferredAt = new Date(session.planned_at);
+                      deferredAt.setUTCDate(deferredAt.getUTCDate() + 1);
+                      void onUpdateSession(session, { planned_at: deferredAt.toISOString() });
+                    }}>{zh ? "顺延一天" : "Defer one day"}</button>
+                    <button type="button" data-testid={`edit-calendar-session-${session.id}`} disabled={busySessionId === session.id} onClick={() => beginEdit(session)}>{zh ? "编辑" : "Edit"}</button>
+                  </div>
+                </div>;
               })}
               {selectedSessions.length === 0 && <p className="timeline-empty">{zh ? "这一天没有学习任务，可以点击上方添加日程。" : "No sessions. Add one above."}</p>}
             </div>

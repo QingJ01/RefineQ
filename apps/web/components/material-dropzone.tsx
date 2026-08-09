@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   FileStack,
+  ListPlus,
   Pencil,
   RotateCcw,
   Search,
@@ -17,6 +18,7 @@ import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "reac
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
+import { consumeHistoryUploadContinuation } from "@/lib/history-navigation-guard";
 import type { Translator } from "@/lib/i18n";
 import type {
   Locale,
@@ -26,6 +28,7 @@ import type {
   SearchSource,
   StudyPlan,
   TargetedPlanInput,
+  TopicSuggestion,
 } from "@/lib/types";
 import {
   clearSelectedFiles,
@@ -115,6 +118,10 @@ export function MaterialDropzone({
   onOpenCalendar,
   onUpdate,
   onBulkDelete,
+  topicSuggestions = [],
+  acceptingTopicSuggestionId = null,
+  onAcceptTopicSuggestion,
+  onUploadActivityChange,
   materials,
 }: {
   t: Translator;
@@ -128,6 +135,10 @@ export function MaterialDropzone({
   onOpenCalendar?: () => void;
   onUpdate?: (material: MaterialRecord, input: MaterialUpdateInput) => void | Promise<void>;
   onBulkDelete?: (materials: MaterialRecord[]) => void | Promise<void>;
+  topicSuggestions?: TopicSuggestion[];
+  acceptingTopicSuggestionId?: string | null;
+  onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
+  onUploadActivityChange?: (active: boolean) => void;
   materials: MaterialRecord[];
 }) {
   const copy = organizationCopy[locale];
@@ -231,6 +242,16 @@ export function MaterialDropzone({
   const selectedMaterials = materials.filter((material) => selectedIds.has(material.id));
   const allVisibleSelected = visibleMaterials.length > 0
     && visibleMaterials.every((material) => selectedIds.has(material.id));
+  const uploadActive = queue.some((item) => (
+    item.status === "queued" || item.status === "uploading"
+  ));
+
+  useEffect(() => {
+    onUploadActivityChange?.(uploadActive);
+    return () => {
+      if (uploadActive) onUploadActivityChange?.(false);
+    };
+  }, [onUploadActivityChange, uploadActive]);
 
   useEffect(() => {
     uploadQueue.open();
@@ -242,6 +263,7 @@ export function MaterialDropzone({
     const controllers = activeControllersRef.current;
     return () => {
       window.removeEventListener("beforeunload", beforeUnload);
+      if (consumeHistoryUploadContinuation()) return;
       uploadQueue.close();
       controllers.forEach((controller) => controller.abort());
       controllers.clear();
@@ -499,6 +521,37 @@ export function MaterialDropzone({
             </button>
           )}
         </div>
+      )}
+
+      {topicSuggestions.length > 0 && (
+        <aside className="material-topic-suggestions" data-testid="material-topic-suggestions">
+          <div>
+            <span><ListPlus size={17} /></span>
+            <div>
+              <strong>{locale === "zh" ? "从资料信息发现的主题" : "Topics found in material details"}</strong>
+              <p>{locale === "zh"
+                ? "这些候选只来自标题和标签。确认后才会加入学习路径。"
+                : "These candidates use titles and tags only. Nothing changes until you confirm."}</p>
+            </div>
+          </div>
+          <ul>
+            {topicSuggestions.map((suggestion) => (
+              <li key={suggestion.id}>
+                <span>{suggestion.name}</span>
+                <button
+                  type="button"
+                  data-testid={`accept-topic-${suggestion.id}`}
+                  disabled={acceptingTopicSuggestionId !== null}
+                  onClick={() => void onAcceptTopicSuggestion?.(suggestion)}
+                >
+                  {acceptingTopicSuggestionId === suggestion.id
+                    ? (locale === "zh" ? "正在添加…" : "Adding…")
+                    : (locale === "zh" ? "添加主题" : "Add topic")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
       )}
 
       <form className="material-search" onSubmit={searchMaterials}>

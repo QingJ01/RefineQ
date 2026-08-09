@@ -10,6 +10,10 @@ import type { Locale, PlanUpdateInput, StudyPlan } from "@/lib/types";
 
 const copy = {
   zh: {
+    currentConstraints: "当前生效计划",
+    minutesPerDay: "分钟/天",
+    historicalInput: "历史原始输入",
+    historicalNote: "此文本只记录最初意图，不再控制当前日程。",
     summary: "调整学习计划",
     description: "修改目标、截止日期、每日投入和主题顺序。保存设置不会打乱现有日程。",
     goal: "学习目标",
@@ -32,6 +36,10 @@ const copy = {
     untitledTopic: "未命名主题",
   },
   en: {
+    currentConstraints: "Current effective plan",
+    minutesPerDay: "min/day",
+    historicalInput: "Historical input",
+    historicalNote: "This text records the original intent and does not control the current schedule.",
     summary: "Adjust learning plan",
     description: "Change the goal, target date, daily time, and topic order. Saving does not rearrange existing sessions.",
     goal: "Learning goal",
@@ -67,6 +75,7 @@ export function PlanSettings({
   plan,
   topics,
   topicOrder,
+  originalGoal,
   busy = false,
   onSave,
 }: {
@@ -74,6 +83,7 @@ export function PlanSettings({
   plan: StudyPlan;
   topics: Record<string, string>;
   topicOrder: string[];
+  originalGoal: string;
   busy?: boolean;
   onSave: (input: PlanUpdateInput) => void | Promise<void>;
 }) {
@@ -151,14 +161,29 @@ export function PlanSettings({
     topicOrder: text.topicsInvalid,
   };
   const locked = busy || saving;
+  const formattedExamDate = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(plan.exam_at));
 
   return (
     <details className="content-card plan-settings" data-testid="plan-settings">
       <summary data-testid="plan-settings-toggle">
         <span><CalendarClock size={18} /><strong>{text.summary}</strong></span>
         <small>{text.description}</small>
+        <div className="current-plan-constraints" data-testid="current-plan-constraints">
+          <span>{text.currentConstraints}</span>
+          <strong>{formattedExamDate} · {plan.daily_minutes} {text.minutesPerDay}</strong>
+        </div>
       </summary>
       <form onSubmit={submit} noValidate>
+        <details className="historical-plan-input" data-testid="historical-plan-input">
+          <summary>{text.historicalInput}</summary>
+          <blockquote>{originalGoal}</blockquote>
+          <small>{text.historicalNote}</small>
+        </details>
         <label htmlFor="plan-goal">{text.goal}</label>
         <textarea
           id="plan-goal"

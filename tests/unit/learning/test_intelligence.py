@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from refineq.agent.settings import ModelSettings, ModelSettingsRepository
+from refineq.agent.settings import ModelNotConfiguredError, ModelSettings
 from refineq.knowledge.index import KnowledgeIndex, SearchResult
 from refineq.learning.intelligence import (
     GeneratedQuestion,
+    GradingModelOutput,
     GradingResult,
     LearningIntelligenceService,
     fallback_grade,
@@ -19,9 +21,11 @@ from refineq.learning.models import Grounding, LearningMode
 class FakeStructuredTransport:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.message_batches: list[list[dict[str, str]]] = []
 
     def complete(self, *, settings, messages, response_model):
-        del settings, messages
+        del settings
+        self.message_batches.append(messages)
         self.calls.append(response_model.__name__)
         if response_model.__name__ == "QuestionModelOutput":
             return response_model.model_validate(
@@ -44,8 +48,32 @@ class FakeStructuredTransport:
                 "misconceptions": [],
                 "feedback": "概念基本正确，再补充函数值与极限值可以不同。",
                 "citations": ["limits-notes#0", "invented#9"],
+                "sufficient_evidence": True,
             }
         )
+
+
+class FakeModelSettings:
+    def __init__(self, *, configured: bool = True) -> None:
+        self.settings = (
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            )
+            if configured
+            else None
+        )
+
+    def load(self, owner_id: str) -> ModelSettings:
+        del owner_id
+        if self.settings is None:
+            raise ModelNotConfiguredError("Model settings have not been configured")
+        return self.settings
+
+
+def test_ai_grading_contract_requires_an_explicit_evidence_judgment() -> None:
+    assert GradingModelOutput.model_fields["sufficient_evidence"].is_required()
 
 
 def _service(tmp_path: Path, *, configured: bool = True):
@@ -57,16 +85,7 @@ def _service(tmp_path: Path, *, configured: bool = True):
         filename="limits.md",
         text="函数极限描述自变量趋近某点时函数值所趋近的值，不要求函数在该点取到该值。",
     )
-    settings = ModelSettingsRepository(tmp_path)
-    if configured:
-        settings.save(
-            "owner",
-            ModelSettings(
-                base_url="https://api.openai.com/v1",
-                model="study-model",
-                api_key="secret-key-1234",
-            ),
-        )
+    settings = FakeModelSettings(configured=configured)
     transport = FakeStructuredTransport()
     return LearningIntelligenceService(knowledge, settings, transport), transport
 
@@ -91,6 +110,30 @@ def test_generated_question_is_grounded_and_filters_invented_citations(
     assert question.expected_answer
     assert sum(item.max_points for item in question.rubric) == 100
     assert transport.calls == ["QuestionModelOutput"]
+
+
+def test_prior_feedback_is_bounded_by_the_service_and_delimited_as_untrusted(
+    tmp_path: Path,
+) -> None:
+    service, transport = _service(tmp_path)
+
+    service.generate_question(
+        owner_id="owner",
+        workspace_id="calculus",
+        topic_id="limits",
+        topic_name="函数极限",
+        mastery=0.25,
+        difficulty_level=2,
+        prior_feedback=[
+            {"gaps": ["补充左右极限"], "misconceptions": ["把趋近等同于取值"]},
+        ],
+    )
+
+    prompt = "\n".join(message["content"] for message in transport.message_batches[-1])
+    assert "<untrusted_prior_feedback>" in prompt
+    assert "</untrusted_prior_feedback>" in prompt
+    assert "补充左右极限" in prompt
+    assert "把趋近等同于取值" in prompt
 
 
 def test_generated_task_preserves_a_domain_neutral_learning_mode(tmp_path: Path) -> None:
@@ -143,35 +186,31 @@ def test_fallback_tasks_change_with_the_selected_learning_mode() -> None:
 
 def test_question_generation_falls_back_when_model_is_not_configured(
     tmp_path: Path,
+    caplog,
 ) -> None:
     service, transport = _service(tmp_path, configured=False)
 
-    question = service.generate_question(
-        owner_id="owner",
-        workspace_id="calculus",
-        topic_id="limits",
-        topic_name="函数极限",
-        mastery=0.25,
-        difficulty_level=2,
-    )
+    with caplog.at_level(logging.INFO):
+        question = service.generate_question(
+            owner_id="owner-private-id",
+            workspace_id="calculus-private-id",
+            topic_id="limits-private-id",
+            topic_name="函数极限",
+            mastery=0.25,
+            difficulty_level=2,
+        )
 
     assert question.mode == "fallback"
     assert question.prompt
     assert question.expected_answer
     assert transport.calls == []
+    assert "event=learning_question_fallback reason=model_not_configured" in caplog.text
+    assert "private-id" not in caplog.text
 
 
 def test_generates_ai_question_without_sources_when_model_configured(tmp_path: Path) -> None:
     knowledge = KnowledgeIndex(tmp_path / "knowledge")
-    settings = ModelSettingsRepository(tmp_path / "settings")
-    settings.save(
-        "owner",
-        ModelSettings(
-            base_url="https://api.openai.com/v1",
-            model="study-model",
-            api_key="secret-key-1234",
-        ),
-    )
+    settings = FakeModelSettings()
     transport = FakeStructuredTransport()
     service = LearningIntelligenceService(knowledge, settings, transport)
 
@@ -193,7 +232,7 @@ def test_generates_ai_question_without_sources_when_model_configured(tmp_path: P
 
 def test_falls_back_without_sources_when_model_is_not_configured(tmp_path: Path) -> None:
     knowledge = KnowledgeIndex(tmp_path / "knowledge")
-    settings = ModelSettingsRepository(tmp_path / "settings")
+    settings = FakeModelSettings(configured=False)
     transport = FakeStructuredTransport()
     service = LearningIntelligenceService(knowledge, settings, transport)
 
@@ -209,6 +248,36 @@ def test_falls_back_without_sources_when_model_is_not_configured(tmp_path: Path)
     assert question.mode == "fallback"
     assert question.citations == []
     assert transport.calls == []
+
+
+def test_fallback_grading_log_contains_only_operational_metadata(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    service, _ = _service(tmp_path, configured=False)
+    question = fallback_question(
+        topic_id="private-topic-id",
+        topic_name="Private topic name",
+        difficulty_level=2,
+        sources=[],
+    )
+
+    with caplog.at_level(logging.INFO, logger="refineq.learning.intelligence"):
+        service.grade_answer(
+            owner_id="private-owner-id",
+            question=question,
+            answer="private learner answer",
+        )
+
+    operational_logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "refineq.learning.intelligence"
+    )
+    assert "event=learning_grading_fallback reason=model_not_configured" in operational_logs
+    assert "duration_ms=" in operational_logs
+    assert "mode=fallback" in operational_logs
+    assert "private" not in operational_logs
 
 
 def test_ai_grading_returns_explainable_feedback_and_valid_citations(
@@ -237,6 +306,27 @@ def test_ai_grading_returns_explainable_feedback_and_valid_citations(
     assert result.strengths == ["说明了趋近"]
     assert result.citations == ["limits-notes#0"]
     assert transport.calls == ["QuestionModelOutput", "GradingModelOutput"]
+
+
+def test_ai_cannot_mark_a_prompt_echo_as_mastery_evidence(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path)
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="calculus",
+        topic_id="limits",
+        topic_name="函数极限",
+        mastery=0.25,
+        difficulty_level=2,
+    )
+
+    result = service.grade_answer(
+        owner_id="owner",
+        question=question,
+        answer="函数极限",
+    )
+
+    assert result.mastery_evidence is False
+    assert result.passed is False
 
 
 def test_fallback_grading_rejects_topic_echo_and_generic_filler() -> None:

@@ -27,12 +27,32 @@ export interface LearningWorkspace {
   title: string;
   subject: string;
   goal: string;
+  original_goal?: string;
   topics: string[];
   keywords: string[];
   routing_summary: string;
   archived: boolean;
   created_at: string;
   last_active_at: string;
+}
+
+export interface CalendarTask {
+  id: string;
+  workspace_id: string;
+  workspace_title: string;
+  workspace_archived: boolean;
+  topic_id: string;
+  topic_label: string;
+  planned_at: string;
+  minutes: number;
+  activity: "learn" | "practice" | "apply" | "review";
+  status: "planned" | "completed";
+}
+
+export interface CalendarResponse {
+  starts_at: string;
+  ends_at: string;
+  tasks: CalendarTask[];
 }
 
 export interface WorkspaceRoute {
@@ -51,6 +71,47 @@ export interface WorkspaceSnapshot {
   saved_questions?: SavedPracticeQuestion[];
   active_question?: PracticeQuestion | null;
   last_answer?: AnswerResult | null;
+  topic_suggestions?: TopicSuggestion[];
+  next_action: NextAction;
+}
+
+export interface NextActionAlternative {
+  action_type: "open_materials" | "view_plan" | "start_practice";
+  target_id: string | null;
+}
+
+export interface NextAction {
+  id: string;
+  workspace_id: string;
+  version: number;
+  expires_at: string;
+  action_type: "upload_material" | "start_review" | "start_session" | "repair_pace" | "start_practice";
+  trigger: "material_missing" | "due_review" | "scheduled_session" | "pace_risk" | "weak_topic";
+  reason_code: string;
+  reason: string;
+  preconditions: Record<string, boolean>;
+  evidence_refs: string[];
+  expected_outcome: string;
+  target_id: string | null;
+  topic_id: string | null;
+  minutes: number | null;
+  alternatives: NextActionAlternative[];
+  risk_level: "low" | "medium" | "high";
+  approval_mode: "advise" | "confirm" | "auto_safe";
+}
+
+export interface JourneyEvent {
+  id: string;
+  workspace_id: string;
+  name: "intent_submitted" | "workspace_ready" | "workspace_opened" | "material_searchable" | "question_started" | "grounded_grade_created" | "grounded_grade_shown";
+  occurred_at: string;
+  ref_id: string | null;
+}
+
+export interface TopicSuggestion {
+  id: string;
+  name: string;
+  source_material_ids: string[];
 }
 
 export interface StudySession {
@@ -81,11 +142,17 @@ export interface PlanUpdateInput {
 export interface Progress {
   goal: string;
   mastery: Record<string, number>;
+  stable?: Record<string, boolean>;
   topics: Record<string, string>;
   topic_order: string[];
   diagnostic_count: number;
   attempt_count: number;
   plan_id: string | null;
+}
+
+export interface DiagnosticResultInput {
+  topic_id: string;
+  is_correct: boolean;
 }
 
 export interface PracticeQuestion {
@@ -114,6 +181,7 @@ export interface PracticeRequest {
   difficulty?: number;
   replace?: boolean;
   reviewSessionId?: string;
+  planSessionId?: string;
 }
 
 export interface AnswerResult {
@@ -136,6 +204,7 @@ export interface AnswerResult {
   mastery_updated: boolean;
   next_review_at?: string | null;
   completed_review_session_id?: string | null;
+  completed_plan_session_id?: string | null;
   answer?: string;
   observed_at?: string | null;
   learner_note?: string | null;
@@ -451,6 +520,22 @@ export interface AdminJobSummary {
 export interface AdminJobsResponse {
   items: AdminJobSummary[];
   observed_at: string;
+}
+
+export interface DurationPercentiles {
+  sample_size: number;
+  p50: number | null;
+  p90: number | null;
+}
+
+export interface LearningMetricsResponse {
+  starts_at: string;
+  ends_at: string;
+  active_learners: number;
+  grounded_loop_completers: number;
+  grounded_loop_completion_rate: number;
+  intent_to_grounded_grade_seconds: DurationPercentiles;
+  revisit_open_to_question_seconds: DurationPercentiles;
 }
 
 export interface AdminAuditEntry {

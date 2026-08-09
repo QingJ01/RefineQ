@@ -43,7 +43,7 @@ def test_seed_demo_uses_supplied_database_and_is_idempotent(tmp_path: Path) -> N
 
     assert second == first
     assert second_record.version == first_record.version
-    assert second_record.data["progress"]["diagnostic_runs"] == ["demo-diagnostic"]
+    assert second_record.data["progress"]["diagnostic_runs"] == ["initial"]
     assert len(second_record.data["attempts"]) == 1
     assert second_record.data["progress"]["plan"] is not None
     workspace = WorkspaceRepository(store).get(

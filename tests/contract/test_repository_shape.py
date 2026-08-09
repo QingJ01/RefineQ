@@ -45,6 +45,10 @@ FORBIDDEN_ROOT_FILES = {
 }
 FORBIDDEN_PRODUCT_PATHS = {
     "apps/web/components/goal-wizard.tsx",
+    "src/refineq/learning/diagnostic.py",
+    "src/refineq/learning/errors.py",
+    "tests/unit/agent/test_settings.py",
+    "tests/unit/learning/test_errors.py",
 }
 TEXT_SUFFIXES = {
     ".css",
@@ -99,6 +103,15 @@ def test_browser_client_uses_only_learning_workspace_routes() -> None:
 
     assert "/projects/" not in api_source
     assert "createProject" not in api_source
+
+
+def test_model_consumers_depend_on_a_structural_settings_interface() -> None:
+    settings_source = (REPOSITORY_ROOT / "src/refineq/agent/settings.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "class ModelSettingsRepository(Protocol):" in settings_source
+    assert "model-encryption.key" not in settings_source
 
 
 def test_tracked_product_text_has_no_legacy_brand_names() -> None:

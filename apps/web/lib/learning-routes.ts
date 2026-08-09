@@ -1,8 +1,9 @@
-export const learningSections = ["today", "path", "materials", "calendar", "progress"] as const;
+export const learningSections = ["today", "plan", "materials", "progress"] as const;
 
 export type LearningSection = (typeof learningSections)[number];
 
 export function parseLearningSection(value: string): LearningSection | null {
+  if (value === "path" || value === "calendar") return "plan";
   if (value === "evidence") return "progress";
   if (value === "coach") return "today";
   return learningSections.includes(value as LearningSection) ? value as LearningSection : null;

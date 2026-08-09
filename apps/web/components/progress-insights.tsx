@@ -27,7 +27,7 @@ export function ProgressInsights({
 }) {
   const labels = { ...(progress?.topics ?? {}), ...topicLabels };
   const topics = Object.entries(progress?.mastery ?? {})
-    .sort((left, right) => left[1] - right[1]);
+    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]));
   const recommended = topics[0];
   const topicLabel = (topic: string) => labels[topic]
     ?? (locale === "zh" ? "未命名主题" : "Untitled topic");
@@ -67,7 +67,13 @@ export function ProgressInsights({
               onClick={() => onSelectTopic?.(topic)}
             >
               <span>{topicLabel(topic)}</span>
-              {topicInsight && <small>{topicInsight.attempt_count} · {topicInsight.error_count}</small>}
+              {(topicInsight || progress.stable?.[topic]) && (
+                <small>
+                  {topicInsight && `${topicInsight.attempt_count} · ${topicInsight.error_count}`}
+                  {topicInsight && progress.stable?.[topic] && " · "}
+                  {progress.stable?.[topic] && t("correct")}
+                </small>
+              )}
             </button>
             <div role="progressbar" aria-label={topicLabel(topic)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mastery * 100)}>
               <i style={{ width: `${Math.round(mastery * 100)}%` }} />

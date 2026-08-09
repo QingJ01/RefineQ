@@ -33,6 +33,7 @@ class WorkspaceRepository:
             title=title.strip(),
             subject=subject.strip(),
             goal=goal.strip(),
+            original_goal=goal.strip(),
             topics=[item.strip() for item in topics if item.strip()],
             keywords=list(dict.fromkeys(item.strip() for item in keywords if item.strip())),
             routing_summary=routing_summary.strip(),
@@ -74,12 +75,33 @@ class WorkspaceRepository:
         archived: bool | None = None,
     ) -> LearningWorkspace:
         def apply(data: dict) -> dict:
+            data.setdefault("original_goal", data.get("goal", ""))
             if title is not None:
                 data["title"] = title.strip()
             if goal is not None:
                 data["goal"] = goal.strip()
             if archived is not None:
                 data["archived"] = archived
+            return data
+
+        record = self._store.mutate(owner_id, "workspaces", workspace_id, apply)
+        return LearningWorkspace.model_validate(record.data)
+
+    def append_topic(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        topic_name: str,
+    ) -> LearningWorkspace:
+        normalized = topic_name.strip()
+
+        def apply(data: dict) -> dict:
+            topics = data.setdefault("topics", [])
+            if any(str(item).casefold() == normalized.casefold() for item in topics):
+                return data
+            if len(topics) >= 200:
+                raise ValueError("Learning workspace topic limit reached")
+            topics.append(normalized)
             return data
 
         record = self._store.mutate(owner_id, "workspaces", workspace_id, apply)

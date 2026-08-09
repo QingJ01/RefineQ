@@ -5,7 +5,6 @@ import {
   Check,
   Download,
   KeyRound,
-  Languages,
   LoaderCircle,
   LogOut,
   ShieldCheck,
@@ -16,17 +15,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
-import { BrandMark, BrandName } from "@/components/brand";
+import { AppSidebar } from "@/components/app-sidebar";
+import { BrandMark } from "@/components/brand";
 import { api, ApiError } from "@/lib/api";
 import { localizeApiError } from "@/lib/error-messages";
 import { learningPath } from "@/lib/learning-routes";
 import {
-  clearLearningSession,
   loadLearningSession,
   saveLearningLocale,
 } from "@/lib/session";
-import type { Locale, User } from "@/lib/types";
-import { clearWorkspaceSnapshots } from "@/lib/workspace-snapshot-handoff";
+import { clearUserScopedSessionState } from "@/lib/client-session-state";
+import type { LearningWorkspace, Locale, User } from "@/lib/types";
 
 
 const copy = {
@@ -111,6 +110,7 @@ type Action = "profile" | "password" | "export" | "sessions" | "delete";
 export function AccountCenter({
   locale,
   user,
+  workspaces = [],
   busy,
   backHref = "/",
   onToggleLocale,
@@ -119,9 +119,11 @@ export function AccountCenter({
   onExport,
   onLogoutAll,
   onDeleteAccount,
+  onLogout,
 }: {
   locale: Locale;
   user: User;
+  workspaces?: LearningWorkspace[];
   busy: boolean;
   backHref?: string;
   onToggleLocale?: () => void;
@@ -130,6 +132,7 @@ export function AccountCenter({
   onExport: () => void | Promise<void>;
   onLogoutAll: () => void | Promise<void>;
   onDeleteAccount: (currentPassword: string, confirmation: string) => void | Promise<void>;
+  onLogout?: () => void;
 }) {
   const text = copy[locale];
   const [displayName, setDisplayName] = useState(user.display_name);
@@ -183,17 +186,26 @@ export function AccountCenter({
 
   return (
     <main id="main-content" className="account-shell" data-testid="account-center">
+      <AppSidebar
+        locale={locale}
+        active="account"
+        workspaces={workspaces}
+        isAdmin={user.role === "admin"}
+        contextLabel={text.title}
+        contextNavigation={(
+          <>
+            <a href="#profile"><UserRound size={17} /> <span>{text.profile}</span></a>
+            <a href="#security"><KeyRound size={17} /> <span>{text.password}</span></a>
+            <a href="#data-sessions"><Download size={17} /> <span>{text.data}</span></a>
+            <a href="#danger-zone"><Trash2 size={17} /> <span>{text.danger}</span></a>
+          </>
+        )}
+        onToggleLocale={onToggleLocale ?? (() => undefined)}
+        onLogout={onLogout ?? (() => undefined)}
+      />
+      <section className="account-main">
       <header className="account-header">
-        <Link className="account-wordmark" href={backHref} aria-label={text.back}>
-          <BrandMark size={35} />
-          <BrandName />
-        </Link>
         <div className="account-header-actions">
-          {onToggleLocale && (
-            <button type="button" className="quiet-button" onClick={onToggleLocale}>
-              <Languages size={16} /> {text.language}
-            </button>
-          )}
           <Link className="secondary-action" href={backHref}>
             <ArrowLeft size={16} /> {text.back}
           </Link>
@@ -218,7 +230,7 @@ export function AccountCenter({
       )}
 
       <div className="account-grid">
-        <section className="account-panel account-profile-panel">
+        <section id="profile" className="account-panel account-profile-panel">
           <div className="account-panel-heading">
             <span><UserRound size={19} /></span>
             <div><h2>{text.profile}</h2><p>{text.profileHint}</p></div>
@@ -237,7 +249,7 @@ export function AccountCenter({
           </form>
         </section>
 
-        <section className="account-panel account-password-panel">
+        <section id="security" className="account-panel account-password-panel">
           <div className="account-panel-heading">
             <span><KeyRound size={19} /></span>
             <div><h2>{text.password}</h2><p>{text.passwordHint}</p></div>
@@ -257,7 +269,7 @@ export function AccountCenter({
           </form>
         </section>
 
-        <section className="account-panel account-data-panel">
+        <section id="data-sessions" className="account-panel account-data-panel">
           <div className="account-panel-heading">
             <span><Download size={19} /></span>
             <div><h2>{text.data}</h2><p>{text.dataHint}</p></div>
@@ -277,7 +289,7 @@ export function AccountCenter({
           </div>
         </section>
 
-        <section className="account-panel account-danger-panel">
+        <section id="danger-zone" className="account-panel account-danger-panel">
           <div className="account-panel-heading">
             <span><Trash2 size={19} /></span>
             <div><h2>{text.danger}</h2><p>{text.dangerHint}</p></div>
@@ -297,6 +309,7 @@ export function AccountCenter({
           </form>
         </section>
       </div>
+      </section>
     </main>
   );
 }
@@ -306,6 +319,7 @@ export function AccountRoute() {
   const [locale, setLocale] = useState<Locale>("zh");
   const [token, setToken] = useState("");
   const [user, setUser] = useState<User | null>(null);
+  const [workspaces, setWorkspaces] = useState<LearningWorkspace[]>([]);
   const [backHref, setBackHref] = useState("/");
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
@@ -323,16 +337,20 @@ export function AccountRoute() {
         setLocale(savedLocale);
         setLoadError("");
       }
-      return api.getProfile(saved.token);
-    }).then((profile) => {
+      return Promise.all([
+        api.getProfile(saved.token),
+        api.listWorkspaces(saved.token).catch(() => []),
+      ]);
+    }).then(([profile, nextWorkspaces]) => {
       if (!active) return;
       setToken(saved.token);
+      setWorkspaces(nextWorkspaces);
       setBackHref(saved.workspaceId ? learningPath(saved.workspaceId, "today") : "/");
       setUser(profile);
     }).catch((caught) => {
       if (shouldClearAccountSession(caught)) {
-        clearWorkspaceSnapshots(window.sessionStorage);
-        clearLearningSession(window.sessionStorage);
+        api.clearReadCache(saved.token);
+        clearUserScopedSessionState(window.sessionStorage);
         router.replace("/");
         return;
       }
@@ -348,8 +366,8 @@ export function AccountRoute() {
   }
 
   function exitAccount() {
-    clearWorkspaceSnapshots(window.sessionStorage);
-    clearLearningSession(window.sessionStorage);
+    api.clearReadCache(token);
+    clearUserScopedSessionState(window.sessionStorage);
     router.replace("/");
   }
 
@@ -372,6 +390,7 @@ export function AccountRoute() {
     <AccountCenter
       locale={locale}
       user={user}
+      workspaces={workspaces}
       busy={false}
       backHref={backHref}
       onToggleLocale={() => {
@@ -379,6 +398,7 @@ export function AccountRoute() {
         setLocale(next);
         saveLearningLocale(window.sessionStorage, token, next);
       }}
+      onLogout={exitAccount}
       onUpdateProfile={async (displayName) => {
         setUser(await localized(api.updateProfile(token, displayName)));
       }}

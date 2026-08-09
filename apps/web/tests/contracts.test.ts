@@ -3,7 +3,12 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiClient, ApiError, authHeaders } from "../lib/api";
+import {
+  ApiClient,
+  ApiError,
+  authHeaders,
+  subscribeUnauthorized,
+} from "../lib/api";
 import { shouldClearAccountSession } from "../components/account-center";
 import { messages } from "../lib/i18n";
 import { loadNextQuestion } from "../lib/practice-flow";
@@ -117,11 +122,16 @@ describe("administrator routing", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(adminPage)).toBe(true);
     expect(existsSync(integrationPage)).toBe(true);
     expect(existsSync(operationsPage)).toBe(true);
-    expect(workspaceSource).toContain('router.push("/admin")');
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('href="/admin"');
     expect(workspaceSource).not.toContain('section === "admin"');
     expect(workspaceSource).not.toContain('"coach" | "admin"');
   });
@@ -207,7 +217,9 @@ describe("administrator routing", () => {
 
 describe("durable learner routing", () => {
   it("uses capability-oriented learner routes and keeps legacy links recoverable", () => {
-    expect(learningSections).toEqual(["today", "path", "materials", "calendar", "progress"]);
+    expect(learningSections).toEqual(["today", "plan", "materials", "progress"]);
+    expect(parseLearningSection("path")).toBe("plan");
+    expect(parseLearningSection("calendar")).toBe("plan");
     expect(parseLearningSection("evidence")).toBe("progress");
     expect(parseLearningSection("coach")).toBe("today");
   });
@@ -298,13 +310,18 @@ describe("durable learner routing", () => {
       fileURLToPath(new URL("../components/workspace-switcher.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
-    expect(workspaceSource).toContain('data-testid="workspace-home-link"');
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('data-testid="app-nav-home"');
     expect(workspaceSource).toContain("<WorkspaceSwitcher");
     expect(switcherSource).toContain('data-testid="workspace-switcher"');
-    expect(workspaceSource).toContain('className="workspace-nav-label"');
+    expect(workspaceSource).toContain('contextLabel={t("workspaceSections")}');
     expect(workspaceSource).not.toContain('className="sidebar-learning"');
-    expect(workspaceSource).toContain('onClick={prepareHomeNavigation}');
+    expect(workspaceSource).toContain('onHomeNavigate={prepareHomeNavigation}');
     expect(workspaceSource).toContain('data-testid="workspace-route-state"');
     expect(switcherSource).toContain('aria-label={`${text.switchSpace}: ${current.title}`}');
   });
@@ -349,6 +366,44 @@ describe("durable learner routing", () => {
     expect(resolveSource).not.toContain("saveWorkspaceSnapshot");
   });
 
+  it("hands off every volatile learning field and resets user-scoped state on exit", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const shellSource = readFileSync(
+      fileURLToPath(new URL("../components/learning-app-shell.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource).toContain("topic_suggestions: topicSuggestions");
+    expect(workspaceSource).toContain("client_state:");
+    expect(workspaceSource).toContain("setMasteryBefore(snapshot.client_state.masteryBefore)");
+    expect(workspaceSource).toContain("setLearningMode(snapshot.client_state.learningMode)");
+    expect(workspaceSource).toContain("persistWorkspaceHandoffRef.current = persistWorkspaceHandoff");
+    expect(workspaceSource).toContain("persistWorkspaceHandoffRef.current()");
+    expect(workspaceSource).toContain("savedSession?.token !== activeToken");
+    expect(workspaceSource).toContain("installHistoryNavigationGuard");
+    expect(workspaceSource).toContain("clearUserScopedSessionState(window.sessionStorage)");
+    expect(shellSource).toContain("subscribeUnauthorized");
+    expect(shellSource).toContain("if (!isCurrentUserSession(window.sessionStorage, token)) return;");
+    expect(shellSource).toContain("clearUserScopedSessionState(window.sessionStorage)");
+  });
+
+  it("marks home navigation busy before dropping the active workspace", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const prepareStart = workspaceSource.indexOf("function commitHomeNavigation");
+    const logoutStart = workspaceSource.indexOf("function prepareRouteNavigation", prepareStart);
+    const prepareSource = workspaceSource.slice(prepareStart, logoutStart);
+
+    expect(prepareSource.indexOf("setHomeBusy(true)")).toBeGreaterThanOrEqual(0);
+    expect(prepareSource.indexOf("setHomeBusy(true)"))
+      .toBeLessThan(prepareSource.indexOf("setWorkspace(null)"));
+  });
+
   it("renders the automatic routing decision with correction controls", () => {
     const workspaceSource = readFileSync(
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
@@ -363,6 +418,19 @@ describe("durable learner routing", () => {
     expect(workspaceSource).toContain("route.reason");
     expect(workspaceSource).toContain("undoWorkspaceRoute");
   });
+
+  it("keeps reviews on Today and gives learning records their own anchor", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource.match(/<ReviewQueue/g)).toHaveLength(1);
+    expect(workspaceSource).toContain('{section === "today" && (');
+    expect(workspaceSource).toContain('id="learning-record"');
+    expect(workspaceSource).toContain('href="#learning-record"');
+    expect(workspaceSource).toContain("onStartPlanSession={startPlanSession}");
+  });
 });
 
 
@@ -376,6 +444,9 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toContain("grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);");
     expect(styles).toContain("max-width: 1600px;");
     expect(styles).not.toContain("min-height: max(760px, calc(100vh - 108px));");
+    expect(styles).toMatch(
+      /@media \(max-width: 760px\)[\s\S]*\.plan-session-editor\s*\{[^}]*grid-column: 3;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
+    );
   });
 
   it("places capability progress and the evidence ledger side by side on wide screens", () => {
@@ -477,11 +548,16 @@ describe("authentication and API errors", () => {
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("../components/app-sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
 
     expect(existsSync(accountPage)).toBe(true);
-    expect(homeSource).toContain('data-testid="home-account"');
-    expect(workspaceSource).toContain('data-testid="nav-account"');
-    expect(workspaceSource).toContain('href="/account"');
+    expect(homeSource).toContain("<AppSidebar");
+    expect(workspaceSource).toContain("<AppSidebar");
+    expect(sidebarSource).toContain('data-testid="app-nav-account"');
+    expect(sidebarSource).toContain('href="/account"');
   });
 
   it("delays releasing the account export until the browser can start the download", () => {
@@ -559,6 +635,48 @@ describe("authentication and API errors", () => {
       status: 401,
       code: "unauthorized",
     });
+  });
+
+  it("broadcasts an authenticated 401 so every product area can reset consistently", async () => {
+    const unauthorized = vi.fn();
+    const unsubscribe = subscribeUnauthorized(unauthorized);
+    const client = new ApiClient("/api", async () => new Response(
+      JSON.stringify({ error: { code: "unauthorized", message: "Expired" } }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    ));
+
+    try {
+      await expect(client.getProfile("expired-token")).rejects.toBeInstanceOf(ApiError);
+      expect(unauthorized).toHaveBeenCalledWith("expired-token");
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("deduplicates short-lived profile and workspace reads without crossing tokens", async () => {
+    const calls: string[] = [];
+    const client = new ApiClient("/api", async (input) => {
+      calls.push(String(input));
+      const isProfile = String(input).endsWith("/auth/me");
+      return new Response(JSON.stringify(isProfile ? {
+        id: "user-1",
+        email: "learner@example.com",
+        display_name: "Learner",
+        role: "learner",
+        created_at: "2026-08-08T00:00:00Z",
+      } : []), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await Promise.all([
+      client.getProfile("token-1"),
+      client.getProfile("token-1"),
+      client.listWorkspaces("token-1"),
+      client.listWorkspaces("token-1"),
+    ]);
+    await client.getProfile("token-2");
+
+    expect(calls.filter((path) => path.endsWith("/auth/me"))).toHaveLength(2);
+    expect(calls.filter((path) => path.endsWith("/workspaces"))).toHaveLength(1);
   });
 
   it("supports no-content mutation responses", async () => {
@@ -734,10 +852,18 @@ describe("authentication and API errors", () => {
 
     expect(materialSource).toContain('addEventListener("beforeunload"');
     expect(materialSource).toContain("controller.abort()");
+    expect(materialSource).toContain("consumeHistoryUploadContinuation()");
+    expect(materialSource).toContain("onUploadActivityChange");
+    expect(workspaceSource).toContain("onUploadActivityChange={setUploadInProgress}");
+    expect(workspaceSource).toContain("navigationBlockReason");
+    expect(workspaceSource).toContain("event.preventDefault()");
+    expect(workspaceSource).toContain("pendingRouteActionRef.current");
+    expect(workspaceSource).toContain("workspaceRef.current?.id === targetWorkspaceId");
     expect(workspaceSource).toContain("setHomeBusy(true)");
     expect(workspaceSource).toContain("if (isAbortError(caught)) return []");
-    expect(workspaceSource).toContain('session.activity === "review"');
-    expect(workspaceSource).toContain("startReviewSession(session.topic_id, session.id)");
+    expect(workspaceSource).toContain("learningModeForActivity(session.activity");
+    expect(workspaceSource).toContain("planSessionId: session.id");
+    expect(workspaceSource).toContain("onStartSession={startPlanSession}");
     expect(workspaceSource).toContain('data-testid="resync-workspace"');
   });
 
@@ -939,7 +1065,7 @@ describe("recoverable client workflows", () => {
 
 
 describe("targeted and saved practice API", () => {
-  it("sends topic, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
+  it("sends topic, plan session, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
     let requestedInit: RequestInit | undefined;
     const client = new ApiClient("/api", async (input, init) => {
@@ -963,6 +1089,7 @@ describe("targeted and saved practice API", () => {
       learningMode: "case",
       difficulty: 4,
       replace: true,
+      planSessionId: "plan-session-1",
     });
 
     expect(requestedPath).toBe("/api/workspaces/workspace-1/learning/question");
@@ -973,6 +1100,7 @@ describe("targeted and saved practice API", () => {
       difficulty: 4,
       mode: "case",
       replace: true,
+      plan_session_id: "plan-session-1",
     });
   });
 
@@ -1167,14 +1295,15 @@ describe("persistent personal learning session", () => {
     expect(sources.every((source) => !source.includes("window.localStorage"))).toBe(true);
   });
 
-  it("clears workspace snapshots from every account exit surface", () => {
+  it("clears every user-scoped browser value from every account exit surface", () => {
     const sources = [
       "../components/study-workspace.tsx",
       "../components/account-center.tsx",
       "../components/admin-route.tsx",
+      "../components/global-calendar-route.tsx",
     ].map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"));
 
-    expect(sources.every((source) => source.includes("clearWorkspaceSnapshots(window.sessionStorage)")))
+    expect(sources.every((source) => source.includes("clearUserScopedSessionState(window.sessionStorage)")))
       .toBe(true);
   });
 
@@ -1220,6 +1349,57 @@ describe("persistent personal learning session", () => {
 
 
 describe("implicit workspace API", () => {
+  it("lists and explicitly accepts owner-scoped material topic suggestions", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({ path: String(input), method: String(init?.method ?? "GET") });
+      const body = String(input).endsWith("/accept") ? {} : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.listWorkspaceTopicSuggestions("token", "math-space");
+    await client.acceptWorkspaceTopicSuggestion("token", "math-space", "topic_epsilon");
+
+    expect(requests).toEqual([
+      { path: "/api/workspaces/math-space/topic-suggestions", method: "GET" },
+      {
+        path: "/api/workspaces/math-space/topic-suggestions/topic_epsilon/accept",
+        method: "POST",
+      },
+    ]);
+  });
+
+  it("submits the initial diagnostic through the owner-scoped workspace route", async () => {
+    let requestedPath = "";
+    let requestedBody: unknown;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        goal: "Pass calculus",
+        mastery: { limits: 0.4 },
+        topics: { limits: "Limits" },
+        topic_order: ["limits"],
+        diagnostic_count: 1,
+        attempt_count: 0,
+        plan_id: "plan-1",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.submitWorkspaceDiagnostic("token", "math-space", [
+      { topic_id: "limits", is_correct: true },
+    ]);
+
+    expect(requestedPath).toBe("/api/workspaces/math-space/learning/diagnostic");
+    expect(requestedBody).toEqual({
+      diagnostic_id: "initial",
+      results: [{ topic_id: "limits", is_correct: true }],
+    });
+  });
+
   it("resolves an intent and restores a workspace snapshot", async () => {
     const requests: Array<{ path: string; method: string }> = [];
     const client = new ApiClient("/api", async (input, init) => {
@@ -1253,12 +1433,20 @@ describe("implicit workspace API", () => {
     });
 
     const route = await client.resolveWorkspace("token-1", "复习高数");
-    await client.getWorkspaceSnapshot("token-1", route.workspace.id);
+      await client.getWorkspaceSnapshot("token-1", route.workspace.id, 480);
+      await client.getWorkspaceNextAction("token-1", route.workspace.id, 480);
 
-    expect(requests).toEqual([
-      { path: "/api/workspaces/resolve", method: "POST" },
-      { path: "/api/workspaces/math-space/snapshot", method: "GET" },
-    ]);
+      expect(requests).toEqual([
+        { path: "/api/workspaces/resolve", method: "POST" },
+        {
+          path: "/api/workspaces/math-space/snapshot?timezone_offset_minutes=480",
+          method: "GET",
+        },
+        {
+          path: "/api/workspaces/math-space/next-action?timezone_offset_minutes=480",
+          method: "GET",
+        },
+      ]);
   });
 
   it("updates plan settings through the workspace plan contract", async () => {
@@ -1349,6 +1537,117 @@ describe("implicit workspace API", () => {
       },
     ]);
   });
+});
+
+
+describe("global calendar API", () => {
+  it("serializes a bounded range and archived-space preference", async () => {
+    let requestedPath = "";
+    let requestedInit: RequestInit | undefined;
+    const client = new ApiClient("/api", async (input, init) => {
+      requestedPath = String(input);
+      requestedInit = init;
+      return new Response(JSON.stringify({
+        starts_at: "2026-07-26T00:00:00.000Z",
+        ends_at: "2026-09-06T00:00:00.000Z",
+        tasks: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await client.getCalendar(
+      "calendar-token",
+      "2026-07-26T00:00:00.000Z",
+      "2026-09-06T00:00:00.000Z",
+      true,
+    );
+
+    expect(requestedPath).toBe(
+      "/api/calendar?starts_at=2026-07-26T00%3A00%3A00.000Z"
+      + "&ends_at=2026-09-06T00%3A00%3A00.000Z&include_archived=true",
+    );
+    expect(requestedInit?.method ?? "GET").toBe("GET");
+    expect((requestedInit?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer calendar-token",
+    );
+  });
+});
+
+
+describe("internally computable learning metrics", () => {
+  it("marks a material-grounded grade as shown and reads the admin metric window", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({ path: String(input), method: init?.method ?? "GET" });
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.markWorkspaceGradeShown("token", "workspace-1", "attempt-1");
+    await client.getAdminLearningMetrics(
+      "token",
+      "2026-08-03T00:00:00.000Z",
+      "2026-08-10T00:00:00.000Z",
+    );
+
+    expect(requests).toEqual([
+      {
+        path: "/api/workspaces/workspace-1/learning/attempts/attempt-1/shown",
+        method: "POST",
+      },
+      {
+        path: "/api/admin/metrics/learning?starts_at=2026-08-03T00%3A00%3A00.000Z&ends_at=2026-08-10T00%3A00%3A00.000Z",
+        method: "GET",
+      },
+    ]);
+  });
+});
+
+
+describe("global calendar route", () => {
+  it("loads a bounded owner calendar and hands task deep links to an executable Today session", () => {
+    const page = fileURLToPath(new URL("../app/calendar/page.tsx", import.meta.url));
+    const route = fileURLToPath(new URL("../components/global-calendar-route.tsx", import.meta.url));
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(existsSync(page)).toBe(true);
+    expect(existsSync(route)).toBe(true);
+    if (!existsSync(page) || !existsSync(route)) return;
+    const pageSource = readFileSync(page, "utf8");
+    const routeSource = readFileSync(route, "utf8");
+    expect(pageSource).toContain("<GlobalCalendarRoute");
+    expect(routeSource).toContain("api.getCalendar");
+    expect(routeSource).toContain("calendarGridRange");
+    expect(routeSource).toContain("includeArchived");
+    expect(workspaceSource).toContain("new URLSearchParams(window.location.search)");
+    expect(workspaceSource).toContain("preferredSessionId={focusedPlanSessionId}");
+  });
+});
+
+
+describe("unified authenticated shell styling", () => {
+  it("gives shared navigation and the global calendar explicit desktop and mobile layouts", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(styles).toContain("/* Unified authenticated application shell */");
+    expect(styles).toContain(".app-sidebar {");
+    expect(styles).toContain(".global-calendar-shell {");
+      expect(styles).toContain(".global-calendar-layout {");
+      expect(styles).toContain('.global-calendar [data-color="0"]');
+      expect(styles).toContain("@media (max-width: 900px)");
+      expect(styles).not.toContain("min-width: 720px");
+      expect(styles).toContain(".calendar-weekdays,\n  .global-month-calendar .calendar-weekdays");
+      expect(styles).toContain(".calendar-grid,\n  .global-calendar-grid");
+      expect(styles).toContain(".global-calendar-day.outside,\n  .global-calendar-day.empty");
+      expect(styles).toContain("min-height: 64px;");
+    });
 });
 
 describe("plan setting validation", () => {
@@ -1740,4 +2039,87 @@ it("treats model capability checks as optional and propagates runtime unavailabi
   expect(workspaceSource).toContain("onModelUnavailable={() => setModelConfigured(false)}");
   expect(canvasSource).toContain("onModelUnavailable={onModelUnavailable}");
   expect(agentSource).toContain("onModelUnavailable?.()");
+});
+
+
+describe("navigation efficiency remediation", () => {
+  it("invalidates cached identity and workspace collections after successful mutations", async () => {
+    const calls: string[] = [];
+    const client = new ApiClient("/api", async (input) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.endsWith("/auth/me") || path.endsWith("/auth/profile")) {
+        return new Response(JSON.stringify({
+          id: "user-1",
+          email: "learner@example.com",
+          display_name: "Learner",
+          role: "learner",
+          created_at: "2026-08-08T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path.endsWith("/workspaces/space-1") || path.endsWith("/workspaces/resolve")) {
+        return new Response(JSON.stringify({ id: "space-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.getProfile("token");
+    await client.updateProfile("token", "Updated");
+    await client.getProfile("token");
+    await client.listWorkspaces("token");
+    await client.updateWorkspace("token", "space-1", { title: "Updated" });
+    await client.listWorkspaces("token");
+    await client.resolveWorkspace("token", "new goal");
+    await client.listWorkspaces("token");
+
+    expect(calls.filter((path) => path.endsWith("/auth/me"))).toHaveLength(2);
+    expect(calls.filter((path) => path.endsWith("/workspaces"))).toHaveLength(3);
+  });
+
+  it("keeps locale out of data-fetch dependencies and restores independent reads in parallel", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const adminSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-console.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workspaceSource).not.toContain("auth?.access_token, locale, section");
+    expect(adminSource).not.toContain("[locale, nonce, token]");
+    expect(adminSource).not.toContain("[activeSection, locale, token, loadNonce]");
+    expect(workspaceSource).toContain("api.listWorkspaces(saved.token),");
+    expect(workspaceSource).toContain("api.getWorkspaceInsights(saved.token, selected.id)");
+    expect(workspaceSource.match(/applySnapshot\(snapshot\);\s+if \(restoredInsights\)/g))
+      .toHaveLength(2);
+    expect(workspaceSource).toContain("api.getWorkspaceInsights(saved.token, selected.id).catch(() => null)");
+    expect(workspaceSource).toContain("persistWorkspaceHandoffRef.current();\n          setWorkspace(null)");
+  });
+
+  it("uses client-side routing after dirty-form confirmation and removes retired navigation CSS", () => {
+    const adminSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-console.tsx", import.meta.url)),
+      "utf8",
+    );
+    const adminRouteSource = readFileSync(
+      fileURLToPath(new URL("../components/admin-route.tsx", import.meta.url)),
+      "utf8",
+    );
+    const cssSource = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    expect(adminRouteSource).toContain("router.push(");
+    expect(adminSource).not.toContain("window.location.assign(pendingHref)");
+    expect(cssSource).not.toContain(".app-spaces-all");
+    expect(cssSource).not.toContain(".app-recent-spaces > small");
+  });
 });

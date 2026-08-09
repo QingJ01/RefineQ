@@ -5,6 +5,10 @@
 {$REFINEQ_DOMAIN::80} {
     encode zstd gzip
 
+    handle /health/* {
+        reverse_proxy api:8000
+    }
+
     handle_path /api/* {
         request_body {
             max_size {$REFINEQ_MATERIAL_MAX_REQUEST_BYTES:54525952}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -14,7 +14,9 @@ from refineq.config import Settings
 from refineq.database.engine import Database
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService, InvalidTokenError
+from refineq.learning.events import build_journey_event
 from refineq.operations.admin import ensure_admin
+from refineq.workspaces.service import WorkspaceResolveRequest
 
 
 def _identity(tmp_path) -> IdentityService:
@@ -219,6 +221,61 @@ def test_admin_operations_are_paginated_guarded_and_audited(tmp_path) -> None:
     assert audit_response.json()["total"] >= 2
     assert audit_response.json()["items"][0]["action"] == "backup.restore_validated"
     assert invalid_id.status_code == 404
+
+
+def test_learning_metrics_are_admin_only_and_derived_from_internal_events(tmp_path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    learner = app.state.identity.register(
+        email="metrics-learner@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Metrics Learner",
+    )
+    admin = ensure_admin(
+        app.state.identity,
+        email="metrics-admin@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Metrics Admin",
+    ).user
+    now = datetime.now(UTC).replace(microsecond=0)
+    workspace = app.state.workspace_service.resolve(
+        learner.id,
+        WorkspaceResolveRequest(intent="Prepare calculus"),
+        now=now,
+    ).workspace
+
+    for name, minute in (("grounded_grade_created", 10), ("grounded_grade_shown", 11)):
+        app.state.journey_events.append(
+            learner.id,
+            workspace.id,
+            build_journey_event(
+                workspace_id=workspace.id,
+                name=name,
+                idempotency_key="attempt-1",
+                occurred_at=now + timedelta(minutes=minute),
+                ref_id="attempt-1",
+            ),
+        )
+    learner_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(learner)}"}
+    admin_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(admin)}"}
+    params = {
+        "starts_at": (now - timedelta(minutes=1)).isoformat(),
+        "ends_at": (now + timedelta(days=7)).isoformat(),
+    }
+
+    with TestClient(app) as client:
+        forbidden = client.get("/admin/metrics/learning", headers=learner_headers, params=params)
+        response = client.get("/admin/metrics/learning", headers=admin_headers, params=params)
+
+    assert forbidden.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["active_learners"] == 1
+    assert response.json()["grounded_loop_completers"] == 1
+    assert response.json()["grounded_loop_completion_rate"] == 1.0
+    assert response.json()["intent_to_grounded_grade_seconds"] == {
+        "sample_size": 1,
+        "p50": 600.0,
+        "p90": 600.0,
+    }
 
 
 @pytest.mark.parametrize(

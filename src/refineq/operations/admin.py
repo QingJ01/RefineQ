@@ -13,6 +13,7 @@ from refineq.database.engine import Database
 from refineq.database.schema import audit_logs, material_chunks, materials, records, users
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService
+from refineq.learning.events import learning_journey_metrics
 from refineq.operations.backup import (
     BackupError,
     ManagedBackup,
@@ -39,9 +40,7 @@ class AdminOperations:
     def __init__(self, database: Database, settings: Settings) -> None:
         self.database = database
         self.settings = settings
-        self.backup_root = (
-            settings.data_root.parent / f"{settings.data_root.name}-backups"
-        ).resolve()
+        self.backup_root = settings.resolved_backup_root
 
     @staticmethod
     def _aware(value: datetime | None) -> datetime | None:
@@ -173,6 +172,32 @@ class AdminOperations:
                 },
             ],
         }
+
+    def learning_metrics(
+        self,
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> dict[str, object]:
+        with self.database.session() as session:
+            rows = session.execute(
+                select(records.c.owner_id, records.c.record_id, records.c.data).where(
+                    records.c.collection == "journey_events"
+                )
+            ).all()
+        event_records = [
+            (
+                str(row.owner_id),
+                str(row.record_id),
+                row.data.get("events", []),
+            )
+            for row in rows
+        ]
+        return learning_journey_metrics(
+            event_records,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
 
     def audit(self, *, actor_id: str, action: str, target: str, details: dict) -> None:
         with self.database.session() as session:

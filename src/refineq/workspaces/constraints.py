@@ -146,6 +146,19 @@ def _absolute_exam(intent: str, now: datetime) -> datetime | None:
             year=int(chinese.group("year")) if chinese.group("year") else None,
         )
 
+    slash = re.search(
+        r"(?<![\d/])(?P<month>\d{1,2})\s*/\s*(?P<day>\d{1,2})"
+        r"(?:\s*/\s*(?P<year>\d{4}))?(?![\d/])",
+        intent,
+    )
+    if slash:
+        return _exam_date(
+            month=int(slash.group("month")),
+            day=int(slash.group("day")),
+            now=now,
+            year=int(slash.group("year")) if slash.group("year") else None,
+        )
+
     english = re.search(
         rf"\b(?P<month>{_ENGLISH_MONTH})\s+"
         r"(?P<day>\d{1,2})(?:st|nd|rd|th)?"
@@ -181,6 +194,6 @@ def infer_intent_constraints(intent: str, *, now: datetime) -> IntentConstraints
     """Extract unambiguous exam deadlines and per-day minute budgets."""
 
     return IntentConstraints(
-        exam_at=_absolute_exam(intent, now) or _relative_exam(intent, now),
+        exam_at=_relative_exam(intent, now) or _absolute_exam(intent, now),
         daily_minutes=_daily_minutes(intent),
     )

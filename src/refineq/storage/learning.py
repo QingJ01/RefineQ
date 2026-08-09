@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any
 
 from refineq.storage.json_store import (
@@ -26,6 +27,8 @@ class AttemptWriteResult:
 
 
 class LearningRepository:
+    _generation_locks = tuple(RLock() for _ in range(256))
+
     def __init__(self, store: AtomicJsonStore) -> None:
         self._store = store
 
@@ -67,6 +70,17 @@ class LearningRepository:
 
         project_id = validate_identifier(project_id, field="project_id")
         return self._store.owner_transaction(owner_id, f"question-{project_id}")
+
+    @classmethod
+    def _question_generation_lock(cls, key: str) -> RLock:
+        return cls._generation_locks[hash(key) % len(cls._generation_locks)]
+
+    def question_generation_lock(self, owner_id: str, project_id: str) -> RLock:
+        """Deduplicate local model work without holding a database transaction."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        project_id = validate_identifier(project_id, field="project_id")
+        return self._question_generation_lock(f"{owner_id}:{project_id}")
 
     def plan_transaction(self, owner_id: str, project_id: str):
         """Serialize plan changes with learning writes that also update the plan."""

@@ -13,6 +13,7 @@ def test_context_contains_goal_plan_weak_points_and_citable_material() -> None:
         goal="Pass the calculus final",
         plan={"sessions": [{"topic_id": "limits", "minutes": 45}]},
         mastery={"limits": 0.2, "derivatives": 0.8},
+        topic_names={"limits": "Limits", "derivatives": "Derivatives"},
         sources=[
             SearchResult(
                 citation_id="material-1#0",
@@ -32,7 +33,8 @@ def test_context_contains_goal_plan_weak_points_and_citable_material() -> None:
     )
     assert payload["goal"] == "Pass the calculus final"
     assert payload["weakest_knowledge_points"][0] == {
-        "topic": "limits",
+        "topic_id": "limits",
+        "topic": "Limits",
         "mastery": 0.2,
     }
     assert payload["retrieved_materials"][0]["citation_id"] == "material-1#0"
@@ -44,6 +46,7 @@ def test_retrieved_material_is_delimited_as_untrusted_content() -> None:
         goal="Study safely",
         plan=None,
         mastery={},
+        topic_names={},
         sources=[
             SearchResult(
                 citation_id="material-1#0",

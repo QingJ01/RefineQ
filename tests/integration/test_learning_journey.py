@@ -32,6 +32,244 @@ def _authorization(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "material-gate@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        assert (
+            client.get(
+                f"/workspaces/{workspace_id}/snapshot", headers=headers
+            ).status_code
+            == 200
+        )
+
+        blocked = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "question-without-material"},
+        )
+
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "material_required"
+        record = app.state.learning.get(learner["user_id"], workspace_id)
+        assert record.data["progress"]["pending_question"] is None
+
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "limits.txt",
+                    (
+                        b"Study function limits. A limit is the value a function approaches "
+                        b"as its input approaches a point."
+                    ),
+                    "text/plain",
+                )
+            },
+        )
+        assert uploaded.status_code == 201
+
+        created = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "question-with-material"},
+        )
+
+        graded = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "material-gate-attempt",
+                "question_id": created.json()["id"],
+                "answer": (
+                    "A limit describes the value approached by a function, "
+                    "with a concrete example."
+                ),
+            },
+        )
+        shown = client.post(
+            f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
+            headers=headers,
+        )
+        version_after_shown = app.state.learning.get(
+            learner["user_id"], workspace_id
+        ).version
+        shown_replay = client.post(
+            f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
+            headers=headers,
+        )
+        stored = app.state.learning.get(learner["user_id"], workspace_id)
+
+    assert created.status_code == 200
+    assert created.json()["grounding"] == "material"
+    assert created.json()["sources"]
+    assert graded.status_code == 200
+    assert shown.status_code == 200
+    assert shown.json() == shown_replay.json()
+    assert stored.version == version_after_shown
+    names = [
+        event.name
+        for event in app.state.journey_events.list(learner["user_id"], workspace_id)
+    ]
+    assert {
+        "intent_submitted",
+        "workspace_ready",
+        "workspace_opened",
+        "material_searchable",
+        "question_started",
+        "grounded_grade_created",
+        "grounded_grade_shown",
+    }.issubset(names)
+    assert names.count("grounded_grade_shown") == 1
+
+
+def test_workspace_question_rejects_indexed_but_irrelevant_material(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "irrelevant-material@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "botany.txt",
+                    b"Photosynthesis uses chlorophyll and sunlight to produce glucose.",
+                    "text/plain",
+                )
+            },
+        )
+        created = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "irrelevant-source"},
+        )
+
+    assert uploaded.status_code == 201
+    assert created.status_code == 409
+    assert created.json()["error"]["code"] == "material_insufficient"
+    assert app.state.learning.get(
+        learner["user_id"], workspace_id
+    ).data["progress"]["pending_question"] is None
+
+
+def test_workspace_hides_and_rejects_a_legacy_general_pending_question(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "legacy-general-pending@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        legacy = app.state.workspace_learning_service.next_question(
+            learner["user_id"],
+            workspace_id,
+            request_id="legacy-general-request",
+        )
+
+        rejected = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "legacy-general-attempt",
+                "question_id": legacy.id,
+                "answer": "A generic answer that must not be graded.",
+            },
+        )
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        )
+        retry = client.post(
+            f"/workspaces/{workspace_id}/learning/questions/{legacy.id}/retry",
+            headers=headers,
+        )
+
+    assert legacy.grounding.value == "general"
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "material_insufficient"
+    assert snapshot.status_code == 200
+    assert snapshot.json()["active_question"] is None
+    assert retry.status_code == 409
+    assert retry.json()["error"]["code"] == "material_insufficient"
+    record = app.state.learning.get(learner["user_id"], workspace_id)
+    assert record.data["progress"]["pending_question"] is None
+    assert "legacy-general-attempt" not in record.data["attempts"]
+
+
+def test_workspace_replaces_legacy_general_request_with_a_grounded_question(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "legacy-general-replacement@example.com")
+        headers = _authorization(learner["token"])
+        workspace = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]
+        workspace_id = workspace["id"]
+        legacy = app.state.workspace_learning_service.next_question(
+            learner["user_id"],
+            workspace_id,
+            request_id="legacy-reused-request",
+        )
+        topic = workspace["topics"][0]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "relevant.txt",
+                    f"{topic} is explained in this study source with examples.".encode(),
+                    "text/plain",
+                )
+            },
+        )
+
+        replacement = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "legacy-reused-request"},
+        )
+        replay = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "legacy-reused-request"},
+        )
+
+    assert legacy.grounding.value == "general"
+    assert uploaded.status_code == 201
+    assert replacement.status_code == 200, replacement.json()
+    assert replacement.json()["id"] != legacy.id
+    assert replacement.json()["grounding"] == "material"
+    assert replacement.json()["sources"]
+    assert replay.json()["id"] == replacement.json()["id"]
+
+
 def test_complete_learning_journey_is_owner_scoped_and_idempotent(
     tmp_path: Path,
 ) -> None:
@@ -167,6 +405,185 @@ def test_owner_identity_is_rejected_from_request_json(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
+def test_plan_sessions_control_practice_mode_and_complete_only_on_evidence(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    exam_at = datetime.now(UTC) + timedelta(days=5)
+
+    with TestClient(app) as client:
+        learner = _register(client, "plan-loop@example.com")
+        headers = _authorization(learner["token"])
+        project_id = client.post(
+            "/projects",
+            headers=headers,
+            json={"name": "Systems"},
+        ).json()["id"]
+        client.post(
+            f"/projects/{project_id}/learning/seed",
+            headers=headers,
+            json={
+                "goal": "Understand cache coherence",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 30,
+                "topics": [{"id": "cache", "name": "Cache coherence"}],
+            },
+        )
+        plan = client.post(
+            f"/projects/{project_id}/learning/plan",
+            headers=headers,
+        ).json()
+        app.state.knowledge.add_document(
+            owner_id=learner["user_id"],
+            project_id=project_id,
+            material_id="cache-notes",
+            filename="cache.txt",
+            text=(
+                "A cache coherence protocol keeps processor copies consistent by "
+                "invalidating stale copies after writes and measuring propagation latency."
+            ),
+        )
+        sessions = {session["activity"]: session for session in plan["sessions"][:4]}
+        expected_modes = {
+            "learn": "concept",
+            "practice": "case",
+            "apply": "project",
+            "review": "exam",
+        }
+
+        for activity, expected_mode in expected_modes.items():
+            question = client.post(
+                f"/projects/{project_id}/learning/question",
+                headers=headers,
+                json={
+                    "request_id": f"plan-mode-{activity}",
+                    "plan_session_id": sessions[activity]["id"],
+                    "mode": "concept",
+                    "replace": True,
+                },
+            )
+            assert question.status_code == 200
+            assert question.json()["topic_id"] == sessions[activity]["topic_id"]
+            assert question.json()["learning_mode"] == expected_mode
+
+        insufficient_question = client.post(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "plan-insufficient",
+                "plan_session_id": sessions["learn"]["id"],
+                "replace": True,
+            },
+        ).json()
+        insufficient = client.post(
+            f"/projects/{project_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "plan-insufficient-attempt",
+                "question_id": insufficient_question["id"],
+                "answer": "cache",
+            },
+        )
+        assert insufficient.status_code == 200
+        assert insufficient.json()["mastery_updated"] is False
+
+        evidence_question = client.post(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "plan-evidence",
+                "plan_session_id": sessions["practice"]["id"],
+                "replace": True,
+            },
+        ).json()
+        evidence = client.post(
+            f"/projects/{project_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "plan-evidence-attempt",
+                "question_id": evidence_question["id"],
+                "answer": (
+                    "A cache coherence protocol keeps processor copies consistent. "
+                    "For example, after a write it invalidates stale copies and measures "
+                    "propagation latency before relying on the new value."
+                ),
+            },
+        )
+        snapshot = client.get(
+            f"/projects/{project_id}/learning/progress",
+            headers=headers,
+        )
+        stored_plan = app.state.learning.get(learner["user_id"], project_id).data["progress"][
+            "plan"
+        ]
+        statuses = {session["id"]: session["status"] for session in stored_plan["sessions"]}
+
+    assert snapshot.status_code == 200
+    assert evidence.status_code == 200
+    assert evidence.json()["mastery_updated"] is True
+    assert evidence.json()["completed_plan_session_id"] == sessions["practice"]["id"]
+    assert statuses[sessions["learn"]["id"]] == "planned"
+    assert statuses[sessions["practice"]["id"]] == "completed"
+
+
+def test_workspace_initial_diagnostic_is_reachable_and_owner_scoped(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        alice = _register(client, "diagnostic-alice@example.com")
+        bob = _register(client, "diagnostic-bob@example.com")
+        alice_headers = _authorization(alice["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=alice_headers,
+            json={"intent": "Learn calculus limits"},
+        ).json()["workspace"]["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=alice_headers,
+        ).json()
+        topic_ids = list(snapshot["progress"]["topics"])
+
+        diagnosed = client.post(
+            f"/workspaces/{workspace_id}/learning/diagnostic",
+            headers=alice_headers,
+            json={
+                "diagnostic_id": "initial",
+                "results": [
+                    {"topic_id": topic_id, "is_correct": index % 2 == 0}
+                    for index, topic_id in enumerate(topic_ids)
+                ],
+            },
+        )
+        mastery_after_initial = diagnosed.json()["mastery"]
+        repeated_with_new_id = client.post(
+            f"/workspaces/{workspace_id}/learning/diagnostic",
+            headers=alice_headers,
+            json={
+                "diagnostic_id": "second-pass",
+                "results": [{"topic_id": topic_id, "is_correct": True} for topic_id in topic_ids],
+            },
+        )
+        mastery_after_rejected_repeat = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=alice_headers,
+        ).json()["progress"]["mastery"]
+        forbidden = client.post(
+            f"/workspaces/{workspace_id}/learning/diagnostic",
+            headers=_authorization(bob["token"]),
+            json={
+                "diagnostic_id": "initial",
+                "results": [{"topic_id": topic_ids[0], "is_correct": True}],
+            },
+        )
+
+    assert diagnosed.status_code == 200
+    assert diagnosed.json()["diagnostic_count"] == 1
+    assert repeated_with_new_id.status_code == 422
+    assert mastery_after_rejected_repeat == mastery_after_initial
+    assert forbidden.status_code == 404
+
+
 def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
     tmp_path: Path,
 ) -> None:
@@ -185,6 +602,13 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
                 "exam_at": (datetime.now(UTC) + timedelta(days=6)).isoformat(),
             },
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=alice["user_id"],
+            project_id=workspace_id,
+            material_id="insights-material",
+            filename="calculus.txt",
+            text="Prepare calculus with limits and derivatives using worked examples.",
+        )
 
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
@@ -388,6 +812,13 @@ def test_attempt_question_snapshot_survives_history_pruning(
             headers=headers,
             json={"intent": "Prepare calculus"},
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=learner["user_id"],
+            project_id=workspace_id,
+            material_id="history-material",
+            filename="calculus.txt",
+            text="Prepare calculus through definitions, examples, and reasoning.",
+        )
         first_question: dict | None = None
         for index in range(3):
             question = client.post(

@@ -4,29 +4,23 @@ import {
   ArrowRight,
   Archive,
   ArchiveRestore,
-  BookOpen,
   Check,
   Clock3,
-  House,
-  Languages,
-  LogOut,
   Pencil,
-  Settings2,
   Sparkles,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { FormEvent, useState } from "react";
 
-import { BrandMark, BrandName } from "@/components/brand";
+import { AppSidebar } from "@/components/app-sidebar";
+import { BrandMark } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Translator } from "@/lib/i18n";
-import { learningPath } from "@/lib/learning-routes";
-import type { LearningWorkspace } from "@/lib/types";
+import type { LearningWorkspace, Locale } from "@/lib/types";
 
 export function LearningHome({
+  locale = "zh",
   t,
   busy,
   workspaces,
@@ -37,10 +31,10 @@ export function LearningHome({
   showArchived = false,
   onToggleArchived,
   isAdmin = false,
-  onAdmin,
   onLogout,
   onToggleLocale,
 }: {
+  locale?: Locale;
   t: Translator;
   busy: boolean;
   workspaces: LearningWorkspace[];
@@ -54,7 +48,6 @@ export function LearningHome({
   showArchived?: boolean;
   onToggleArchived?: (show: boolean) => void | Promise<void>;
   isAdmin?: boolean;
-  onAdmin?: () => void;
   onLogout: () => void;
   onToggleLocale: () => void;
 }) {
@@ -101,70 +94,16 @@ export function LearningHome({
 
   return (
     <main id="main-content" className="home-shell">
-      <aside className="home-sidebar">
-        <Link className="sidebar-brand wordmark-button" href="/" aria-label="RefineQ">
-          <BrandMark className="brand-mark" size={36} />
-          <BrandName />
-        </Link>
-        <nav className="home-primary-navigation" aria-label={t("learningHome")}>
-          <Link className="home-nav-item active" href="/" aria-current="page">
-            <House size={19} />
-            <span>{t("learningHome")}</span>
-          </Link>
-          {activeWorkspaces.length > 0 && (
-            <>
-              <span className="home-nav-label">{t("recentLearning")}</span>
-              <div className="home-space-list">
-                {activeWorkspaces.map((workspace) => (
-                  <Link
-                    key={workspace.id}
-                    className="home-space-link"
-                    href={learningPath(workspace.id, "today")}
-                    aria-label={`${t("switchSpace")}: ${workspace.title}`}
-                  >
-                    <BookOpen size={17} />
-                    <span>{workspace.title}</span>
-                    <ArrowRight size={14} />
-                  </Link>
-                ))}
-              </div>
-            </>
-          )}
-        </nav>
-        {isAdmin && (
-          <button
-            data-testid="home-admin"
-            className="home-nav-item home-admin-link"
-            onClick={onAdmin}
-          >
-            <Settings2 size={19} /><span>{t("administration")}</span>
-          </button>
-        )}
-        <div className="home-sidebar-actions">
-          <Link
-            data-testid="home-account"
-            className="home-nav-item home-admin-link"
-            href="/account"
-          >
-            <UserRound size={19} /><span>{t("account")}</span>
-          </Link>
-          <button
-            data-testid="home-language"
-            className="home-nav-item home-admin-link"
-            onClick={onToggleLocale}
-          >
-            <Languages size={19} /><span>{t("language")}</span>
-          </button>
-          <button
-            data-testid="home-logout"
-            className="home-nav-item home-admin-link"
-            onClick={onLogout}
-          >
-            <LogOut size={19} /><span>{t("logout")}</span>
-          </button>
-          <p className="sidebar-footnote">Personal learning, remembered.</p>
-        </div>
-      </aside>
+      <div className="home-sidebar">
+        <AppSidebar
+          locale={locale}
+          active="home"
+          workspaces={activeWorkspaces}
+          isAdmin={isAdmin}
+          onToggleLocale={onToggleLocale}
+          onLogout={onLogout}
+        />
+      </div>
       <section className="learning-home">
         <div className="learning-home-hero">
           <div className="learning-brand-hero" aria-hidden="true"><BrandMark size={58} /></div>

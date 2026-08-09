@@ -22,14 +22,6 @@ class KnowledgeType(StrEnum):
     DESIGN = "design"
 
 
-class ErrorType(StrEnum):
-    UNKNOWN = "unknown"
-    STRUCTURAL = "structural"
-    DEVIATION = "deviation"
-    APPLICATION = "application"
-    METACOGNITIVE = "metacognitive"
-
-
 class LearningMode(StrEnum):
     """How a learner wants to build a capability in the current session."""
 
@@ -54,26 +46,7 @@ class BKTState(BaseModel):
     p_guess: float = Field(default=0.2, ge=0.0, le=1.0)
     p_slip: float = Field(default=0.1, ge=0.0, le=1.0)
     evidence_count: int = Field(default=0, ge=0)
-
-
-class DiagnosticCandidate(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    knowledge_point_id: str = Field(min_length=1)
-    p_mastery: float = Field(default=0.5, ge=0.0, le=1.0)
-    assessment_count: int = Field(default=0, ge=0)
-    recent_errors: int = Field(default=0, ge=0)
-    exam_weight: float = Field(default=1.0, ge=0.0, le=5.0)
-    prerequisite_gap: float = Field(default=0.0, ge=0.0, le=1.0)
-
-
-class AdaptiveDiagnosticSession(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    answer_count: int = Field(default=0, ge=0)
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    minimum_questions: int = Field(default=8, ge=1)
-    maximum_questions: int = Field(default=12, ge=1)
+    credited_question_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 class DifficultyState(BaseModel):
@@ -82,16 +55,7 @@ class DifficultyState(BaseModel):
     level: int = Field(default=2, ge=1, le=5)
     consecutive_wrong: int = Field(default=0, ge=0)
     recent_correct_question_ids: list[str] = Field(default_factory=list)
-
-
-class ErrorDiagnosis(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    category: ErrorType = ErrorType.UNKNOWN
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    evidence: list[str] = Field(default_factory=list)
-    explanation: str = "Insufficient evidence to determine the error category."
-    is_confirmed: bool = False
+    recent_wrong_question_ids: list[str] = Field(default_factory=list)
 
 
 class LearningEvidence(BaseModel):
@@ -105,15 +69,6 @@ class LearningEvidence(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
     _normalize_observed_at = field_validator("observed_at", mode="after")(_as_utc)
-
-
-class LearningRecommendation(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    id: str = Field(min_length=1)
-    action: str = Field(min_length=1, max_length=500)
-    rationale: str = Field(min_length=1, max_length=1000)
-    evidence_ids: list[str] = Field(min_length=1)
 
 
 class StudySession(BaseModel):

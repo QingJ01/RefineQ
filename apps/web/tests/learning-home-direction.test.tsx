@@ -82,8 +82,8 @@ describe("dialog-first learning home", () => {
       />,
     );
 
-    expect(html).toContain('class="home-primary-navigation"');
-    expect(html).toContain('class="home-space-list"');
+    expect(html).toContain('class="app-sidebar-global"');
+    expect(html).toContain('class="app-recent-spaces"');
     expect(html).toContain('href="/"');
     expect(html).toContain('href="/learn/calculus/today"');
     expect(html).toContain("Calculus Sprint");

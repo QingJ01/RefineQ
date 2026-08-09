@@ -73,7 +73,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
   await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
-    await page.getByTestId("workspace-home-link").click();
+    await page.getByTestId("app-nav-home").click();
     await page.getByTestId("learning-intent").fill(
       "I want to practice conversational Spanish for an upcoming trip",
     );
@@ -120,8 +120,8 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   });
 
   await test.step("use a short, varied exam path", async () => {
-    await page.getByTestId("nav-path").click();
-    await expect(page).toHaveURL(/\/path$/);
+    await page.getByTestId("nav-plan").click();
+    await expect(page).toHaveURL(/\/plan$/);
     await expect(page.locator(".plan-session")).toHaveCount(7);
     await page.getByTestId("toggle-plan-sessions").click();
     await expect(page.getByTestId("toggle-plan-sessions")).toHaveAttribute(
@@ -172,6 +172,10 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.keyboard.press("Tab");
     await expect(page.locator(".skip-link")).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByTestId("app-nav-home")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("app-nav-calendar")).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(page.getByTestId("workspace-switcher")).toBeFocused();
     await expect(page.getByTestId("workspace-switcher")).toBeVisible();
     expect((await page.getByTestId("workspace-switcher").boundingBox())?.height).toBeGreaterThanOrEqual(44);
@@ -181,11 +185,11 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page.getByTestId("workspace-switcher")).toHaveAccessibleName(
       new RegExp(workspaceTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
-    for (const testId of ["nav-today", "nav-path", "nav-materials", "nav-progress"]) {
+    for (const testId of ["nav-today", "nav-plan", "nav-materials", "nav-progress"]) {
       await expect(page.getByTestId(testId)).toHaveAccessibleName(/.+/);
     }
     await expect(page.getByTestId("mobile-section-context")).toBeVisible();
-    await expect(page.getByTestId("mobile-section-title")).toContainText(/Path|路径/);
+    await expect(page.getByTestId("mobile-section-title")).toContainText(/Plan|计划/);
     const materialsShortcut = page.getByTestId("mobile-shortcut-materials");
     expect((await materialsShortcut.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     await materialsShortcut.click();
@@ -197,7 +201,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("mobile-shortcut-today").click();
     await expect(page.getByTestId("mobile-sticky-task-action")).toBeVisible();
     await expect(page.getByTestId("mobile-sticky-task-action")).toHaveCSS("position", "sticky");
-    await page.getByTestId("mobile-shortcut-path").click();
+    await page.getByTestId("mobile-shortcut-plan").click();
     await page.waitForTimeout(450);
     await page.screenshot({ path: testInfo.outputPath("exam-learning-mobile.png") });
     await page.setViewportSize({ width: 1440, height: 1024 });
@@ -214,11 +218,11 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       ) repeatedRestoreRequests.push(url.pathname);
     };
     page.on("request", recordRestoreRequest);
-    await page.getByTestId("workspace-home-link").click();
+    await page.getByTestId("app-nav-home").click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId("learning-intent")).toBeVisible();
     await page.goBack();
-    await expect(page).toHaveURL(/\/learn\/[^/]+\/path$/);
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/plan$/);
     await expect(page.getByTestId("learning-path-view")).toBeVisible();
     page.off("request", recordRestoreRequest);
     expect(repeatedRestoreRequests).toEqual([]);
@@ -226,6 +230,37 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
 
   await test.step("upload computer architecture study sources", async () => {
     await page.getByTestId("nav-materials").click();
+    let releaseGuardedUpload: () => void = () => undefined;
+    let markGuardedUploadStarted: () => void = () => undefined;
+    const guardedUploadReleased = new Promise<void>((resolve) => {
+      releaseGuardedUpload = resolve;
+    });
+    const guardedUploadStarted = new Promise<void>((resolve) => {
+      markGuardedUploadStarted = resolve;
+    });
+    await page.route("**/api/workspaces/*/materials", async (route) => {
+      markGuardedUploadStarted();
+      await guardedUploadReleased;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "test_interruption", message: "Test upload" } }),
+      });
+    }, { times: 1 });
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "history-guard-check.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("A deliberately delayed upload for browser history protection."),
+    });
+    await guardedUploadStarted;
+    await page.evaluate(() => window.history.back());
+    await expect(page.getByRole("dialog")).toContainText("上传仍在进行");
+    await expect(page).toHaveURL(/\/materials$/);
+    await page.getByTestId("confirm-dialog-cancel").click();
+    releaseGuardedUpload();
+    await expect(page.locator(".upload-queue li").filter({ hasText: "history-guard-check.txt" }))
+      .toContainText(/失败|Failed/);
+
     await page.locator('input[type="file"]').setInputFiles({
       name: "computer-architecture-notes.txt",
       mimeType: "text/plain",
@@ -329,7 +364,8 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page.locator('[data-testid^="attempt-rubric-"]').first()).toBeVisible();
     await expect(page.locator(".evidence-timeline > li")).toHaveCount(2);
     await expect(page.locator(".evidence-timeline")).not.toContainText("topic_");
-    await expect(page.getByTestId("review-queue-empty")).toBeVisible();
+    await expect(page.getByTestId("review-queue")).toHaveCount(0);
+    await expect(page.locator("#learning-record")).toBeVisible();
 
     await page.locator('[data-testid^="progress-topic-"]').first().click();
     await expect(page.getByTestId("progress-topic-detail")).toBeVisible();
@@ -385,7 +421,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   });
 
   await test.step("update and export the account without losing the active workspace", async () => {
-    await page.getByTestId("nav-account").click();
+    await page.getByTestId("app-nav-account").click();
     await expect(page).toHaveURL(/\/account$/);
     await expect(page.getByTestId("account-center")).toBeVisible();
     const profileForm = page.getByTestId("account-profile-form");
@@ -506,7 +542,7 @@ test("administrator routes and operations survive real navigation", async ({ pag
   await page.getByTestId("auth-submit").click();
   await expect(page.getByTestId("learning-intent")).toBeVisible();
 
-  await page.getByTestId("home-admin").click();
+  await page.getByTestId("app-nav-admin").click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.getByTestId("admin-overview")).toBeVisible();
   await expect(page.getByTestId("admin-system-status")).toBeVisible();
@@ -596,7 +632,7 @@ test("learner can reset a forgotten password and sign in again", async ({ page }
   await page.getByTestId("email").fill(uniqueEmail);
   await page.getByTestId("password").fill(originalPassword);
   await page.getByTestId("auth-submit").click();
-  await page.getByTestId("home-logout").click();
+  await page.getByTestId("app-logout").click();
 
   await page.getByTestId("forgot-password").click();
   await page.getByTestId("email").fill(uniqueEmail);

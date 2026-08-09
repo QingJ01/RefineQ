@@ -1,4 +1,4 @@
-import type { LearningMode, Locale } from "./types";
+import type { LearningMode, Locale, StudySession } from "./types";
 
 
 export type LearningSessionStage = "learn" | "practice" | "reflect";
@@ -7,6 +7,22 @@ export interface LearningSessionStep {
   id: "align" | "learn" | "practice" | "reflect";
   label: string;
   minutes: number;
+}
+
+const activityModes: Record<
+  NonNullable<StudySession["activity"]>,
+  LearningMode
+> = {
+  learn: "concept",
+  practice: "case",
+  apply: "project",
+  review: "exam",
+};
+
+export function learningModeForActivity(
+  activity: NonNullable<StudySession["activity"]>,
+): LearningMode {
+  return activityModes[activity];
 }
 
 const steps: Record<LearningMode, Record<Locale, LearningSessionStep[]>> = {
@@ -79,6 +95,19 @@ export function sessionStage(
   if (result) return "reflect";
   if (question) return "practice";
   return "learn";
+}
+
+export function selectTodayPlanSession(
+  sessions: readonly StudySession[],
+  now = new Date(),
+): StudySession | undefined {
+  return sessions.find((session) => {
+    if (session.status === "completed") return false;
+    const plannedAt = new Date(session.planned_at);
+    return plannedAt.getFullYear() === now.getFullYear()
+      && plannedAt.getMonth() === now.getMonth()
+      && plannedAt.getDate() === now.getDate();
+  });
 }
 
 export function inferLearningMode(subject: string, goal: string): LearningMode {

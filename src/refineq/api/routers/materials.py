@@ -333,7 +333,18 @@ async def upload_workspace_materials(
     user: CurrentUser,
     files: Annotated[list[UploadFile], File()],
 ) -> list[MaterialRecord]:
-    return await upload_materials(workspace_id, request, user, files)
+    indexed = await upload_materials(workspace_id, request, user, files)
+    for material in indexed:
+        if material.status == "indexed":
+            request.app.state.workspace_learning_service.try_record_journey_event(
+                user.id,
+                workspace_id,
+                name="material_searchable",
+                idempotency_key=material.id,
+                occurred_at=material.indexed_at,
+                ref_id=material.id,
+            )
+    return indexed
 
 
 @router.get("/search", response_model=list[SearchResult])

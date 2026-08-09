@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -48,6 +49,21 @@ class FailingModelTransport:
 class SlowModelTransport(FakeModelTransport):
     def complete(self, *, settings, messages):
         time.sleep(0.05)
+        return super().complete(settings=settings, messages=messages)
+
+
+class BlockingModelTransport(FakeModelTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+        self.transaction_active: bool | None = None
+        self.inspect_transaction = lambda: False
+
+    def complete(self, *, settings, messages):
+        self.transaction_active = self.inspect_transaction()
+        self.started.set()
+        self.release.wait(timeout=3)
         return super().complete(settings=settings, messages=messages)
 
 
@@ -135,6 +151,82 @@ def _seed_project(client: TestClient, headers: dict[str, str], name: str = "Syst
     )
     assert response.status_code == 200
     return project_id
+
+
+def test_agent_model_work_runs_outside_database_transaction(tmp_path: Path) -> None:
+    transport = BlockingModelTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+    transport.inspect_transaction = lambda: app.state.store._active_session.get() is not None
+
+    with TestClient(app) as client:
+        user = _register(client, "agent-transaction@example.com")
+        headers = _headers(user["token"])
+        project_id = _seed_project(client, headers)
+        _configure_model(app)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    f"/projects/{project_id}/agent/chat",
+                    headers=headers,
+                    json={
+                        "session_id": "transaction-session",
+                        "turn_id": "transaction-turn",
+                        "message": "Explain limits",
+                    },
+                )
+                assert transport.started.wait(timeout=2)
+                assert app.state.sessions.count(user["user_id"]) == 0
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 200
+    assert transport.transaction_active is False
+
+
+def test_new_agent_session_is_not_created_after_workspace_deletion(tmp_path: Path) -> None:
+    transport = BlockingModelTransport()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=transport,
+    )
+
+    with TestClient(app) as client:
+        user = _register(client, "agent-deleted-workspace@example.com")
+        headers = _headers(user["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习函数极限"},
+        ).json()["workspace"]["id"]
+        _configure_model(app)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    f"/workspaces/{workspace_id}/agent/chat",
+                    headers=headers,
+                    json={
+                        "session_id": "deleted-workspace-session",
+                        "turn_id": "deleted-workspace-turn",
+                        "message": "Explain limits",
+                    },
+                )
+                assert transport.started.wait(timeout=2)
+                app.state.workspace_service.delete(user["user_id"], workspace_id)
+                transport.release.set()
+                response = pending.result(timeout=3)
+        finally:
+            transport.release.set()
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "agent_session_conflict"
+    assert app.state.sessions.count(user["user_id"]) == 0
 
 
 def test_agent_uses_grounded_context_citations_and_persistent_session(
@@ -659,7 +751,10 @@ def test_agent_action_proposal_replays_without_reinvoking_models(tmp_path: Path)
     assert len(intent_transport.calls) == 1
 
 
-def test_agent_action_extraction_failure_degrades_to_plain_reply(tmp_path: Path) -> None:
+def test_agent_action_extraction_failure_degrades_to_plain_reply(
+    tmp_path: Path,
+    caplog,
+) -> None:
     reply_transport = FakeModelTransport(text="Keep reasoning about the question.")
     app = create_app(
         Settings(data_root=tmp_path / "data", _env_file=None),
@@ -671,19 +766,26 @@ def test_agent_action_extraction_failure_degrades_to_plain_reply(tmp_path: Path)
         headers = _headers(user["token"])
         project_id = _seed_project(client, headers)
         _configure_model(app)
-        response = client.post(
-            f"/projects/{project_id}/agent/chat",
-            headers=headers,
-            json={
-                "session_id": "coach-session",
-                "turn_id": "turn-1",
-                "message": "Explain this",
-            },
-        )
+        with caplog.at_level(logging.WARNING, logger="refineq.agent.service"):
+            response = client.post(
+                f"/projects/{project_id}/agent/chat",
+                headers=headers,
+                json={
+                    "session_id": "coach-session",
+                    "turn_id": "turn-1",
+                    "message": "private learner answer",
+                },
+            )
 
     assert response.status_code == 200
     assert response.json()["message"] == "Keep reasoning about the question."
     assert response.json()["action_proposal"] is None
+    operational_logs = "\n".join(
+        record.getMessage() for record in caplog.records if record.name == "refineq.agent.service"
+    )
+    assert "event=intent_extraction_failed reason=model_or_timeout" in operational_logs
+    assert "duration_ms=" in operational_logs
+    assert "private learner answer" not in operational_logs
 
 
 def test_blocked_action_extraction_respects_its_independent_budget(

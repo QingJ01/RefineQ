@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any, Literal
+from datetime import datetime, timedelta
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -80,6 +80,26 @@ class AdminJobsResponse(BaseModel):
 
     items: list[AdminJobSummary]
     observed_at: datetime
+
+
+class DurationPercentiles(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sample_size: int = Field(ge=0)
+    p50: float | None = Field(default=None, ge=0)
+    p90: float | None = Field(default=None, ge=0)
+
+
+class LearningMetricsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    starts_at: datetime
+    ends_at: datetime
+    active_learners: int = Field(ge=0)
+    grounded_loop_completers: int = Field(ge=0)
+    grounded_loop_completion_rate: float = Field(ge=0, le=1)
+    intent_to_grounded_grade_seconds: DurationPercentiles
+    revisit_open_to_question_seconds: DurationPercentiles
 
 
 class AuditEntry(BaseModel):
@@ -160,6 +180,30 @@ def list_users(
 def list_jobs(request: Request, admin: AdminUser) -> AdminJobsResponse:
     del admin
     return AdminJobsResponse.model_validate(request.app.state.admin_operations.jobs())
+
+
+@router.get("/metrics/learning", response_model=LearningMetricsResponse)
+def learning_metrics(
+    request: Request,
+    admin: AdminUser,
+    starts_at: Annotated[datetime, Query()],
+    ends_at: Annotated[datetime, Query()],
+) -> LearningMetricsResponse:
+    del admin
+    try:
+        if ends_at - starts_at > timedelta(days=31):
+            raise ValueError("Metric windows cannot exceed 31 days")
+        return LearningMetricsResponse.model_validate(
+            request.app.state.admin_operations.learning_metrics(
+                starts_at=starts_at,
+                ends_at=ends_at,
+            )
+        )
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "invalid_metric_range", "message": str(error)},
+        ) from error
 
 
 @router.get("/audit", response_model=AuditPage)

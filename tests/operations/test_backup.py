@@ -189,3 +189,19 @@ def test_managed_backup_is_removed_when_audit_write_fails(
         operations.create_backup(actor_id="admin")
 
     assert operations.list_backups() == []
+
+
+def test_admin_operations_use_the_configured_backup_root(tmp_path: Path) -> None:
+    data_root = tmp_path / "runtime"
+    backup_root = tmp_path / "persistent-backups"
+    settings = Settings(data_root=data_root, backup_root=backup_root, _env_file=None)
+    data_root.mkdir(parents=True)
+    (data_root / "safe.txt").write_text("safe", encoding="utf-8")
+    database = Database(f"sqlite+pysqlite:///{(tmp_path / 'admin.sqlite3').as_posix()}")
+    database.initialize()
+
+    operations = AdminOperations(database, settings)
+    backup = operations.create_backup(actor_id="admin")
+
+    assert operations.backup_root == backup_root.resolve()
+    assert (backup_root / f"{backup.id}.zip").is_file()

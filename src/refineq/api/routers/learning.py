@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from refineq.api.dependencies import CurrentUser
+from refineq.learning.events import JourneyEvent
 from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
 from refineq.learning.personalized import TargetedPlanRequest
 from refineq.learning.service import (
@@ -30,7 +31,10 @@ from refineq.learning.service import (
     SavedQuestionResponse,
     SeedRequest,
 )
-from refineq.workspaces.service import WorkspaceNotFoundError
+from refineq.workspaces.service import (
+    WorkspaceMaterialRequiredError,
+    WorkspaceNotFoundError,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/learning", tags=["learning"])
 workspace_router = APIRouter(
@@ -78,6 +82,23 @@ def diagnose(
         _raise_api_error(error)
 
 
+@workspace_router.post("/diagnostic", response_model=ProgressResponse)
+def diagnose_workspace(
+    workspace_id: str,
+    payload: DiagnosticRequest,
+    request: Request,
+    user: CurrentUser,
+) -> ProgressResponse:
+    try:
+        return request.app.state.workspace_learning_service.diagnose(
+            user.id,
+            workspace_id,
+            payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
 @router.post("/plan", response_model=StudyPlan)
 def create_plan(project_id: str, request: Request, user: CurrentUser) -> StudyPlan:
     try:
@@ -120,6 +141,7 @@ def create_question(
             replace_pending=payload.replace,
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
+            plan_session_id=payload.plan_session_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -133,6 +155,10 @@ def create_workspace_question(
     user: CurrentUser,
 ) -> QuestionResponse:
     try:
+        request.app.state.workspace_service.require_searchable_material(
+            user.id,
+            workspace_id,
+        )
         return request.app.state.workspace_learning_service.next_question(
             user.id,
             workspace_id,
@@ -142,7 +168,19 @@ def create_workspace_question(
             replace_pending=payload.replace,
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
+            plan_session_id=payload.plan_session_id,
+            require_material_grounding=True,
         )
+    except WorkspaceMaterialRequiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
+    except WorkspaceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
     except LearningServiceError as error:
         _raise_api_error(error)
 
@@ -166,7 +204,11 @@ def pending_workspace_question(
     user: CurrentUser,
 ) -> QuestionResponse:
     try:
-        return request.app.state.workspace_learning_service.pending_question(user.id, workspace_id)
+        return request.app.state.workspace_learning_service.pending_question(
+            user.id,
+            workspace_id,
+            require_material_grounding=True,
+        )
     except LearningServiceError as error:
         _raise_api_error(error)
 
@@ -200,6 +242,27 @@ def workspace_answer(
             user.id,
             workspace_id,
             payload,
+            require_material_grounding=True,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.post(
+    "/attempts/{attempt_id}/shown",
+    response_model=JourneyEvent,
+)
+def mark_workspace_grade_shown(
+    workspace_id: str,
+    attempt_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> JourneyEvent:
+    try:
+        return request.app.state.workspace_learning_service.mark_grounded_grade_shown(
+            user.id,
+            workspace_id,
+            attempt_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -238,6 +301,7 @@ def retry_workspace_question(
             user.id,
             workspace_id,
             question_id,
+            require_material_grounding=True,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
