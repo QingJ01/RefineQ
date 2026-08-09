@@ -1,6 +1,6 @@
 # RefineQ MCP 服务设计
 
-> 日期：2026-08-09 · 状态：设计待确认（v2）
+> 日期：2026-08-09 · 状态：设计待确认（v3，已对照官方规范核实）
 > 目的：为初赛动态测评（占 50%）提供平台可直接调用的 Agent 接口，同时让 RefineQ 的学习闭环可被外部 Agent 复用
 > 依据：[HACKATHON.md §6.1](../../HACKATHON.md)、后端 77 个端点的能力盘点
 
@@ -10,6 +10,7 @@
 | --- | --- |
 | v1 | 9 个工具、服务账号认证、只读投影、降级行为、分阶段实施 |
 | v2 | 补齐会实际影响评分的四项：新增 `get_capabilities` 工具（对应「能否连通」）；补 **Resources** 与 **Prompts** 两种原语（v1 只用了 Tools，Prompts 决定评测方能否一键跑通）；补**分工具延迟预算**（「响应速度」是明写的评分项，v1 无数字）；把"服务账号必须已播种"从含糊表述改为**硬要求 + 部署验收项**（否则自动化评测方第一次调用就撞空状态） |
+| v3 | **对照官方规范修正**（v1/v2 凭记忆写作，与现行 `2026-07-28` 版本有实质出入）：补协议基线（无状态、`_meta`、**必须实现 `server/discover`**）；改用 **Tasks 扩展**承载长耗时调用，替代原先的阻塞式超时预算；改用 **Elicitation** 让服务端直接向用户索取作答，把"不要替学习者答题"从提示词约束升级为协议级结构约束；修正工具命名格式；补 `title` 字段与 `ttlMs`/`cacheScope` 缓存提示 |
 
 ---
 
@@ -28,6 +29,33 @@
 | 5 | 只有 `agent/chat` 硬依赖模型 | `agent/service.py:321` 抛 `ModelNotConfiguredError` → 409；出题、判分、路由、检索**都有确定性降级** | MCP 可在零模型环境下演示完整闭环 |
 
 **工程成本另计**：仓库无 `mcp` 依赖，锁文件由 `uv pip compile --generate-hashes` 生成（1168 条哈希），**本机没有 uv**。加依赖必须先解决 uv，这是排期上的硬前置。
+
+---
+
+## 0.5 协议基线（对照官方规范核实，非记忆）
+
+实施前必读。以下与 v1/v2 的假设有出入，**照 v1/v2 写会做出不合规的服务端**：
+
+| 项 | 规范现状（`2026-07-28`） | 对本设计的影响 |
+| --- | --- | --- |
+| 协议版本 | 目前为 `2026-07-28`，请求在 `_meta.io.modelcontextprotocol/protocolVersion` 声明 | 必须固定并在文档与代码中标注 |
+| 状态模型 | **无状态**：每个请求自带协议版本与能力，服务端不从上次请求推断 | 不能依赖连接级会话保存学习者身份以外的状态 |
+| 发现 | **`server/discover` 服务端必须实现**，返回 `supportedVersions`、`capabilities`、`serverInfo`，可带 `ttlMs`/`cacheScope` | v1/v2 完全没提，属于遗漏的强制项 |
+| 服务端原语 | Tools / Resources / Prompts —— 三种，与 v2 一致 ✅ | 无需改 |
+| 客户端原语 | **Elicitation**（服务端向用户索取输入）。Sampling、Roots、Logging **均已废弃** | Elicitation 直接改进本设计，见 §2.2 与 §8 |
+| 传输 | stdio 与 Streamable HTTP —— 与 v2 一致 ✅；HTTP 支持 bearer / API key / 自定义头，规范推荐 OAuth | 共享密钥头可用，但要在文档里说明这是评测期取舍 |
+| 扩展 | **Tasks**（长耗时操作的持久句柄）、Skills over MCP、MCP Apps | Tasks 重写了 §6 的延迟方案 |
+| 列表响应 | 带 `ttlMs` 与 `cacheScope` 缓存提示；变更通知需客户端经 `subscriptions/listen` 主动订阅 | 工具/资源列表应给缓存提示 |
+| 工具字段 | `name`、`title`、`description`、`inputSchema`；名称示例为 `calculator_arithmetic` 式 | **工具名改用下划线**（见下） |
+
+**工具命名更正。** v1/v2 写的 `refineq_list_learning_spaces` 是**跨服务端引用**工具时的写法，不是 `name` 字段的值。规范示例的 `name` 形如 `calculator_arithmetic`。本设计统一改为：
+
+```
+name: "refineq_list_learning_spaces"
+title: "列出学习空间"
+```
+
+下文出现的 `refineq:xxx` 一律按 `refineq_xxx` 理解。
 
 ---
 
@@ -56,7 +84,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 ---
 
-## 2. 工具集（10 个，命名空间 `refineq`）
+## 2. 工具集（10 个，名称前缀 `refineq_`）
 
 数量控制在 10 上下。每个工具给出**做什么 / 何时用 / 入参 / 返回 / 错误**四段描述——工具描述就是提示词，不是文档。
 
@@ -64,7 +92,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 ### 2.0 能力自描述（1 个）
 
-**`refineq:get_capabilities`**
+**`refineq_get_capabilities`**
 
 - **做什么**：报告本服务各项能力当前是否可用——练习出题、判分、资料检索、学习教练分别处于正常 / 本地降级 / 不可用。
 - **何时用**：**会话开始时先调这个**，据此决定哪些工具值得调用、结果该如何解读。
@@ -87,7 +115,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 ### 2.1 状态读取（2 个）
 
-**`refineq:list_learning_spaces`**
+**`refineq_list_learning_spaces`**
 
 - **做什么**：列出学习者当前全部活跃学习空间，每个附带"下一步该做什么"。
 - **何时用**：会话开始时、或需要知道"我在学什么/该学哪个"时。这是大多数会话的第一个调用。
@@ -99,7 +127,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
   ```
 - **错误**：`unauthorized`（凭据失效，附重新获取方式）
 
-**`refineq:get_space_state`**
+**`refineq_get_space_state`**
 
 - **做什么**：读取单个空间的当前状态：目标、截止、掌握度分布、今日计划、资料统计、待答题、上次判分。
 - **何时用**：确定要在哪个空间行动之后；不要为了"看看有什么"而对每个空间都调一次。
@@ -110,7 +138,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 
 ### 2.2 闭环主线（5 个）
 
-**`refineq:start_learning`** ← 这是产品的招牌能力
+**`refineq_start_learning`** ← 这是产品的招牌能力
 
 - **做什么**：把一句自然语言学习目标变成一个准备好的学习空间——识别学科、考试日期、每日时间，复用已有空间或新建，并生成到考试日的计划。
 - **何时用**：学习者表达一个新的学习目标时。若目标明显对应已有空间，本工具会复用而不是重复创建。
@@ -119,7 +147,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **降级**：模型不可用时走关键词路由，`mode="fallback"`，**不隐瞒**。
 - **错误**：`invalid_learning_constraints`（附可接受的表述示例）、`workspace_quota`
 
-**`refineq:add_material`**
+**`refineq_add_material`**
 
 - **做什么**：把学习者自己的资料加入某个空间，建立可检索索引。之后的题目与回答都会引用这些原文。
 - **何时用**：学习者提供讲义、笔记、真题的**文本内容**时。
@@ -129,7 +157,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **安全**：内容一律按不可信数据处理（见 §9）。
 - **错误**：`material_quota`、`material_extraction_failed`、`unsupported_material`
 
-**`refineq:search_materials`**
+**`refineq_search_materials`**
 
 - **做什么**：在某空间的个人资料中做语义 + 关键词混合检索，返回带出处的原文片段。
 - **何时用**：需要引用学习者自己的资料来回答问题、或核对某个说法是否在资料中出现时。
@@ -138,7 +166,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **降级**：Embedding 不可用时自动退纯词法，返回 `retrieval_mode: "lexical"`。
 - **注意**：`excerpt` 截断到 400 字，不返回 chunk 全文——盘点显示原样返回会让响应体失控。
 
-**`refineq:get_practice_task`**
+**`refineq_get_practice_task`**
 
 - **做什么**：取得当前待完成的练习任务；没有待答题时按最弱主题生成一道新题，题目引用学习者自己的资料。
 - **何时用**：学习者要开始练习时。**不要**为了"看看题长什么样"反复调用——每次生成都消耗模型额度。
@@ -146,18 +174,29 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **返回**：`{ question_id, prompt, topic, difficulty, sources[], grounding: "material"|"general", mode: "ai"|"fallback" }`
 - **错误**：`material_required`（该空间还没有可检索资料，附下一步：调用 `add_material`）
 
-**`refineq:submit_answer`**
+**`refineq_submit_answer`**
 
 - **做什么**：提交**学习者本人**对当前任务的作答，返回结构化判分：分数、是否通过、优势、缺口、误区、资料引用、掌握度变化。
 - **何时用**：学习者给出了自己的答案之后。
-- **⚠️ 描述中必须明写**：`Submit the learner's own answer. Do not compose the answer yourself — doing so records the calling model's ability as the learner's mastery.`
-- **入参**：`space_id`、`question_id`、`answer: str (1..10000)`、`attempt_id: str`（必填幂等键）
-- **返回**：`{ score, passed, strengths[], gaps[], misconceptions[], citations[], mastery_before, mastery_after, mastery_updated, next_review_at?, grading_mode }`
-- **来源标记**：服务端在证据上记 `source: "mcp"`（见 §8 待拍板项）
+- **入参**：`space_id`、`question_id`、`answer?: str (1..10000)`、`attempt_id: str`（必填幂等键）
+- **返回**：`{ score, passed, strengths[], gaps[], misconceptions[], citations[], mastery_before, mastery_after, mastery_updated, next_review_at?, grading_mode, source }`
+
+**用 Elicitation 把约束从提示词升级为协议级（v3 关键更正）**
+
+v1/v2 只在工具描述里写「不要自己写答案」。这正是我在既往审查里反复批评的做法——**靠指令约束不可信的调用方，等于没有约束**。规范的 Elicitation 提供了结构化的替代：
+
+- 客户端声明支持 Elicitation 时：`answer` **留空**，服务端返回 `InputRequiredResult`，其 `inputRequests` 携带一个 `elicitation/create`（form 模式，schema 只含 `answer` 一个必填字符串字段，message 里带上题面）。客户端弹出表单**由学习者本人填写**，再带 `inputResponses` 重试本次调用。
+  → 证据记 `source: "mcp_elicited"`，与网页端提交同等对待。
+- 客户端不支持 Elicitation 时：退回 `answer` 直传，工具描述仍写明「提交学习者本人的作答，不要代写」。
+  → 证据记 `source: "mcp_relayed"`，如实标注这是经调用方转达的。
+
+这样"答案是否真的来自学习者"不再依赖调用方自觉：**支持 Elicitation 的客户端在结构上就绕不过用户**。
+
+**注意（规范明确要求）**：form 模式**不得**用于索取密码、API key、令牌等敏感信息——那类流程要用 URL 模式。本设计的 Elicitation 只索取学习作答，符合该约束。
 
 ### 2.3 辅助（2 个）
 
-**`refineq:ask_coach`**
+**`refineq_ask_coach`**
 
 - **做什么**：在某空间内向学习教练提问，回答携带当前目标、计划、掌握度与资料引用。
 - **何时用**：学习者对学习内容有疑问、需要解释或方法建议时。
@@ -165,7 +204,7 @@ MCP 暴露的是**学习闭环这条产品主线**，不是 REST 资源：
 - **返回**：`{ session_id, message, citations[], sources[] }`
 - **⚠️ 唯一硬依赖模型的工具**：未配置模型时返回 `model_not_configured`，并在错误里说明"练习、资料、计划、判分仍然可用"。
 
-**`refineq:update_plan_session`**
+**`refineq_update_plan_session`**
 
 - **做什么**：调整计划中的一次学习会话：标记完成、重开、改期、调整时长。
 - **何时用**：学习者说"今天没时间，挪到周六"或"这场我线下做完了"。
@@ -207,13 +246,13 @@ Tools 是"做事"，Resources 是"读取上下文"。把学习记录和计划做
 
 这是原设计最大的缺口。Prompts 是 MCP 客户端里用户可直接选取的模板——**它决定了调用方是否需要自己摸索调用顺序**。
 
-### 4.1 `refineq:start_today`（今天该学什么）
+### 4.1 `refineq_start_today`（今天该学什么）
 
 引导模型：`get_capabilities` → `list_learning_spaces` → 选定空间 → `get_space_state` → 呈现唯一的下一步行动及其理由。
 
 参数：无。适用于"我今天学什么"。
 
-### 4.2 `refineq:quiz_me`（用我的资料考我）
+### 4.2 `refineq_quiz_me`（用我的资料考我）
 
 引导模型：`get_practice_task` → **把题目原样呈现给用户** → 等待用户作答 → `submit_answer` → 解释判分与掌握度变化。
 
@@ -225,13 +264,13 @@ Tools 是"做事"，Resources 是"读取上下文"。把学习记录和计划做
 
 工具描述只能提醒调用模型，而 Prompt 模板是用户主动选择的执行脚本，约束落在这里更强。
 
-### 4.3 `refineq:explain_with_my_materials`（用我的资料解释）
+### 4.3 `refineq_explain_with_my_materials`（用我的资料解释）
 
 引导模型：`search_materials` → 只依据检索到的片段解释 → **每个论断都带 citation** → 检索不到时明确说"你的资料里没有这部分"，而不是用通用知识补。
 
 参数：`space_id`、`question`。
 
-### 4.4 `refineq:weekly_review`（这周学得怎样）
+### 4.4 `refineq_weekly_review`（这周学得怎样）
 
 引导模型：读 `refineq://space/{id}/evidence` 与 `refineq://spaces` → 汇总完成的练习、掌握度变化、当前最弱主题 → 给出下一步。
 
@@ -324,6 +363,24 @@ server.py      Streamable HTTP + stdio 两种入口
 
 盘点已确认确定性内核是亚毫秒级（路由 0.08 ms、出题 0.01 ms、判分 0.02 ms），所以**降级路径的预算有极大余量**，压力全部来自外部模型。
 
+### 6.1 用 Tasks 扩展承载长耗时调用（v3 关键更正）
+
+阻塞式超时对 15–20 秒级的调用本来就不合适：客户端和中间代理常有更短的超时，一旦提前放弃，就会出现"前端报失败、服务端已提交"——**这正是全产品审查 P0-4 记录的真实故障**。审查当时建议自建持久化 operation，而规范已有标准扩展：`io.modelcontextprotocol/tasks`。
+
+适用工具：`get_practice_task`、`submit_answer`、`ask_coach`、`start_learning`、`add_material`（其余为亚秒级，保持同步）。
+
+协议要点（照规范实现，不要自创）：
+
+- 能力协商：服务端在 `server/discover` 的 `capabilities.extensions` 里声明 `io.modelcontextprotocol/tasks`；**客户端未在本次请求声明支持时，绝不能返回 task**。
+- 服务端判断本次会长耗时 → 返回 `CreateTaskResult`（`resultType: "task"`），含 `taskId`、初始状态、`ttlMs`、`pollIntervalMs`；**task 必须在响应发出前持久化创建**。
+- 客户端以 `tasks/get` 轮询；终态为 `completed`（带 `result`）/ `failed`（带 `error`）/ `cancelled`。
+- 需要用户输入时进入 `input_required`，`inputRequests` 里携带 elicitation；客户端经 `tasks/update` 回填——**这正好与 §2.2 的作答索取合流，两者是同一套机制**。
+- `tasks/cancel` 为协作式取消，服务端不保证停止。
+
+**因此本服务必须实现双路径**：客户端支持 Tasks 就走异步句柄，不支持则退回同步 + §6 的超时预算。二者的最终结果与幂等语义必须一致——同一 `attempt_id` 无论走哪条路径都只产生一条证据。
+
+**收益**：断连、刷新、客户端重启都不会丢失结果；服务端不再需要在"提前放弃"和"长时间占住连接"之间二选一。
+
 ---
 
 ## 7. 降级行为
@@ -342,7 +399,7 @@ server.py      Streamable HTTP + stdio 两种入口
 
 ---
 
-## 8. 待你拍板的两个决策
+## 8. 已确认的两个决策
 
 ### 决策一：MCP 提交的作答是否计入掌握度
 
@@ -354,7 +411,18 @@ server.py      Streamable HTTP + stdio 两种入口
 | B. 一律不计入掌握度 | 绝对安全 | MCP 演示不出"判分改变掌握度"，而这正是产品最强的一环 |
 | C. 由调用方声明 `authored_by` | 表面折中 | 把责任推给不可信的调用方，等于没有约束 |
 
-我推荐 **A**：与你此前定的原则一致（宁可如实标注，也不伪造）。**但这条必须同时落到证据台账 UI 上**，否则就成了只写不显示的假标注。
+**已确认采用 A。** 与既有原则一致（宁可如实标注，也不伪造）。
+
+**v3 更正：Elicitation 让这条决策有了更强的落法。** 原方案只能"如实标注来源"，因为服务端无法确认答案出自谁。改用 Elicitation 后，支持该原语的客户端会由**学习者本人在表单里填写**答案（见 §2.2），此时提交与网页端等价，不再是"信任调用方"。因此来源分三档而不是两档。
+
+**实施要求（缺一不可，否则就是只写不显示的假标注）：**
+
+1. 证据记录增加 `source: "web" | "mcp_elicited" | "mcp_relayed"` 字段，默认 `"web"`。`mcp_elicited` 表示答案由用户经 Elicitation 表单填写，与网页端同等；`mcp_relayed` 表示由调用方转达，可信度较低。
+2. **证据台账 UI 必须显示该来源**，`mcp_relayed` 标「经外部 Agent 转达」，`mcp_elicited` 标「通过 MCP 由本人填写」。不显示等于没标注。
+3. `refineq_submit_answer` 的返回体回显 `source`，让调用方也知道这次提交被如实记录了。
+4. 台账筛选支持按来源过滤，方便用户核对"哪些掌握度来自我自己的作答"。
+5. 该字段只描述提交通道，**不改变**掌握度计算规则——门槛仍由既有的证据判定决定。
+6. **客户端支持 Elicitation 时必须走 Elicitation**，不得因为 `answer` 已直传就跳过——否则等于把更可信的通道让给更不可信的。
 
 ### 决策二：`/openapi.json` 是否继续公开
 
@@ -363,7 +431,9 @@ server.py      Streamable HTTP + stdio 两种入口
 - **保留**：平台若不走 MCP，可直接消费 OpenAPI；部分评测系统能 OpenAPI→MCP 自动转换。等于多一条备用路径。
 - **关闭**：减少公开的攻击面描述。
 
-我倾向**保留**，因为它是动态测评的备份路径，且本身不提供越权能力（所有端点仍需 JWT）。
+**已确认保留公开。** 它是动态测评的备份路径，且本身不提供越权能力（所有端点仍需 JWT）。
+
+**配套要求：** 既然公开，就要保证它不泄露超出必要的信息——发布前检查 OpenAPI 中不出现内部错误细节、示例值不含真实数据；`/docs` 交互页保留，但不预填任何凭据。
 
 ---
 
@@ -390,6 +460,15 @@ MCP 是新增的外部入口，必须显式继承既有不变量，不能成为�
 | 0-b | **修 P0-5（注入进入 `expected_answer`）** | 见 §9 第 2 条。MCP 会放大这个洞，必须先堵 |
 | 0-c | 创建 MCP 专用评测账号并写入部署环境变量 | 与演示账号分开，便于单独吊销 |
 
+### Phase 0.5 · 协议骨架（半天，先于一切工具）
+
+- 固定协议版本 `2026-07-28`，每个响应按规范处理 `_meta`
+- **实现 `server/discover`**（强制项）：返回 `supportedVersions`、`capabilities`、`serverInfo`，带 `ttlMs` / `cacheScope`
+- 工具名改用 `refineq_*` 下划线格式，补 `title` 字段
+- 用 MCP Inspector 确认握手与 `tools/list` 正常
+
+**验收**：Inspector 能完成发现握手；`server/discover` 返回的能力与实际实现一致（声明什么就必须真支持什么）。
+
 ### Phase 1 · 只读面（半天）
 
 `get_capabilities`、`list_learning_spaces`、`get_space_state`、`search_materials` + 全部 4 个 Resources。
@@ -410,6 +489,17 @@ MCP 是新增的外部入口，必须显式继承既有不变量，不能成为�
 - 每个工具按 §6 落地超时与降级标注
 
 **验收**：用 MCP 客户端跑通完整闭环——说目标 → 加资料 → 取题 → 作答 → 看到掌握度变化，**全程零模型**；各工具耗时落在 §6 预算内。
+
+### Phase 2.5 · Tasks 与 Elicitation（1 天）
+
+两者共用同一套 `input_required` 机制，一起做成本最低。
+
+- 在 `server/discover` 声明 `io.modelcontextprotocol/tasks`；**仅当客户端本次请求声明支持时**才返回 `CreateTaskResult`
+- `get_practice_task` / `submit_answer` / `ask_coach` / `start_learning` / `add_material` 走双路径（异步 task + 同步回退），**两条路径幂等语义必须一致**
+- 实现 `tasks/get`、`tasks/update`、`tasks/cancel`
+- `submit_answer` 在客户端支持 Elicitation 时索取学习者本人作答（§2.2），来源记 `mcp_elicited`
+
+**验收**：不支持 Tasks 的客户端仍能同步跑通闭环；支持的客户端断连后用同一 `taskId` 恢复并拿到结果；同一 `attempt_id` 在两条路径下**只产生一条证据**；Elicitation 路径下证据来源为 `mcp_elicited`。
 
 ### Phase 3 · Prompts（半天）
 
