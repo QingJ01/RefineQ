@@ -244,6 +244,20 @@ export function StudyWorkspace({
 
   useEffect(() => installSessionHandoff(window.sessionStorage), []);
 
+  useEffect(() => {
+    if (
+      !auth?.access_token
+      || !workspace?.id
+      || !result?.attempt_id
+      || result.grounding !== "material"
+    ) return;
+    void api.markWorkspaceGradeShown(
+      auth.access_token,
+      workspace.id,
+      result.attempt_id,
+    ).catch(() => undefined);
+  }, [auth?.access_token, result?.attempt_id, result?.grounding, workspace?.id]);
+
   useEffect(() => installHistoryNavigationGuard(
     browserHistoryNavigation(window),
     () => navigationBlockRef.current(),
@@ -1522,7 +1536,7 @@ export function StudyWorkspace({
             <div>
               <span className="kicker">{t("workspaceEyebrow")}</span>
               <h1>{workspace.title}</h1>
-              <p>{workspace.goal}</p>
+              <p>{plan?.goal ?? progress?.goal ?? workspace.goal}</p>
             </div>
             <span className="workspace-date">
               {new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
@@ -1653,6 +1667,7 @@ export function StudyWorkspace({
                   plan={plan}
                   topics={progress.topics}
                   topicOrder={progress.topic_order}
+                  originalGoal={workspace.original_goal ?? workspace.goal}
                   busy={planSettingsBusy}
                   onSave={updatePlanSettings}
                 />

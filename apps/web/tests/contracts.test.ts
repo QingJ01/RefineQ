@@ -1509,6 +1509,38 @@ describe("global calendar API", () => {
 });
 
 
+describe("internally computable learning metrics", () => {
+  it("marks a material-grounded grade as shown and reads the admin metric window", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    const client = new ApiClient("/api", async (input, init) => {
+      requests.push({ path: String(input), method: init?.method ?? "GET" });
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.markWorkspaceGradeShown("token", "workspace-1", "attempt-1");
+    await client.getAdminLearningMetrics(
+      "token",
+      "2026-08-03T00:00:00.000Z",
+      "2026-08-10T00:00:00.000Z",
+    );
+
+    expect(requests).toEqual([
+      {
+        path: "/api/workspaces/workspace-1/learning/attempts/attempt-1/shown",
+        method: "POST",
+      },
+      {
+        path: "/api/admin/metrics/learning?starts_at=2026-08-03T00%3A00%3A00.000Z&ends_at=2026-08-10T00%3A00%3A00.000Z",
+        method: "GET",
+      },
+    ]);
+  });
+});
+
+
 describe("global calendar route", () => {
   it("loads a bounded owner calendar and hands task deep links to an executable Today session", () => {
     const page = fileURLToPath(new URL("../app/calendar/page.tsx", import.meta.url));
@@ -1543,10 +1575,15 @@ describe("unified authenticated shell styling", () => {
     expect(styles).toContain("/* Unified authenticated application shell */");
     expect(styles).toContain(".app-sidebar {");
     expect(styles).toContain(".global-calendar-shell {");
-    expect(styles).toContain(".global-calendar-layout {");
-    expect(styles).toContain('.global-calendar [data-color="0"]');
-    expect(styles).toContain("@media (max-width: 900px)");
-  });
+      expect(styles).toContain(".global-calendar-layout {");
+      expect(styles).toContain('.global-calendar [data-color="0"]');
+      expect(styles).toContain("@media (max-width: 900px)");
+      expect(styles).not.toContain("min-width: 720px");
+      expect(styles).toContain(".calendar-weekdays,\n  .global-month-calendar .calendar-weekdays");
+      expect(styles).toContain(".calendar-grid,\n  .global-calendar-grid");
+      expect(styles).toContain(".global-calendar-day.outside,\n  .global-calendar-day.empty");
+      expect(styles).toContain("min-height: 64px;");
+    });
 });
 
 describe("plan setting validation", () => {

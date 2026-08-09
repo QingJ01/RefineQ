@@ -33,6 +33,7 @@ class WorkspaceRepository:
             title=title.strip(),
             subject=subject.strip(),
             goal=goal.strip(),
+            original_goal=goal.strip(),
             topics=[item.strip() for item in topics if item.strip()],
             keywords=list(dict.fromkeys(item.strip() for item in keywords if item.strip())),
             routing_summary=routing_summary.strip(),
@@ -74,6 +75,7 @@ class WorkspaceRepository:
         archived: bool | None = None,
     ) -> LearningWorkspace:
         def apply(data: dict) -> dict:
+            data.setdefault("original_goal", data.get("goal", ""))
             if title is not None:
                 data["title"] = title.strip()
             if goal is not None:

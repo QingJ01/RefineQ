@@ -12,6 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from refineq.knowledge.index import SearchResult
 from refineq.learning.bkt import DEFAULT_BKT, mastery_is_stable, update_bkt
 from refineq.learning.difficulty import update_difficulty
+from refineq.learning.events import (
+    JourneyEvent,
+    JourneyEventName,
+    append_journey_event,
+    build_journey_event,
+)
 from refineq.learning.evidence import create_evidence, stable_id
 from refineq.learning.intelligence import (
     GeneratedQuestion,
@@ -424,6 +430,18 @@ class LearningService:
         if not progress or not progress.get("seeded"):
             raise LearningNotSeededError("Learning project has not been seeded")
         return progress
+
+    @staticmethod
+    def _journey_event(data: dict[str, Any], event_id: str) -> JourneyEvent | None:
+        progress = LearningService._progress(data)
+        return next(
+            (
+                JourneyEvent.model_validate(item)
+                for item in progress.get("journey_events", [])
+                if item.get("id") == event_id
+            ),
+            None,
+        )
 
     @staticmethod
     def _progress_response(data: dict[str, Any]) -> ProgressResponse:
@@ -954,6 +972,16 @@ class LearningService:
                         "question", project_id, selected_topic_id, str(sequence)
                     )
                 selected = {"id": question_id, **proposed}
+                append_journey_event(
+                    inner_progress,
+                    build_journey_event(
+                        workspace_id=project_id,
+                        name="question_started",
+                        idempotency_key=question_id,
+                        occurred_at=datetime.now(UTC),
+                        ref_id=question_id,
+                    ),
+                )
                 inner_progress["question_sequence"] = sequence + 1
                 inner_progress["pending_question"] = selected
                 inner_history[question_id] = deepcopy(selected)
@@ -1308,6 +1336,17 @@ class LearningService:
                 "question_snapshot": deepcopy(question),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)
+            if result["grounding"] == Grounding.MATERIAL.value:
+                append_journey_event(
+                    progress,
+                    build_journey_event(
+                        workspace_id=project_id,
+                        name="grounded_grade_created",
+                        idempotency_key=payload.attempt_id,
+                        occurred_at=observed_at,
+                        ref_id=payload.attempt_id,
+                    ),
+                )
             progress["bkt_states"][topic_id] = bkt_state.model_dump(mode="json")
             progress["difficulty_states"][topic_id] = difficulty.model_dump(mode="json")
             progress["evidence"].append(evidence.model_dump(mode="json"))
@@ -1472,6 +1511,89 @@ class LearningService:
     def progress(self, owner_id: str, project_id: str) -> ProgressResponse:
         self._require_project(owner_id, project_id)
         return self._progress_response(self._learning.get(owner_id, project_id).data)
+
+    def record_journey_event(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        name: JourneyEventName,
+        idempotency_key: str,
+        occurred_at: datetime | None = None,
+        ref_id: str | None = None,
+    ) -> JourneyEvent:
+        self._require_project(owner_id, project_id)
+        proposed = build_journey_event(
+            workspace_id=project_id,
+            name=name,
+            idempotency_key=idempotency_key,
+            occurred_at=occurred_at or datetime.now(UTC),
+            ref_id=ref_id,
+        )
+        existing = self._journey_event(
+            self._learning.get(owner_id, project_id).data, proposed.id
+        )
+        if existing is not None:
+            return existing
+        selected = proposed
+
+        def store(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal selected
+            progress = self._progress(data)
+            concurrent = self._journey_event(data, proposed.id)
+            if concurrent is not None:
+                selected = concurrent
+                return data
+            append_journey_event(progress, proposed)
+            return data
+
+        self._learning.mutate(owner_id, project_id, store)
+        return selected
+
+    def mark_grounded_grade_shown(
+        self,
+        owner_id: str,
+        project_id: str,
+        attempt_id: str,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> JourneyEvent:
+        self._require_project(owner_id, project_id)
+        proposed = build_journey_event(
+            workspace_id=project_id,
+            name="grounded_grade_shown",
+            idempotency_key=attempt_id,
+            occurred_at=occurred_at or datetime.now(UTC),
+            ref_id=attempt_id,
+        )
+        current = self._learning.get(owner_id, project_id).data
+        attempt = current.get("attempts", {}).get(attempt_id)
+        if attempt is None:
+            raise AttemptNotFoundError("Learning attempt not found")
+        if attempt.get("grounding") != Grounding.MATERIAL.value:
+            raise LearningConflictError("Only a material-grounded grade can be shown")
+        existing = self._journey_event(current, proposed.id)
+        if existing is not None:
+            return existing
+        selected = proposed
+
+        def validate_and_store(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal selected
+            attempt = data.get("attempts", {}).get(attempt_id)
+            if attempt is None:
+                raise AttemptNotFoundError("Learning attempt not found")
+            if attempt.get("grounding") != Grounding.MATERIAL.value:
+                raise LearningConflictError("Only a material-grounded grade can be shown")
+            progress = self._progress(data)
+            concurrent = self._journey_event(data, proposed.id)
+            if concurrent is not None:
+                selected = concurrent
+                return data
+            append_journey_event(progress, proposed)
+            return data
+
+        self._learning.mutate(owner_id, project_id, validate_and_store)
+        return selected
 
     def evidence(self, owner_id: str, project_id: str) -> list[LearningEvidence]:
         self._require_project(owner_id, project_id)

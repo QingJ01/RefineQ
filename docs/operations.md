@@ -37,6 +37,25 @@ docker compose --env-file .env -f infra/compose.yml exec `
 The command is idempotent. Re-running it promotes an existing account to `admin` and resets its
 password; plaintext credentials are never saved by the command.
 
+## Internal learning-loop metrics
+
+An authenticated administrator can query the built-in journey aggregate without installing an
+analytics SDK:
+
+```text
+GET /admin/metrics/learning?starts_at=2026-08-03T00:00:00Z&ends_at=2026-08-10T00:00:00Z
+```
+
+The interval is left-closed/right-open and cannot exceed 31 days. The response contains unique
+active learners, unique learners shown at least one material-grounded grade, their completion rate,
+and nearest-rank P50/P90 seconds for intent-to-grounded-grade and revisit-open-to-question. Empty
+samples return `sample_size: 0` with null percentiles.
+
+Journey events are stored inside the owner/workspace learning record, are idempotent, and are
+bounded to the newest 500 events per workspace. Repeated delivery should not advance the record
+version. Treat these metrics as product-flow and retention proxies only: they do not provide an
+external truth for mastery calibration.
+
 ## Demo data
 
 ```powershell

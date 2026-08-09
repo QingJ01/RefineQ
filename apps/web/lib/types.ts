@@ -27,6 +27,7 @@ export interface LearningWorkspace {
   title: string;
   subject: string;
   goal: string;
+  original_goal?: string;
   topics: string[];
   keywords: string[];
   routing_summary: string;
@@ -97,6 +98,14 @@ export interface NextAction {
   alternatives: NextActionAlternative[];
   risk_level: "low" | "medium" | "high";
   approval_mode: "advise" | "confirm" | "auto_safe";
+}
+
+export interface JourneyEvent {
+  id: string;
+  workspace_id: string;
+  name: "intent_submitted" | "workspace_ready" | "workspace_opened" | "material_searchable" | "question_started" | "grounded_grade_created" | "grounded_grade_shown";
+  occurred_at: string;
+  ref_id: string | null;
 }
 
 export interface TopicSuggestion {
@@ -473,6 +482,22 @@ export interface AdminJobSummary {
 export interface AdminJobsResponse {
   items: AdminJobSummary[];
   observed_at: string;
+}
+
+export interface DurationPercentiles {
+  sample_size: number;
+  p50: number | null;
+  p90: number | null;
+}
+
+export interface LearningMetricsResponse {
+  starts_at: string;
+  ends_at: string;
+  weekly_active_learners: number;
+  grounded_loop_completers: number;
+  grounded_loop_completion_rate: number;
+  intent_to_grounded_grade_seconds: DurationPercentiles;
+  revisit_open_to_question_seconds: DurationPercentiles;
 }
 
 export interface AdminAuditEntry {

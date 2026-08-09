@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _utc(value: datetime) -> datetime:
@@ -21,6 +21,7 @@ class LearningWorkspace(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     subject: str = Field(min_length=1, max_length=100)
     goal: str = Field(min_length=1, max_length=500)
+    original_goal: str = Field(min_length=1, max_length=500)
     topics: list[str] = Field(min_length=1, max_length=200)
     keywords: list[str] = Field(min_length=1, max_length=200)
     routing_summary: str = Field(min_length=1, max_length=500)
@@ -30,6 +31,13 @@ class LearningWorkspace(BaseModel):
 
     _normalize_created_at = field_validator("created_at", mode="after")(_utc)
     _normalize_last_active_at = field_validator("last_active_at", mode="after")(_utc)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_original_goal(cls, value):
+        if isinstance(value, dict) and "original_goal" not in value and "goal" in value:
+            return {**value, "original_goal": value["goal"]}
+        return value
 
 
 class WorkspaceRoutingDecision(BaseModel):

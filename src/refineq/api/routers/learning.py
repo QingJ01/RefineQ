@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from refineq.api.dependencies import CurrentUser
+from refineq.learning.events import JourneyEvent
 from refineq.learning.models import LearningEvidence, StudyPlan, StudySession
 from refineq.learning.service import (
     AnswerRequest,
@@ -217,6 +218,26 @@ def workspace_answer(
             user.id,
             workspace_id,
             payload,
+        )
+    except LearningServiceError as error:
+        _raise_api_error(error)
+
+
+@workspace_router.post(
+    "/attempts/{attempt_id}/shown",
+    response_model=JourneyEvent,
+)
+def mark_workspace_grade_shown(
+    workspace_id: str,
+    attempt_id: str,
+    request: Request,
+    user: CurrentUser,
+) -> JourneyEvent:
+    try:
+        return request.app.state.workspace_learning_service.mark_grounded_grade_shown(
+            user.id,
+            workspace_id,
+            attempt_id,
         )
     except LearningServiceError as error:
         _raise_api_error(error)

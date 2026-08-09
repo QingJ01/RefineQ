@@ -13,6 +13,7 @@ from refineq.database.engine import Database
 from refineq.database.schema import audit_logs, material_chunks, materials, records, users
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService
+from refineq.learning.events import learning_journey_metrics
 from refineq.operations.backup import (
     BackupError,
     ManagedBackup,
@@ -171,6 +172,32 @@ class AdminOperations:
                 },
             ],
         }
+
+    def learning_metrics(
+        self,
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> dict[str, object]:
+        with self.database.session() as session:
+            rows = session.execute(
+                select(records.c.owner_id, records.c.record_id, records.c.data).where(
+                    records.c.collection == "learning"
+                )
+            ).all()
+        event_records = [
+            (
+                str(row.owner_id),
+                str(row.record_id),
+                row.data.get("progress", {}).get("journey_events", []),
+            )
+            for row in rows
+        ]
+        return learning_journey_metrics(
+            event_records,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
 
     def audit(self, *, actor_id: str, action: str, target: str, details: dict) -> None:
         with self.database.session() as session:

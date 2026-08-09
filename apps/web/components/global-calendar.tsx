@@ -246,16 +246,31 @@ export function GlobalCalendar({
                   <button
                     type="button"
                     key={key}
-                    className={`global-calendar-day${selectedDate === key ? " selected" : ""}${outside ? " outside" : ""}`}
+                    className={`global-calendar-day${selectedDate === key ? " selected" : ""}${outside ? " outside" : ""}${events.length === 0 ? " empty" : ""}`}
+                    data-outside={outside || undefined}
+                    data-empty={events.length === 0 || undefined}
                     onClick={() => onSelectedDateChange(key)}
                     aria-label={new Intl.DateTimeFormat(localeCode, { month: "long", day: "numeric" }).format(date)}
                   >
                     <span>{date.getDate()}</span>
                     <div>
                       {events.slice(0, 3).map((task) => (
-                        <i key={task.id} data-color={workspaceColorIndex(task.workspace_id)}>
+                        <span
+                          className="global-calendar-event"
+                          key={task.id}
+                          data-color={workspaceColorIndex(task.workspace_id)}
+                        >
                           {task.workspace_title} · {task.topic_label}
-                        </i>
+                          <small className="global-calendar-event-details">
+                            {task.status === "completed" ? text.completed : text.planned}
+                            {" · "}
+                            {new Intl.DateTimeFormat(localeCode, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            }).format(new Date(task.planned_at))}
+                            {` · ${task.minutes} ${text.minutes}`}
+                          </small>
+                        </span>
                       ))}
                       {events.length > 3 && <small>+{events.length - 3}</small>}
                     </div>

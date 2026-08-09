@@ -45,6 +45,25 @@ const snapshot = {
   plan: null,
   evidence: [],
   materials: [],
+  next_action: {
+    id: "next-action-1",
+    workspace_id: "workspace-1",
+    version: 1,
+    expires_at: "2026-08-08T00:05:00Z",
+    action_type: "upload_material",
+    trigger: "material_missing",
+    reason_code: "material_required_for_grounded_practice",
+    reason: "Upload a material to start grounded practice.",
+    preconditions: { has_searchable_material: false },
+    evidence_refs: [],
+    expected_outcome: "Make source-grounded practice available.",
+    target_id: null,
+    topic_id: null,
+    minutes: null,
+    alternatives: [],
+    risk_level: "low",
+    approval_mode: "advise",
+  },
 } satisfies WorkspaceSnapshot;
 
 describe("workspace snapshot handoff", () => {

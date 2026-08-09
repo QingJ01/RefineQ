@@ -57,9 +57,15 @@ def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
             params={"timezone_offset_minutes": 480},
             headers=headers,
         )
+        repeated_snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            params={"timezone_offset_minutes": 480},
+            headers=headers,
+        )
 
         assert snapshot.status_code == 200
         assert snapshot.json()["next_action"] == refreshed.json()
+        assert repeated_snapshot.json()["next_action"] == snapshot.json()["next_action"]
         assert refreshed.json()["action_type"] == "upload_material"
         assert refreshed.json()["trigger"] == "material_missing"
         assert refreshed.json()["preconditions"] == {"has_searchable_material": False}
@@ -921,6 +927,54 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         )
 
     assert forbidden.status_code == 404
+
+
+def test_workspace_preserves_original_goal_while_structured_plan_becomes_authoritative(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    exam_at = datetime.now(UTC) + timedelta(days=9)
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        original_goal = "Prepare calculus for 90 minutes every day"
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": original_goal,
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 35,
+            },
+        ).json()["workspace"]["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        updated_goal = "Pass calculus with reliable problem solving"
+        saved = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": updated_goal,
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 35,
+                "topic_order": snapshot["progress"]["topic_order"],
+                "regenerate": False,
+            },
+        )
+        restored = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+
+    assert saved.status_code == 200
+    assert restored["workspace"]["original_goal"] == original_goal
+    assert restored["workspace"]["goal"] == updated_goal
+    assert restored["progress"]["goal"] == updated_goal
+    assert restored["plan"]["goal"] == updated_goal
+    assert restored["plan"]["daily_minutes"] == 35
 
 
 def test_workspace_plan_update_rejects_invalid_topic_membership(tmp_path: Path) -> None:

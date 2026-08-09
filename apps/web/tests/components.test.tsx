@@ -315,6 +315,8 @@ describe("cross-workspace calendar", () => {
     expect(html).toContain('href="/learn/math-space/today?session=session-math-1"');
     expect(html).toContain('href="/learn/english-space/today?session=session-english-1"');
     expect(html).toContain("Open in learning space");
+    expect(html).toContain('class="global-calendar-event-details"');
+    expect(html).toMatch(/global-calendar-event-details[^>]*>Planned · [^<]+ · 30 min/);
     expect(html).not.toContain(">Save<");
     expect(html).not.toContain(">Delete<");
   });
@@ -1148,9 +1150,10 @@ describe("focused learning components", () => {
             minutes: 45,
           }],
         }}
-        topics={{ limits: "Limits", derivatives: "Derivatives" }}
-        topicOrder={["limits", "derivatives"]}
-        onSave={() => undefined}
+          topics={{ limits: "Limits", derivatives: "Derivatives" }}
+          topicOrder={["limits", "derivatives"]}
+          originalGoal="Pass calculus in 90 minutes every day"
+          onSave={() => undefined}
       />,
     );
 
@@ -1162,7 +1165,13 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="plan-topic-up-derivatives"');
     expect(html).toContain('data-testid="plan-settings-cancel"');
     expect(html).toContain('data-testid="plan-settings-save"');
-    expect(html).toContain('data-testid="plan-settings-regenerate"');
+      expect(html).toContain('data-testid="plan-settings-regenerate"');
+      expect(html).toContain('data-testid="current-plan-constraints"');
+      expect(html).toContain("Aug 20, 2026");
+      expect(html).toContain("45 min/day");
+      expect(html).toContain("Historical input");
+      expect(html).toContain("Pass calculus in 90 minutes every day");
+      expect(html).toContain("does not control the current schedule");
   });
 
   it("keeps long study paths focused until the learner expands them", () => {

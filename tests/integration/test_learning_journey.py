@@ -43,6 +43,12 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
             headers=headers,
             json={"intent": "Study function limits"},
         ).json()["workspace"]["id"]
+        assert (
+            client.get(
+                f"/workspaces/{workspace_id}/snapshot", headers=headers
+            ).status_code
+            == 200
+        )
 
         blocked = client.post(
             f"/workspaces/{workspace_id}/learning/question",
@@ -77,9 +83,49 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
             json={"request_id": "question-with-material"},
         )
 
+        graded = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "material-gate-attempt",
+                "question_id": created.json()["id"],
+                "answer": (
+                    "A limit describes the value approached by a function, "
+                    "with a concrete example."
+                ),
+            },
+        )
+        shown = client.post(
+            f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
+            headers=headers,
+        )
+        version_after_shown = app.state.learning.get(
+            learner["user_id"], workspace_id
+        ).version
+        shown_replay = client.post(
+            f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
+            headers=headers,
+        )
+        stored = app.state.learning.get(learner["user_id"], workspace_id)
+
     assert created.status_code == 200
     assert created.json()["grounding"] == "material"
     assert created.json()["sources"]
+    assert graded.status_code == 200
+    assert shown.status_code == 200
+    assert shown.json() == shown_replay.json()
+    assert stored.version == version_after_shown
+    names = [event["name"] for event in stored.data["progress"]["journey_events"]]
+    assert {
+        "intent_submitted",
+        "workspace_ready",
+        "workspace_opened",
+        "material_searchable",
+        "question_started",
+        "grounded_grade_created",
+        "grounded_grade_shown",
+    }.issubset(names)
+    assert names.count("grounded_grade_shown") == 1
 
 
 def test_complete_learning_journey_is_owner_scoped_and_idempotent(

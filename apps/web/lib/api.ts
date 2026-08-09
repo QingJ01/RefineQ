@@ -19,6 +19,8 @@ import type {
   IntegrationKind,
   IntegrationTestResult,
   IntegrationUpdateInput,
+  JourneyEvent,
+  LearningMetricsResponse,
   MaterialRecord,
   NextAction,
   MaterialUpdateInput,
@@ -482,6 +484,18 @@ export class ApiClient {
     );
   }
 
+  markWorkspaceGradeShown(
+    token: string,
+    workspaceId: string,
+    attemptId: string,
+  ): Promise<JourneyEvent> {
+    return this.request(
+      `/workspaces/${workspaceId}/learning/attempts/${attemptId}/shown`,
+      { method: "POST" },
+      token,
+    );
+  }
+
   updateWorkspacePlanSession(
     token: string,
     workspaceId: string,
@@ -711,6 +725,15 @@ export class ApiClient {
 
   getAdminJobs(token: string): Promise<AdminJobsResponse> {
     return this.request("/admin/jobs", {}, token);
+  }
+
+  getAdminLearningMetrics(
+    token: string,
+    startsAt: string,
+    endsAt: string,
+  ): Promise<LearningMetricsResponse> {
+    const query = new URLSearchParams({ starts_at: startsAt, ends_at: endsAt });
+    return this.request(`/admin/metrics/learning?${query.toString()}`, {}, token);
   }
 
   listAdminAudit(token: string, page = 1, pageSize = 20): Promise<AdminAuditPage> {

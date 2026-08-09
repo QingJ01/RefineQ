@@ -210,13 +210,31 @@ class WorkspaceService:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
             if latest != workspaces:
                 raise WorkspaceConflictError("Learning workspaces changed during routing")
-            return self._commit_resolution(
+            response = self._commit_resolution(
                 owner_id,
                 payload,
                 decision,
                 latest,
                 observed_at=observed_at,
             )
+            intent_key = sha256(payload.intent.strip().casefold().encode()).hexdigest()[:20]
+            self._learning_service.record_journey_event(
+                owner_id,
+                response.workspace.id,
+                name="intent_submitted",
+                idempotency_key=f"{observed_at:%Y%m%d%H%M}:{intent_key}",
+                occurred_at=observed_at,
+            )
+            if response.action == "created":
+                self._learning_service.record_journey_event(
+                    owner_id,
+                    response.workspace.id,
+                    name="workspace_ready",
+                    idempotency_key=response.workspace.id,
+                    occurred_at=observed_at,
+                    ref_id=response.workspace.id,
+                )
+            return response
 
     def _commit_resolution(
         self,
@@ -514,10 +532,19 @@ class WorkspaceService:
         now: datetime | None = None,
         timezone_offset_minutes: int = 0,
     ) -> WorkspaceSnapshot:
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         try:
             workspace = self._workspaces.get(owner_id, workspace_id)
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
+        self._learning_service.record_journey_event(
+            owner_id,
+            workspace_id,
+            name="workspace_opened",
+            idempotency_key=f"{observed_at:%Y%m%d}",
+            occurred_at=observed_at,
+            ref_id=workspace_id,
+        )
         progress = self._learning_service.progress(owner_id, workspace_id)
         learning_record = self._learning.get(owner_id, workspace_id)
         raw_plan = learning_record.data["progress"].get("plan")
@@ -559,7 +586,7 @@ class WorkspaceService:
             next_action=self.next_action(
                 owner_id,
                 workspace_id,
-                now=now,
+                now=observed_at,
                 timezone_offset_minutes=timezone_offset_minutes,
             ),
         )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -15,6 +15,7 @@ from refineq.database.engine import Database
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService, InvalidTokenError
 from refineq.operations.admin import ensure_admin
+from refineq.workspaces.service import WorkspaceResolveRequest
 
 
 def _identity(tmp_path) -> IdentityService:
@@ -219,6 +220,76 @@ def test_admin_operations_are_paginated_guarded_and_audited(tmp_path) -> None:
     assert audit_response.json()["total"] >= 2
     assert audit_response.json()["items"][0]["action"] == "backup.restore_validated"
     assert invalid_id.status_code == 404
+
+
+def test_learning_metrics_are_admin_only_and_derived_from_internal_events(tmp_path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    learner = app.state.identity.register(
+        email="metrics-learner@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Metrics Learner",
+    )
+    admin = ensure_admin(
+        app.state.identity,
+        email="metrics-admin@example.com",
+        password="correct-horse-battery-staple",
+        display_name="Metrics Admin",
+    ).user
+    now = datetime.now(UTC).replace(microsecond=0)
+    workspace = app.state.workspace_service.resolve(
+        learner.id,
+        WorkspaceResolveRequest(intent="Prepare calculus"),
+        now=now,
+    ).workspace
+
+    def add_metric_events(data: dict) -> dict:
+        data["progress"]["journey_events"] = [
+            {
+                "id": "event-intent",
+                "workspace_id": workspace.id,
+                "name": "intent_submitted",
+                "occurred_at": now.isoformat(),
+                "ref_id": None,
+            },
+            {
+                "id": "event-grade",
+                "workspace_id": workspace.id,
+                "name": "grounded_grade_created",
+                "occurred_at": (now + timedelta(minutes=10)).isoformat(),
+                "ref_id": "attempt-1",
+            },
+            {
+                "id": "event-shown",
+                "workspace_id": workspace.id,
+                "name": "grounded_grade_shown",
+                "occurred_at": (now + timedelta(minutes=11)).isoformat(),
+                "ref_id": "attempt-1",
+            },
+        ]
+        return data
+
+    app.state.learning.mutate(learner.id, workspace.id, add_metric_events)
+    learner_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(learner)}"}
+    admin_headers = {"Authorization": f"Bearer {app.state.identity.issue_token(admin)}"}
+    params = {
+        "starts_at": (now - timedelta(minutes=1)).isoformat(),
+        "ends_at": (now + timedelta(days=7)).isoformat(),
+    }
+
+    with TestClient(app) as client:
+        forbidden = client.get("/admin/metrics/learning", headers=learner_headers, params=params)
+        response = client.get("/admin/metrics/learning", headers=admin_headers, params=params)
+
+    assert forbidden.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["weekly_active_learners"] == 1
+    assert response.json()["grounded_loop_completers"] == 1
+    assert response.json()["grounded_loop_completion_rate"] == 1.0
+    assert response.json()["intent_to_grounded_grade_seconds"] == {
+        "sample_size": 1,
+        "p50": 600.0,
+        "p90": 600.0,
+    }
 
 
 @pytest.mark.parametrize(
