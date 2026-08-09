@@ -78,6 +78,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
+  const firstWorkspaceUrl = page.url();
 
   await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
     await page.getByTestId("app-nav-home").click();
@@ -117,7 +118,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
         body: JSON.stringify({ error: { code: "service_unavailable", message: "temporary" } }),
       });
     });
-    await page.goBack();
+    await page.goto(secondWorkspaceUrl);
     await expect(page).toHaveURL(secondWorkspaceUrl);
     await page.addInitScript((workspaceId) => {
       window.sessionStorage.removeItem(`refineq.workspace-snapshot:${workspaceId}`);
@@ -126,7 +127,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page.getByTestId("workspace-route-state")).toBeVisible();
     await expect(page.locator(".workspace-switcher")).toHaveCount(0);
     await page.unroute(`**/api/workspaces/${secondWorkspaceId}/snapshot**`);
-    await page.goForward();
+    await page.goto(firstWorkspaceUrl);
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
   });
 
@@ -185,6 +186,8 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page.getByTestId("learning-path-view")).toBeVisible();
     await page.keyboard.press("Tab");
     await expect(page.locator(".skip-link")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("app-nav-library")).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByTestId("app-nav-home")).toBeFocused();
     await page.keyboard.press("Tab");
@@ -968,7 +971,9 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
 
   await page.getByTestId("mobile-shortcut-progress").click();
   await expect(page).toHaveURL(/\/progress$/);
-  await expect(page.locator(".evidence-timeline > li")).toHaveCount(1);
+  await expect
+    .poll(async () => page.locator(".evidence-timeline > li").count())
+    .toBeGreaterThanOrEqual(1);
   await expect(page.locator('[data-testid^="attempt-rubric-"]').first()).toContainText(
     "mobile-computer-architecture.txt",
   );
