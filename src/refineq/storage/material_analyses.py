@@ -19,9 +19,7 @@ class MaterialAnalysisRepository:
     def snapshot(self, owner_id: str, material_id: str) -> dict[str, StoredRecord]:
         return {
             record_id: record
-            for record_id, record in self._store.list_items(
-                owner_id, "material-analyses"
-            ).items()
+            for record_id, record in self._store.list_items(owner_id, "material-analyses").items()
             if record.data.get("material_id") == material_id
         }
 

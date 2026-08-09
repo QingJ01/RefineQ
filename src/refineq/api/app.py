@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import timedelta
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.exceptions import HTTPException
 
 from refineq import __version__
@@ -63,6 +67,12 @@ from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.personalized import TargetedPlanService
 from refineq.learning.service import LearningService
 from refineq.materials.service import MaterialAnalysisService
+from refineq.mcp.auth import EvaluationBearerGateway, ExactAsgiRoute
+from refineq.mcp.evaluation import EvaluationLearningIntelligence
+from refineq.mcp.observability import McpTelemetry
+from refineq.mcp.sandbox import EvaluationSandboxService, McpSandboxRepository
+from refineq.mcp.server import create_mcp_server
+from refineq.mcp.tools import McpToolService
 from refineq.operations.admin import AdminOperations
 from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import InvalidIdentifierError
@@ -89,7 +99,20 @@ def create_app(
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
 
-    app = FastAPI(title="RefineQ", version=__version__)
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        try:
+            async with AsyncExitStack() as stack:
+                mcp_asgi = getattr(application.state, "mcp_asgi", None)
+                if mcp_asgi is not None:
+                    await stack.enter_async_context(mcp_asgi.router.lifespan_context(mcp_asgi))
+                yield
+        finally:
+            application.state.account_deletions.close()
+            application.state.material_deletions.close()
+            application.state.database.close()
+
+    app = FastAPI(title="RefineQ", version=__version__, lifespan=lifespan)
 
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
@@ -222,6 +245,63 @@ def create_app(
         app.state.journey_events,
     )
     app.state.sessions = SessionRepository(app.state.store)
+    if app.state.settings.mcp_enabled:
+        app.state.mcp_telemetry = McpTelemetry()
+        app.state.mcp_embedding_service = PlatformEmbeddingService(
+            app.state.integrations,
+            timeout=4.0,
+        )
+        app.state.mcp_knowledge = KnowledgeIndex(
+            app.state.database,
+            embedder=app.state.mcp_embedding_service,
+            enforce_owner_state=True,
+        )
+        app.state.mcp_primary_intelligence = LearningIntelligenceService(
+            app.state.mcp_knowledge,
+            app.state.model_settings,
+            learning_model_transport
+            or OpenAICompatibleStructuredTransport(timeout=15.0, max_retries=0),
+        )
+        app.state.mcp_learning_intelligence = EvaluationLearningIntelligence(
+            app.state.mcp_knowledge,
+            primary=app.state.mcp_primary_intelligence,
+            model_settings=app.state.model_settings,
+        )
+        app.state.mcp_learning_service = LearningService(
+            app.state.workspaces,
+            app.state.learning,
+            app.state.mcp_learning_intelligence,
+            None,
+        )
+        app.state.mcp_runs = McpSandboxRepository(
+            app.state.database,
+            secret=app.state.settings.mcp_evaluation_secret.get_secret_value(),
+            principal_id="evaluation",
+            run_ttl=timedelta(seconds=app.state.settings.mcp_run_ttl_seconds),
+            idempotency_ttl=timedelta(seconds=app.state.settings.mcp_idempotency_ttl_seconds),
+        )
+        app.state.mcp_runs.recover_startup()
+        app.state.mcp_sandbox = EvaluationSandboxService(
+            database=app.state.database,
+            identity=app.state.identity,
+            workspaces=app.state.workspaces,
+            learning=app.state.learning,
+            learning_service=app.state.mcp_learning_service,
+            journey_events=app.state.journey_events,
+            sessions=app.state.sessions,
+            knowledge=app.state.mcp_knowledge,
+        )
+        app.state.mcp_sandbox.ensure_seed()
+        app.state.mcp_tools = McpToolService(
+            runs=app.state.mcp_runs,
+            sandbox=app.state.mcp_sandbox,
+            workspaces=app.state.workspaces,
+            learning=app.state.learning,
+            learning_service=app.state.mcp_learning_service,
+            knowledge=app.state.mcp_knowledge,
+            telemetry=app.state.mcp_telemetry,
+            model_settings=app.state.model_settings,
+        )
     resolved_intent_transport = agent_intent_transport
     if resolved_intent_transport is None and model_transport is None:
         resolved_intent_transport = OpenAICompatibleStructuredTransport(
@@ -305,9 +385,38 @@ def create_app(
     app.include_router(calendar_router)
     app.include_router(home_router)
     app.include_router(admin_router)
-    app.router.add_event_handler("shutdown", app.state.account_deletions.close)
-    app.router.add_event_handler("shutdown", app.state.material_deletions.close)
-    app.router.add_event_handler("shutdown", app.state.database.close)
+    if app.state.settings.mcp_enabled:
+        app.state.mcp_server = create_mcp_server(
+            app.state.mcp_tools,
+            telemetry=app.state.mcp_telemetry,
+        )
+        app.state.mcp_asgi = app.state.mcp_server.streamable_http_app(
+            streamable_http_path="/mcp",
+            json_response=True,
+            stateless_http=True,
+            max_request_body_size=128 * 1024,
+            transport_security=TransportSecuritySettings(
+                allowed_hosts=sorted(app.state.settings.allowed_mcp_hosts),
+                allowed_origins=[],
+            ),
+        )
+        app.state.mcp_gateway = EvaluationBearerGateway(
+            app.state.mcp_asgi,
+            secret=app.state.settings.mcp_evaluation_secret.get_secret_value(),
+            principal_id="evaluation",
+            read_limit=app.state.settings.mcp_read_rate_limit,
+            write_limit=app.state.settings.mcp_write_rate_limit,
+            window_seconds=60,
+            telemetry=app.state.mcp_telemetry,
+        )
+        # Preserve the SDK's /mcp scope without making the gateway a catch-all route.
+        app.router.routes.append(
+            ExactAsgiRoute(
+                "/mcp",
+                app.state.mcp_gateway,
+                name="mcp-evaluation",
+            )
+        )
     return app
 
 

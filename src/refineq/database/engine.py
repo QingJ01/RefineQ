@@ -125,9 +125,9 @@ class Database:
                 chunk_table = metadata.tables["material_chunks"]
                 grouped_rows: dict[tuple[str, str], list[object]] = {}
                 for row in legacy_rows:
-                    grouped_rows.setdefault(
-                        (str(row.owner_id), str(row.material_id)), []
-                    ).append(row)
+                    grouped_rows.setdefault((str(row.owner_id), str(row.material_id)), []).append(
+                        row
+                    )
                 for (owner_id, material_id), candidate_rows in grouped_rows.items():
                     source = max(
                         candidate_rows,
@@ -166,7 +166,9 @@ class Database:
                             material_table.c.material_id == material_id,
                             material_table.c.project_id == source_project,
                         )
-                        connection.execute(update(material_table).where(scope).values(project_id="library"))
+                        connection.execute(
+                            update(material_table).where(scope).values(project_id="library")
+                        )
                         connection.execute(
                             update(chunk_table)
                             .where(
@@ -181,6 +183,29 @@ class Database:
                     {"version": 3},
                 )
                 current_version = 3
+            if current_version == 3:
+                connection.execute(
+                    text("UPDATE schema_versions SET version = :version"),
+                    {"version": 4},
+                )
+                current_version = 4
+            if current_version == 4:
+                run_columns = {
+                    column["name"]
+                    for column in inspect(connection).get_columns("mcp_evaluation_runs")
+                }
+                if "generation" not in run_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE mcp_evaluation_runs ADD COLUMN generation "
+                            "VARCHAR(32) NOT NULL DEFAULT 'legacy'"
+                        )
+                    )
+                connection.execute(
+                    text("UPDATE schema_versions SET version = :version"),
+                    {"version": 5},
+                )
+                current_version = 5
             if current_version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Unsupported database schema {current_version}; expected {SCHEMA_VERSION}"

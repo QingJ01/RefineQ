@@ -9,6 +9,27 @@
         reverse_proxy api:8000
     }
 
+    handle /mcp {
+        request_body {
+            max_size 131072
+        }
+        reverse_proxy api:8000 {
+            flush_interval -1
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 25s
+            }
+        }
+    }
+
+    handle /api/mcp {
+        respond "Not Found" 404
+    }
+
+    handle /api/mcp/* {
+        respond "Not Found" 404
+    }
+
     handle_path /api/* {
         request_body {
             max_size {$REFINEQ_MATERIAL_MAX_REQUEST_BYTES:54525952}

@@ -619,6 +619,39 @@ class KnowledgeIndex:
         query: str,
         limit: int = 8,
     ) -> list[SearchResult]:
+        results, _mode = self.search_with_mode(
+            owner_id=owner_id,
+            project_id=project_id,
+            query=query,
+            limit=limit,
+        )
+        return results
+
+    def search_with_mode(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        query: str,
+        limit: int = 8,
+    ) -> tuple[list[SearchResult], str]:
+        """Return results with the retrieval path that actually produced them."""
+
+        return self._search_with_mode(
+            owner_id=owner_id,
+            project_id=project_id,
+            query=query,
+            limit=limit,
+        )
+
+    def _search_with_mode(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        query: str,
+        limit: int = 8,
+    ) -> tuple[list[SearchResult], str]:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
         query = query.strip()
@@ -733,7 +766,7 @@ class KnowledgeIndex:
             scored.append((score, row))
 
         scored.sort(key=lambda item: (-item[0], item[1].material_id, item[1].chunk_index))
-        return [
+        results = [
             SearchResult(
                 citation_id=f"{row.material_id}#{row.chunk_index}",
                 material_id=row.material_id,
@@ -744,6 +777,8 @@ class KnowledgeIndex:
             )
             for score, row in scored[:bounded_limit]
         ]
+        mode = "hybrid" if query_embedding is not None and semantic_scores else "lexical"
+        return results, mode
 
     def get_material(
         self,
@@ -1049,9 +1084,7 @@ class KnowledgeIndex:
             ).all()
         workspace_ids: dict[str, list[str]] = {}
         for link in links:
-            workspace_ids.setdefault(str(link.material_id), []).append(
-                str(link.workspace_id)
-            )
+            workspace_ids.setdefault(str(link.material_id), []).append(str(link.workspace_id))
         records = [
             self._material_record(row).model_copy(
                 update={"workspace_ids": sorted(workspace_ids.get(str(row.material_id), []))}

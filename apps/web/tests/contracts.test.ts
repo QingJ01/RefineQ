@@ -1940,7 +1940,7 @@ describe("accessible application shell", () => {
       "utf8",
     );
     const backendStart = configSource.indexOf('command: `"${python}" -m uvicorn');
-    const frontendStart = configSource.indexOf('command: "npm run dev');
+    const frontendStart = configSource.indexOf("command: `npm run dev");
 
     expect(backendStart).toBeGreaterThanOrEqual(0);
     expect(frontendStart).toBeGreaterThan(backendStart);

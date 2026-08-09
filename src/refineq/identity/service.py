@@ -36,6 +36,7 @@ from refineq.identity.models import AccountExportResponse, User
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _SIGNING_SECRET_KEY = "jwt_signing_secret"
 _SESSION_VERSION_PREFIX = "user_session_version:"
+_INTERACTIVE_ACCESS_DISABLED_PREFIX = "interactive_access_disabled:"
 
 
 class IdentityError(RuntimeError):
@@ -129,6 +130,60 @@ class IdentityService:
     def _session_version_key(user_id: str) -> str:
         return f"{_SESSION_VERSION_PREFIX}{user_id}"
 
+    @staticmethod
+    def _interactive_access_key(user_id: str) -> str:
+        return f"{_INTERACTIVE_ACCESS_DISABLED_PREFIX}{user_id}"
+
+    def _interactive_access_disabled(self, session, user_id: str) -> bool:
+        value = session.scalar(
+            select(system_settings.c.value).where(
+                system_settings.c.key == self._interactive_access_key(user_id)
+            )
+        )
+        return value == "1"
+
+    @staticmethod
+    def _interactive_access_disabled_ids(session) -> set[str]:
+        keys = session.scalars(
+            select(system_settings.c.key).where(
+                system_settings.c.key.like(f"{_INTERACTIVE_ACCESS_DISABLED_PREFIX}%"),
+                system_settings.c.value == "1",
+            )
+        ).all()
+        return {
+            str(key)[len(_INTERACTIVE_ACCESS_DISABLED_PREFIX) :]
+            for key in keys
+            if str(key).startswith(_INTERACTIVE_ACCESS_DISABLED_PREFIX)
+        }
+
+    def disable_interactive_access(self, user_id: str) -> None:
+        """Persistently prevent a service owner from web login and password reset."""
+
+        with self._lock, self.database.session() as session:
+            if session.scalar(select(users.c.id).where(users.c.id == user_id)) is None:
+                raise InvalidTokenError("Invalid access token")
+            key = self._interactive_access_key(user_id)
+            disabled = session.scalar(
+                select(system_settings.c.value).where(system_settings.c.key == key)
+            )
+            if disabled != "1":
+                dialect_insert = postgresql_insert if self.database.is_postgresql else sqlite_insert
+                statement = dialect_insert(system_settings).values(
+                    key=key,
+                    value="1",
+                    updated_at=utc_now(),
+                )
+                session.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[system_settings.c.key],
+                        set_={"value": "1", "updated_at": utc_now()},
+                    )
+                )
+                self._increment_session_version(session, user_id)
+            session.execute(
+                delete(password_reset_tokens).where(password_reset_tokens.c.user_id == user_id)
+            )
+
     def _session_version(self, session, user_id: str) -> int:
         value = session.scalar(
             select(system_settings.c.value).where(
@@ -219,9 +274,13 @@ class IdentityService:
 
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
+            disabled = (
+                self._interactive_access_disabled(session, row.id) if row is not None else False
+            )
         valid = (
             row is not None
             and row.deletion_id is None
+            and not disabled
             and bcrypt.checkpw(
                 password_bytes,
                 row.password_hash.encode("ascii"),
@@ -249,9 +308,13 @@ class IdentityService:
         with self.database.session() as session:
             row = session.execute(select(users).where(users.c.email == email)).one_or_none()
             session_version = self._session_version(session, row.id) if row is not None else 0
+            disabled = (
+                self._interactive_access_disabled(session, row.id) if row is not None else False
+            )
         if (
             row is None
             or row.deletion_id is not None
+            or disabled
             or not bcrypt.checkpw(
                 password_bytes,
                 row.password_hash.encode("ascii"),
@@ -558,7 +621,7 @@ class IdentityService:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         with self._lock, self.database.session() as session:
             user_id = session.scalar(select(users.c.id).where(users.c.email == email))
-            if user_id is None:
+            if user_id is None or self._interactive_access_disabled(session, str(user_id)):
                 return None
             token = secrets.token_urlsafe(32)
             session.execute(
@@ -590,7 +653,10 @@ class IdentityService:
                 statement = statement.with_for_update()
             row = session.execute(statement).one_or_none()
             invalid = (
-                row is None or row.used_at is not None or self._aware(row.expires_at) <= observed_at
+                row is None
+                or row.used_at is not None
+                or self._aware(row.expires_at) <= observed_at
+                or self._interactive_access_disabled(session, str(row.user_id))
             )
             if invalid:
                 raise InvalidResetTokenError("Invalid or expired password reset token")
@@ -707,7 +773,8 @@ class IdentityService:
                 )
             ).one_or_none()
             session_version = self._session_version(session, user.id)
-        if row is None or row.deletion_id is not None:
+            disabled = self._interactive_access_disabled(session, user.id)
+        if row is None or row.deletion_id is not None or disabled:
             raise InvalidTokenError("Invalid access token")
         return self._encode_token(
             user,
@@ -776,9 +843,15 @@ class IdentityService:
             current_session_version = (
                 self._session_version(session, str(subject)) if row is not None else 0
             )
+            disabled = (
+                self._interactive_access_disabled(session, str(subject))
+                if row is not None
+                else False
+            )
         if (
             row is None
             or row.deletion_id is not None
+            or disabled
             or not secrets.compare_digest(
                 credential,
                 sha256(row.password_hash.encode("utf-8")).hexdigest(),
@@ -792,4 +865,8 @@ class IdentityService:
         from sqlalchemy import func
 
         with self.database.session() as session:
-            return int(session.scalar(select(func.count()).select_from(users)) or 0)
+            disabled = self._interactive_access_disabled_ids(session)
+            statement = select(func.count()).select_from(users)
+            if disabled:
+                statement = statement.where(users.c.id.not_in(disabled))
+            return int(session.scalar(statement) or 0)

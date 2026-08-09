@@ -186,9 +186,9 @@ class HomeRoutingPolicy:
         normalized = _normalized(text)
         named = _named_workspaces(text, workspaces)
 
-        if _EXPLICIT_TEXT_TRANSFORM.search(
+        if _EXPLICIT_TEXT_TRANSFORM.search(normalized) or _EXPLICIT_QUOTED_EXPLANATION.search(
             normalized
-        ) or _EXPLICIT_QUOTED_EXPLANATION.search(normalized):
+        ):
             return PolicyDecision(
                 PolicyKind.DIRECT_ANSWER,
                 "这是对本次明确标记文本的一次性转换；正文只作为不可信数据处理。",

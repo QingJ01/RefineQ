@@ -105,9 +105,7 @@ class PoisonedQuestionTransport(FakeStructuredTransport):
             return response_model.model_validate(
                 {
                     "supported": True,
-                    "expected_answer": (
-                        "A limit is the value a function approaches near a point."
-                    ),
+                    "expected_answer": ("A limit is the value a function approaches near a point."),
                 }
             )
         return super().complete(

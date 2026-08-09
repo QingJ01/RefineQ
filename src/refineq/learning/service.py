@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -443,6 +444,17 @@ class LearningService:
         if not progress or not progress.get("seeded"):
             raise LearningNotSeededError("Learning project has not been seeded")
         return progress
+
+    @staticmethod
+    def _require_scope_fence(
+        progress: dict[str, Any],
+        expected_scope_fence: str | None,
+    ) -> None:
+        if (
+            expected_scope_fence is not None
+            and progress.get("_scope_fence") != expected_scope_fence
+        ):
+            raise LearningConflictError("Learning state belongs to a different operation scope")
 
     @staticmethod
     def _progress_response(data: dict[str, Any]) -> ProgressResponse:
@@ -960,8 +972,12 @@ class LearningService:
         review_session_id: str | None = None,
         plan_session_id: str | None = None,
         require_material_grounding: bool = False,
+        expected_scope_fence: str | None = None,
+        scope_guard: Callable[[], None] | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
+        if scope_guard is not None:
+            scope_guard()
         if require_material_grounding:
             self.quarantine_ungrounded_pending(owner_id, project_id)
 
@@ -979,6 +995,7 @@ class LearningService:
             current = self._learning.get(owner_id, project_id)
             snapshot_version = current.version
             progress = self._progress(current.data)
+            self._require_scope_fence(progress, expected_scope_fence)
             history = progress.setdefault("question_history", {})
             requests = progress.setdefault("question_requests", {})
             if request_id and request_id in requests:
@@ -1106,6 +1123,7 @@ class LearningService:
             def store_once(data: dict[str, Any]) -> dict[str, Any]:
                 nonlocal selected
                 inner_progress = self._progress(data)
+                self._require_scope_fence(inner_progress, expected_scope_fence)
                 inner_history = inner_progress.setdefault("question_history", {})
                 sequence = int(inner_progress.get("question_sequence", len(inner_history)))
                 question_id = stable_id("question", project_id, selected_topic_id, str(sequence))
@@ -1139,8 +1157,11 @@ class LearningService:
                 return data
 
             with self._learning.question_transaction(owner_id, project_id):
+                if scope_guard is not None:
+                    scope_guard()
                 latest = self._learning.get(owner_id, project_id)
                 latest_progress = self._progress(latest.data)
+                self._require_scope_fence(latest_progress, expected_scope_fence)
                 latest_history = latest_progress.setdefault("question_history", {})
                 if request_id:
                     latest_requests = latest_progress.setdefault("question_requests", {})
@@ -1315,9 +1336,15 @@ class LearningService:
         payload: AnswerRequest,
         *,
         require_material_grounding: bool = False,
+        expected_scope_fence: str | None = None,
+        scope_guard: Callable[[], None] | None = None,
     ) -> AnswerResponse:
         self._require_project(owner_id, project_id)
+        if scope_guard is not None:
+            scope_guard()
         current = self._learning.get(owner_id, project_id)
+        current_progress = self._progress(current.data)
+        self._require_scope_fence(current_progress, expected_scope_fence)
         if payload.attempt_id in current.data["attempts"]:
             stored_attempt = current.data["attempts"][payload.attempt_id]
             stored_grounding = stored_attempt.get("grounding") or (
@@ -1338,7 +1365,6 @@ class LearningService:
                     ref_id=payload.attempt_id,
                 )
             return response
-        current_progress = self._progress(current.data)
         current_question = current_progress.get("pending_question")
         if current_question is None or current_question["id"] != payload.question_id:
             raise LearningConflictError("Question is not pending")
@@ -1376,6 +1402,7 @@ class LearningService:
             nonlocal completed_plan_session_id, completed_review_session_id
             nonlocal next_review_at, replayed, result
             progress = self._progress(data)
+            self._require_scope_fence(progress, expected_scope_fence)
             if payload.attempt_id in data["attempts"]:
                 replayed = True
                 result = deepcopy(data["attempts"][payload.attempt_id])
@@ -1514,6 +1541,8 @@ class LearningService:
             return data
 
         with self._learning.plan_transaction(owner_id, project_id):
+            if scope_guard is not None:
+                scope_guard()
             self._learning.mutate(owner_id, project_id, grade_once)
         if result is None:
             raise LearningServiceError("Answer grading failed")
@@ -1714,6 +1743,8 @@ class LearningService:
         occurred_at: datetime | None = None,
         ref_id: str | None = None,
     ) -> JourneyEvent | None:
+        if self._journey_events is None:
+            return None
         try:
             return self.record_journey_event(
                 owner_id,

@@ -80,9 +80,7 @@ def test_unrelated_corrupt_analysis_does_not_block_legacy_migration(tmp_path: Pa
         {"material_id": "material-2", "invalid": True},
     )
 
-    migrated = MaterialAnalysisRepository(store).get(
-        "owner", "workspace-b", "material-1"
-    )
+    migrated = MaterialAnalysisRepository(store).get("owner", "workspace-b", "material-1")
 
     assert migrated == legacy
 

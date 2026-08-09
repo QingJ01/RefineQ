@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 EMBEDDING_DIMENSIONS = 1536
 
 naming_convention = {
@@ -189,6 +189,62 @@ Index(
     material_chunks.c.project_id,
 )
 
+mcp_evaluation_runs = Table(
+    "mcp_evaluation_runs",
+    metadata,
+    Column("run_id_hash", String(64), primary_key=True),
+    Column("client_run_key_hash", String(64), nullable=False),
+    Column("principal_id", String(128), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("active_slot", String(32), nullable=True, unique=True),
+    Column("seed_version", String(32), nullable=False),
+    Column("generation", String(32), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=utc_now),
+    Column("updated_at", DateTime(timezone=True), nullable=False, default=utc_now),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("last_error_code", String(64), nullable=True),
+    UniqueConstraint("principal_id", "client_run_key_hash"),
+    CheckConstraint(
+        "status IN ('seeding', 'active', 'completed', 'released', 'expired', 'failed')",
+        name="valid_mcp_run_status",
+    ),
+)
+Index(
+    "ix_mcp_evaluation_runs_principal_status",
+    mcp_evaluation_runs.c.principal_id,
+    mcp_evaluation_runs.c.status,
+    mcp_evaluation_runs.c.updated_at,
+)
+
+mcp_evaluation_idempotency = Table(
+    "mcp_evaluation_idempotency",
+    metadata,
+    Column(
+        "id",
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    ),
+    Column("principal_id", String(128), nullable=False),
+    Column("run_id_hash", String(64), nullable=False),
+    Column("tool_name", String(64), nullable=False),
+    Column("idempotency_key_hash", String(64), nullable=False),
+    Column("input_hash", String(64), nullable=False),
+    Column("result_json", json_document, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=utc_now),
+    Column("retain_until", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "principal_id",
+        "run_id_hash",
+        "tool_name",
+        "idempotency_key_hash",
+    ),
+)
+Index(
+    "ix_mcp_evaluation_idempotency_retention",
+    mcp_evaluation_idempotency.c.retain_until,
+)
+
 
 ALL_TABLES = (
     schema_versions,
@@ -201,4 +257,6 @@ ALL_TABLES = (
     materials,
     workspace_materials,
     material_chunks,
+    mcp_evaluation_runs,
+    mcp_evaluation_idempotency,
 )
