@@ -241,6 +241,7 @@ def create_app(
         signer=app.state.home_signer,
         events=app.state.home_events,
         receipts=app.state.home_receipts,
+        sessions=app.state.sessions,
     )
     app.state.agent = AgentService(
         projects=app.state.projects,

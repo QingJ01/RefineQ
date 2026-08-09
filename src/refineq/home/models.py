@@ -236,6 +236,16 @@ class WorkspaceProposalChanges(BaseModel):
     exam_at: datetime | None = None
     daily_minutes: int | None = Field(default=None, ge=5, le=480)
 
+    @field_validator("title", "goal", mode="after")
+    @classmethod
+    def strip_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must not be blank")
+        return stripped
+
     @field_validator("exam_at", mode="after")
     @classmethod
     def normalize_optional_datetime(cls, value: datetime | None) -> datetime | None:

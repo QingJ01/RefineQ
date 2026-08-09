@@ -2,6 +2,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 from time import sleep
 
 from fastapi.testclient import TestClient
@@ -10,8 +11,9 @@ from sqlalchemy import event
 from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
-from refineq.home.models import HomeConfirmRequest
+from refineq.home.models import HomeConfirmRequest, HomeUndoRequest
 from refineq.operations.admin import ensure_admin
+from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.models import WorkspaceRoutingDecision
 from refineq.workspaces.service import WorkspaceResolveRequest
 
@@ -251,6 +253,131 @@ def test_strong_creation_undo_rejects_a_workspace_changed_after_creation(tmp_pat
     assert len(workspaces) == 1
 
 
+def test_strong_creation_undo_preserves_a_started_coach_session(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-coach",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+            },
+        ).json()["workspace_target"]
+        app.state.sessions.create(
+            owner_id,
+            "coach-session",
+            {
+                "session_id": "coach-session",
+                "workspace_id": created["workspace_id"],
+                "messages": [
+                    {"role": "user", "content": "请帮我从极限开始复习"},
+                    {"role": "assistant", "content": "先做一题诊断。"},
+                ],
+                "turns": {},
+            },
+        )
+
+        undo = client.post(
+            "/home/actions/undo",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-coach",
+                "workspace_id": created["workspace_id"],
+                "undo_token": created["undo_token"],
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers).json()
+        sessions = app.state.sessions.snapshot_for_workspace(
+            owner_id,
+            created["workspace_id"],
+        )
+
+    assert undo.status_code == 409, undo.json()
+    assert len(workspaces) == 1
+    assert [session_id for session_id, _ in sessions] == ["coach-session"]
+
+
+def test_undo_and_coach_session_start_share_one_workspace_transaction(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-coach-race",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+            },
+        ).json()["workspace_target"]
+
+        state_read = Event()
+        allow_undo = Event()
+        session_attempted = Event()
+        session_lock_acquired = Event()
+        original_hash = app.state.home_dispatch._created_workspace_state_hash
+
+        def paused_hash(owner: str, workspace: str):
+            value = original_hash(owner, workspace)
+            state_read.set()
+            assert allow_undo.wait(timeout=2)
+            return value
+
+        app.state.home_dispatch._created_workspace_state_hash = paused_hash
+
+        def undo_workspace():
+            return app.state.home_dispatch.undo_created_workspace(
+                owner_id,
+                HomeUndoRequest(
+                    request_id="strong-undo-coach-race",
+                    workspace_id=created["workspace_id"],
+                    undo_token=created["undo_token"],
+                ),
+            )
+
+        def start_session_if_workspace_survives() -> bool:
+            session_attempted.set()
+            with app.state.learning.plan_transaction(owner_id, created["workspace_id"]):
+                session_lock_acquired.set()
+                try:
+                    app.state.workspaces.get(owner_id, created["workspace_id"])
+                except RecordNotFoundError:
+                    return False
+                app.state.sessions.create(
+                    owner_id,
+                    "racing-coach-session",
+                    {
+                        "session_id": "racing-coach-session",
+                        "workspace_id": created["workspace_id"],
+                        "messages": [],
+                        "turns": {},
+                    },
+                )
+                return True
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            undo_future = executor.submit(undo_workspace)
+            assert state_read.wait(timeout=2)
+            session_future = executor.submit(start_session_if_workspace_survives)
+            assert session_attempted.wait(timeout=2)
+            sleep(0.05)
+            assert session_lock_acquired.is_set() is False
+            allow_undo.set()
+            receipt = undo_future.result(timeout=5)
+            session_created = session_future.result(timeout=5)
+
+        remaining = client.get("/workspaces", headers=headers).json()
+
+    assert receipt.operation == "undo_create_workspace"
+    assert session_created is False
+    assert remaining == []
+
+
 def test_duplicate_named_spaces_return_real_choices_and_honor_the_selection(
     tmp_path: Path,
 ) -> None:
@@ -463,6 +590,33 @@ def test_revising_goal_recomputes_workspace_semantics_before_confirmation(tmp_pa
     assert confirmed.status_code == 200, confirmed.json()
     assert created["subject"] == "language"
     assert created["topics"] == revised["topics"]
+
+
+def test_revising_workspace_proposal_rejects_a_blank_goal_as_validation_error(
+    tmp_path: Path,
+) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        proposal = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={"request_id": "blank-revised-goal", "text": "我想系统学习高数"},
+        ).json()["workspace_proposal"]
+        revised = client.post(
+            "/home/actions/revise",
+            headers=headers,
+            json={
+                "request_id": "blank-revised-goal",
+                "confirmation_token": proposal["confirmation_token"],
+                "original_proposal": proposal,
+                "changes": {"goal": "   "},
+            },
+        )
+
+    assert revised.status_code == 422, revised.json()
+    assert revised.json()["error"]["code"] == "validation_error"
 
 
 def test_confirmation_token_is_owner_bound(tmp_path: Path) -> None:

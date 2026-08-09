@@ -364,7 +364,9 @@ describe("durable learner routing", () => {
     expect(openSource).not.toContain("saveWorkspaceSnapshot");
     expect(dispatchSource).toContain("api.dispatchHome(token, input, signal)");
     expect(dispatchSource).toContain("authRef.current?.access_token !== token");
-    expect(dispatchSource).toContain("await openWorkspace(target, token)");
+    expect(dispatchSource).toContain(
+      'await openWorkspace(target, token, "today", "push", input.request_id)',
+    );
     expect(dispatchSource).not.toContain("saveWorkspaceSnapshot");
   });
 

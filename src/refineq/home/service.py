@@ -51,6 +51,7 @@ from refineq.learning.service import (
     PlanSessionUpdate,
 )
 from refineq.storage.learning import LearningRepository
+from refineq.storage.sessions import SessionRepository
 from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.models import LearningWorkspace, WorkspaceRoutingDecision
 from refineq.workspaces.routing import route_workspace
@@ -148,6 +149,7 @@ class HomeDispatchService:
         signer: HomeTokenSigner,
         events: HomeEventRepository,
         receipts: HomeReceiptRepository,
+        sessions: SessionRepository,
         policy: HomeRoutingPolicy | None = None,
     ) -> None:
         self._workspace_service = workspace_service
@@ -158,6 +160,7 @@ class HomeDispatchService:
         self._signer = signer
         self._events = events
         self._receipts = receipts
+        self._sessions = sessions
         self._policy = policy or HomeRoutingPolicy()
 
     def _record_event_best_effort(
@@ -198,11 +201,16 @@ class HomeDispatchService:
             owner_id=owner_id,
             project_id=workspace_id,
         )
+        sessions = self._sessions.snapshot_for_workspace(owner_id, workspace_id)
         serialized = "|".join(
             [
                 workspace.model_dump_json(),
                 str(record.version),
                 *(item.model_dump_json() for item in sorted(materials, key=lambda value: value.id)),
+                *(
+                    f"session:{session_id}:{session.version}"
+                    for session_id, session in sorted(sessions, key=lambda item: item[0])
+                ),
             ]
         )
         return sha256(serialized.encode()).hexdigest()
@@ -247,7 +255,10 @@ class HomeDispatchService:
     ) -> HomeActionReceipt:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         idempotency_key = f"undo-{request_id_hash(payload.request_id)}"
-        with self._receipts.transaction(owner_id, idempotency_key):
+        with (
+            self._learning.plan_transaction(owner_id, payload.workspace_id),
+            self._receipts.transaction(owner_id, idempotency_key),
+        ):
             existing = self._receipts.get(owner_id, idempotency_key)
             if existing is not None:
                 if (
@@ -270,7 +281,10 @@ class HomeDispatchService:
                 raise HomeConfirmationError("Undo target does not match its signature")
             if claims.proposal_hash != proposal_hash(proposal):
                 raise HomeConfirmationError("Undo request does not match its signature")
-            current_state = self._created_workspace_state_hash(owner_id, payload.workspace_id)
+            current_state = self._created_workspace_state_hash(
+                owner_id,
+                payload.workspace_id,
+            )
             if current_state is not None and current_state != claims.state_hash:
                 raise HomeActionConflictError(
                     "Created workspace changed after routing and cannot be automatically undone"
@@ -940,10 +954,7 @@ class HomeDispatchService:
                 candidates,
                 reason="请先选择要修改计划的学习空间。",
                 now=now,
-                workspace_ids=(
-                    decision.workspace_ids
-                    or tuple(item.id for item in candidates[:3])
-                ),
+                workspace_ids=(decision.workspace_ids or tuple(item.id for item in candidates[:3])),
                 workspace_action=True,
             )
         record = self._learning.get(owner_id, target.id)
@@ -1394,7 +1405,10 @@ class HomeDispatchService:
         changes = payload.changes.model_dump(exclude_none=True, mode="json")
         revised_data = {**original.model_dump(mode="json"), **changes}
         if "goal" in changes:
-            decision = route_workspace(str(revised_data["goal"]), [])
+            try:
+                decision = route_workspace(str(revised_data["goal"]), [])
+            except ValueError as error:
+                raise HomeConfirmationError("Revised goal must not be blank") from error
             revised_data.update(
                 subject=decision.subject,
                 topics=decision.topics,

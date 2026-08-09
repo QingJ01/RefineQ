@@ -81,6 +81,15 @@ def test_duplicate_explicit_workspace_names_require_clarification() -> None:
     assert decision.workspace_ids == ("a", "b")
 
 
+def test_explicit_open_command_can_target_a_non_learning_named_workspace() -> None:
+    decision = HomeRoutingPolicy().decide(
+        "open Marketing Copy",
+        [workspace("marketing", "Marketing Copy")],
+    )
+    assert decision.kind == PolicyKind.EXPLICIT_WORKSPACE
+    assert decision.workspace_ids == ("marketing",)
+
+
 def test_duplicate_named_workspace_action_preserves_every_real_candidate() -> None:
     spaces = [workspace("a", "高数期末"), workspace("b", "高数期末", age=1)]
     decision = HomeRoutingPolicy().decide("把高数期末的复习移到周六", spaces)

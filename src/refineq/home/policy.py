@@ -194,12 +194,6 @@ class HomeRoutingPolicy:
                 "该请求需要实时或高风险判断，或涉及主页禁止的破坏性操作。",
             )
 
-        if _CLEAR_NON_LEARNING.search(normalized):
-            return PolicyDecision(
-                PolicyKind.OUT_OF_SCOPE,
-                "这不是 RefineQ 当前支持的学习任务。",
-            )
-
         if _OPEN_COMMAND.search(normalized) and named:
             if len(named) == 1:
                 return PolicyDecision(
@@ -211,6 +205,12 @@ class HomeRoutingPolicy:
                 PolicyKind.CLARIFY,
                 "存在多个同名或同时被点名的学习空间。",
                 tuple(item.id for item in named[:3]),
+            )
+
+        if _CLEAR_NON_LEARNING.search(normalized):
+            return PolicyDecision(
+                PolicyKind.OUT_OF_SCOPE,
+                "这不是 RefineQ 当前支持的学习任务。",
             )
 
         if _ACTION.search(normalized):

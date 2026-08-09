@@ -29,6 +29,23 @@ import type {
   Locale,
 } from "@/lib/types";
 
+type ProposalDraft = Pick<
+  HomeWorkspaceProposal,
+  "title" | "goal" | "exam_at" | "daily_minutes"
+>;
+
+function validProposalDraft(draft: ProposalDraft | null): boolean {
+  return Boolean(
+    draft
+    && draft.title.trim()
+    && draft.goal.trim()
+    && Number.isFinite(Date.parse(draft.exam_at))
+    && Number.isFinite(draft.daily_minutes)
+    && draft.daily_minutes >= 5
+    && draft.daily_minutes <= 480,
+  );
+}
+
 export function LearningHome({
   locale = "zh",
   t,
@@ -86,12 +103,7 @@ export function LearningHome({
   const [confirming, setConfirming] = useState(false);
   const [dispatchError, setDispatchError] = useState("");
   const [receiptNotice, setReceiptNotice] = useState("");
-  const [proposalDraft, setProposalDraft] = useState<{
-    title: string;
-    goal: string;
-    exam_at: string;
-    daily_minutes: number;
-  } | null>(null);
+  const [proposalDraft, setProposalDraft] = useState<ProposalDraft | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -113,6 +125,7 @@ export function LearningHome({
   async function dispatchText(
     text: string,
     clarification?: { continuation_token: string; option_id: string } | null,
+    proposalRecovery?: ProposalDraft | null,
   ) {
     const normalized = text.trim();
     if (!normalized) return;
@@ -125,6 +138,7 @@ export function LearningHome({
     requestRef.current?.controller.abort();
     const current = { id: requestId(), controller: new AbortController() };
     requestRef.current = current;
+    setConfirming(false);
     setLatestResult(null);
     setReceiptNotice("");
     setDispatchError("");
@@ -142,14 +156,31 @@ export function LearningHome({
         || (result && result.request_id !== current.id)
       ) return;
       if (result) {
-        latestRequestTextRef.current = normalized;
-        setLatestResult(result);
-        setProposalDraft(result.kind === "propose_workspace" ? {
+        let resolvedResult = result;
+        let resolvedDraft = result.kind === "propose_workspace" ? {
           title: result.workspace_proposal.title,
           goal: result.workspace_proposal.goal,
           exam_at: result.workspace_proposal.exam_at,
           daily_minutes: result.workspace_proposal.daily_minutes,
-        } : null);
+        } : null;
+        if (proposalRecovery && result.kind === "propose_workspace") {
+          const revised = await onRevise(result, proposalRecovery);
+          if (
+            requestRef.current?.id !== current.id
+            || current.controller.signal.aborted
+          ) return;
+          resolvedResult = { ...result, workspace_proposal: revised };
+          resolvedDraft = {
+            title: revised.title,
+            goal: revised.goal,
+            exam_at: revised.exam_at,
+            daily_minutes: revised.daily_minutes,
+          };
+          setReceiptNotice(t("homeProposalRecovered"));
+        }
+        latestRequestTextRef.current = normalized;
+        setLatestResult(resolvedResult);
+        setProposalDraft(resolvedDraft);
         requestAnimationFrame(() => resultHeadingRef.current?.focus());
       }
     } catch (caught) {
@@ -176,6 +207,10 @@ export function LearningHome({
   async function confirmResult() {
     if (!latestResult) return;
     const currentResult = latestResult;
+    if (currentResult.kind === "propose_workspace" && !validProposalDraft(proposalDraft)) {
+      setDispatchError(t("homeProposalRequired"));
+      return;
+    }
     setConfirming(true);
     setDispatchError("");
     try {
@@ -204,15 +239,21 @@ export function LearningHome({
         }
       }
       const receipt = await onConfirm(currentResult);
+      if (requestRef.current?.id !== currentResult.request_id) return;
       if (receipt.status === "succeeded") {
         setReceiptNotice(receipt.replayed ? t("homeAlreadyConfirmed") : t("homeConfirmed"))
       }
     } catch (caught) {
+      if (requestRef.current?.id !== currentResult.request_id) return;
       if (
         caught instanceof ApiError
         && (caught.code === "invalid_home_confirmation" || caught.code === "home_action_conflict")
       ) {
-        await dispatchText(latestRequestTextRef.current || intent);
+        await dispatchText(
+          latestRequestTextRef.current || intent,
+          null,
+          currentResult.kind === "propose_workspace" ? proposalDraft : null,
+        );
         return;
       }
       setDispatchError(caught instanceof Error ? caught.message : "Confirmation failed");
@@ -358,14 +399,15 @@ export function LearningHome({
 
               {latestResult.kind === "propose_workspace" && (
                 <div className="home-proposal-preview">
-                  <label><span>{t("homeSpace")}</span><input maxLength={200} value={proposalDraft?.title ?? ""} onChange={(event) => setProposalDraft((current) => current ? { ...current, title: event.target.value } : current)} /></label>
-                  <label><span>{t("learningGoal")}</span><textarea maxLength={500} value={proposalDraft?.goal ?? ""} onChange={(event) => setProposalDraft((current) => current ? { ...current, goal: event.target.value } : current)} /></label>
-                  <label><span>{t("homeDeadline")}</span><input type="date" value={(proposalDraft?.exam_at ?? "").slice(0, 10)} onChange={(event) => setProposalDraft((current) => current ? { ...current, exam_at: new Date(`${event.target.value}T23:59:00Z`).toISOString() } : current)} /></label>
+                  <label><span>{t("homeSpace")}</span><input required aria-invalid={!proposalDraft?.title.trim()} maxLength={200} value={proposalDraft?.title ?? ""} onChange={(event) => setProposalDraft((current) => current ? { ...current, title: event.target.value } : current)} /></label>
+                  <label><span>{t("learningGoal")}</span><textarea required aria-invalid={!proposalDraft?.goal.trim()} maxLength={500} value={proposalDraft?.goal ?? ""} onChange={(event) => setProposalDraft((current) => current ? { ...current, goal: event.target.value } : current)} /></label>
+                  <label><span>{t("homeDeadline")}</span><input required aria-invalid={!Number.isFinite(Date.parse(proposalDraft?.exam_at ?? ""))} type="date" value={(proposalDraft?.exam_at ?? "").slice(0, 10)} onChange={(event) => setProposalDraft((current) => current ? { ...current, exam_at: event.target.value ? new Date(`${event.target.value}T23:59:00Z`).toISOString() : "" } : current)} /></label>
                   <label><span>{t("homeDaily")}</span><input type="number" min={5} max={480} value={proposalDraft?.daily_minutes ?? 45} onChange={(event) => setProposalDraft((current) => current ? { ...current, daily_minutes: Number(event.target.value) } : current)} /></label>
                   <div className="home-proposal-semantics">
                     <span>{t("homeSubject")}: {latestResult.workspace_proposal.subject}</span>
                     <span>{t("homeTopics")}: {latestResult.workspace_proposal.topics.join(" · ")}</span>
                   </div>
+                  {!validProposalDraft(proposalDraft) && <small role="alert">{t("homeProposalRequired")}</small>}
                   <small>{latestResult.workspace_proposal.material_hint}</small>
                 </div>
               )}
@@ -429,7 +471,7 @@ export function LearningHome({
                 )}
                 {(latestResult.kind === "workspace_action" || latestResult.kind === "propose_workspace") && (
                   <>
-                    <button type="button" className="primary-action" disabled={confirming} onClick={() => void confirmResult()}>
+                    <button type="button" className="primary-action" disabled={confirming || (latestResult.kind === "propose_workspace" && !validProposalDraft(proposalDraft))} onClick={() => void confirmResult()}>
                       <CalendarClock size={16} />{confirming ? t("homeConfirming") : t("homeConfirm")}
                     </button>
                     <button

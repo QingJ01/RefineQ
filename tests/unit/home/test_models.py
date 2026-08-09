@@ -3,7 +3,12 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from refineq.home.models import DirectAnswer, HomeDispatchRequest, HomeDispatchResult
+from refineq.home.models import (
+    DirectAnswer,
+    HomeDispatchRequest,
+    HomeDispatchResult,
+    WorkspaceProposalChanges,
+)
 
 
 def test_dispatch_request_strips_text_and_accepts_twelve_thousand_characters() -> None:
@@ -31,3 +36,9 @@ def test_result_requires_payload_matching_kind() -> None:
                 convertible_goal="goal",
             ),
         )
+
+
+@pytest.mark.parametrize("field", ["title", "goal"])
+def test_workspace_proposal_changes_reject_blank_required_text(field: str) -> None:
+    with pytest.raises(ValidationError):
+        WorkspaceProposalChanges.model_validate({field: "   "})
