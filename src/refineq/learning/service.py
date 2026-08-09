@@ -486,6 +486,8 @@ class LearningService:
         owner_id: str,
         project_id: str,
         payload: SeedRequest,
+        *,
+        answer_key_subjects: dict[str, str] | None = None,
     ) -> ProgressResponse:
         self._require_project(owner_id, project_id)
         topic_ids = [topic.id for topic in payload.topics]
@@ -493,6 +495,18 @@ class LearningService:
             raise LearningConflictError("Topic IDs must be unique")
         if payload.exam_at.tzinfo is None or payload.exam_at.utcoffset() is None:
             raise LearningConflictError("exam_at must be timezone-aware")
+        resolved_subjects = (
+            {topic.id: topic.name for topic in payload.topics}
+            if answer_key_subjects is None
+            else answer_key_subjects
+        )
+        if not set(resolved_subjects).issubset(topic_ids):
+            raise LearningConflictError("Answer-key subjects must belong to seeded topics")
+        normalized_subjects = {
+            topic_id: subject.strip() for topic_id, subject in resolved_subjects.items()
+        }
+        if any(not subject or len(subject) > 200 for subject in normalized_subjects.values()):
+            raise LearningConflictError("Answer-key subjects must contain 1 to 200 characters")
 
         def initialize(data: dict[str, Any]) -> dict[str, Any]:
             if data.get("attempts"):
@@ -502,7 +516,17 @@ class LearningService:
                 "goal": payload.goal.strip(),
                 "exam_at": payload.exam_at.astimezone(UTC).isoformat(),
                 "daily_minutes": payload.daily_minutes,
-                "topics": {topic.id: topic.model_dump(mode="json") for topic in payload.topics},
+                "topics": {
+                    topic.id: {
+                        **topic.model_dump(mode="json"),
+                        **(
+                            {"answer_key_subject": normalized_subjects[topic.id]}
+                            if topic.id in normalized_subjects
+                            else {}
+                        ),
+                    }
+                    for topic in payload.topics
+                },
                 "topic_order": [topic.id for topic in payload.topics],
                 "bkt_states": {
                     topic.id: DEFAULT_BKT.model_dump(mode="json") for topic in payload.topics
@@ -588,6 +612,7 @@ class LearningService:
             if existing is not None:
                 if str(existing.get("name", "")).casefold() != topic.name.casefold():
                     raise LearningConflictError("Topic ID already belongs to another topic")
+                existing.setdefault("answer_key_subject", topic.name.strip())
                 return data
             if any(
                 str(item.get("name", "")).casefold() == topic.name.casefold()
@@ -597,7 +622,10 @@ class LearningService:
             if len(progress["topics"]) >= 200:
                 raise LearningConflictError("Learning topic limit reached")
 
-            progress["topics"][topic.id] = topic.model_dump(mode="json")
+            progress["topics"][topic.id] = {
+                **topic.model_dump(mode="json"),
+                "answer_key_subject": topic.name.strip(),
+            }
             progress.setdefault("topic_order", list(progress["topics"]))
             if topic.id not in progress["topic_order"]:
                 progress["topic_order"].append(topic.id)
@@ -735,14 +763,16 @@ class LearningService:
             if not plan:
                 raise LearningNotSeededError("Learning plan has not been created")
             topic_id = stable_id("topic", project_id, payload.topic_name.strip())
-            progress["topics"].setdefault(
+            topic = progress["topics"].setdefault(
                 topic_id,
                 {
                     "id": topic_id,
                     "name": payload.topic_name.strip(),
                     "knowledge_type": KnowledgeType.CONCEPT.value,
+                    "answer_key_subject": payload.topic_name.strip(),
                 },
             )
+            topic.setdefault("answer_key_subject", payload.topic_name.strip())
             progress["bkt_states"].setdefault(topic_id, DEFAULT_BKT.model_dump(mode="json"))
             progress["difficulty_states"].setdefault(
                 topic_id, DifficultyState().model_dump(mode="json")
@@ -1084,6 +1114,7 @@ class LearningService:
                     workspace_id=project_id,
                     topic_id=selected_topic_id,
                     topic_name=topic["name"],
+                    trusted_topic_subject=topic.get("answer_key_subject"),
                     mastery=mastery,
                     difficulty_level=selected_difficulty,
                     learning_mode=learning_mode,
@@ -1375,6 +1406,17 @@ class LearningService:
             )
         if "grading" in current_question:
             generated = GeneratedQuestion.model_validate(current_question["grading"])
+            current_subject = str(
+                current_progress["topics"][generated.topic_id].get("answer_key_subject") or ""
+            ).strip()
+            if not current_subject or current_subject != (generated.answer_key_subject or ""):
+                generated = generated.model_copy(
+                    update={
+                        "expected_answer": "",
+                        "answer_key_trusted": False,
+                        "answer_key_subject": None,
+                    }
+                )
             grade = (
                 self._intelligence.grade_answer(
                     owner_id=owner_id,
@@ -1424,7 +1466,17 @@ class LearningService:
                 and bool(attempt.get("mastery_updated", True))
                 for attempt in data["attempts"].values()
             )
-            mastery_updated = grade.mastery_evidence and not already_credited
+            grading = (question.get("grading") or {}) if isinstance(question, dict) else {}
+            grading_subject = str(grading.get("answer_key_subject") or "").strip()
+            current_subject = str(
+                progress["topics"][topic_id].get("answer_key_subject") or ""
+            ).strip()
+            mastery_updated = (
+                grade.mastery_evidence
+                and bool(grading_subject)
+                and grading_subject == current_subject
+                and not already_credited
+            )
             if mastery_updated:
                 bkt_state = update_bkt(current_bkt, is_correct=is_correct).model_copy(
                     update={

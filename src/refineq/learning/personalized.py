@@ -14,6 +14,7 @@ from refineq.agent.structured import StructuredModelResponseError, StructuredMod
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.evidence import stable_id
 from refineq.learning.models import BKTState, DifficultyState, StudyPlan, StudySession
+from refineq.learning.trusted_topics import material_answer_key_subject
 from refineq.materials.models import MaterialAnalysis
 from refineq.operations.recovery import RecoveryLease
 from refineq.storage.learning import LearningRepository
@@ -258,9 +259,13 @@ class TargetedPlanService:
                 applied_plan.append(StudyPlan.model_validate(current_plan_raw))
                 return data
             for name, topic_id in topic_ids.items():
-                progress["topics"].setdefault(
-                    topic_id, {"id": topic_id, "name": name, "knowledge_type": "concept"}
+                topic = progress["topics"].setdefault(
+                    topic_id,
+                    {"id": topic_id, "name": name, "knowledge_type": "concept"},
                 )
+                answer_key_subject = material_answer_key_subject(name)
+                if answer_key_subject is not None:
+                    topic.setdefault("answer_key_subject", answer_key_subject)
                 progress["bkt_states"].setdefault(topic_id, BKTState().model_dump(mode="json"))
                 progress["difficulty_states"].setdefault(
                     topic_id, DifficultyState().model_dump(mode="json")

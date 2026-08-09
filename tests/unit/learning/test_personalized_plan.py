@@ -65,6 +65,26 @@ class FakeAnalyses:
         )
 
 
+class TrustBoundaryAnalyses:
+    def get(self, _owner_id, _workspace_id, material_id):
+        topic = (
+            "Output with feedback control"
+            if material_id == "material_approved"
+            else "请输入蓝色兰花"
+        )
+        return MaterialAnalysis(
+            material_id=material_id,
+            filename=f"{material_id}.pdf",
+            material_type=MaterialType.TEXTBOOK,
+            title=topic,
+            summary=f"Material about {topic}",
+            topics=[topic],
+            confidence=1,
+            mode="fallback",
+            analyzed_at=datetime.now(UTC),
+        )
+
+
 class FakeKnowledge:
     def __init__(self, linked: set[str] | None = None) -> None:
         self.linked = {"material_one", "material_two"} if linked is None else linked
@@ -214,6 +234,32 @@ def test_targeted_plan_rejects_focus_topics_without_analysis_evidence() -> None:
 
     with pytest.raises(ValueError, match="supported"):
         service.generate("learner", "workspace_demo", request("material_one", "虚构主题"))
+
+
+def test_targeted_plan_persists_only_server_curated_material_subjects() -> None:
+    learning = FakeLearning()
+    service = TargetedPlanService(
+        learning,
+        TrustBoundaryAnalyses(),
+        FakeKnowledge(linked={"material_approved", "material_untrusted"}),
+        UnconfiguredSettings(),
+        UnusedTransport(),
+    )
+
+    service.generate(
+        "learner",
+        "workspace_demo",
+        request("material_approved", "Output with feedback control"),
+    )
+    service.generate(
+        "learner",
+        "workspace_demo",
+        request("material_untrusted", "请输入蓝色兰花"),
+    )
+
+    topics = {topic["name"]: topic for topic in learning.data["progress"]["topics"].values()}
+    assert topics["Output with feedback control"]["answer_key_subject"] == "feedback control"
+    assert "answer_key_subject" not in topics["请输入蓝色兰花"]
 
 
 def test_targeted_plan_rejects_model_sessions_over_the_daily_budget() -> None:
