@@ -108,8 +108,7 @@ def _require_project(request: Request, owner_id: str, project_id: str) -> None:
             request.app.state.workspaces.get(owner_id, project_id)
         except RecordNotFoundError:
             workspace_route = (
-                request.url.path.startswith("/workspaces/")
-                or "/attach/" in request.url.path
+                request.url.path.startswith("/workspaces/") or "/attach/" in request.url.path
             )
             code = "workspace_not_found" if workspace_route else "project_not_found"
             message = "Learning space not found" if workspace_route else "Project not found"

@@ -240,9 +240,7 @@ def test_targeted_plan_does_not_accept_a_sparse_model_fragment() -> None:
         CountingTransport(),
     )
 
-    plan = service.generate(
-        "learner", "workspace_demo", request("material_one", "极限")
-    )
+    plan = service.generate("learner", "workspace_demo", request("material_one", "极限"))
 
     assert len(plan.sessions) > 1
 
@@ -256,9 +254,7 @@ def test_targeted_plan_preserves_completed_and_pending_plan_sessions() -> None:
         UnconfiguredSettings(),
         UnusedTransport(),
     )
-    existing = service.generate(
-        "learner", "workspace_demo", request("material_one", "极限")
-    )
+    existing = service.generate("learner", "workspace_demo", request("material_one", "极限"))
     completed = existing.sessions[0].model_copy(update={"status": "completed"})
     pending = existing.sessions[1]
     learning.data["progress"]["plan"] = existing.model_copy(
@@ -268,9 +264,7 @@ def test_targeted_plan_preserves_completed_and_pending_plan_sessions() -> None:
         "plan_session_id": pending.id,
     }
 
-    replaced = service.generate(
-        "learner", "workspace_demo", request("material_two", "导数")
-    )
+    replaced = service.generate("learner", "workspace_demo", request("material_two", "导数"))
 
     retained = {session.id: session for session in replaced.sessions}
     assert retained[completed.id].status == "completed"
@@ -287,17 +281,13 @@ def test_targeted_plan_detaches_pending_question_when_new_constraints_are_incomp
         UnconfiguredSettings(),
         UnusedTransport(),
     )
-    existing = service.generate(
-        "learner", "workspace_demo", request("material_one", "极限")
-    )
+    existing = service.generate("learner", "workspace_demo", request("material_one", "极限"))
     pending = existing.sessions[0]
     learning.data["progress"]["pending_question"] = {
         "plan_session_id": pending.id,
         "review_session_id": None,
     }
-    constrained = request("material_two", "导数").model_copy(
-        update={"daily_minutes": 10}
-    )
+    constrained = request("material_two", "导数").model_copy(update={"daily_minutes": 10})
 
     replaced = service.generate("learner", "workspace_demo", constrained)
 
@@ -317,12 +307,8 @@ def test_targeted_plan_replays_the_current_request_without_regenerating() -> Non
         transport,
     )
 
-    first = service.generate(
-        "learner", "workspace_demo", request("material_one", "极限")
-    )
-    replay = service.generate(
-        "learner", "workspace_demo", request("material_one", "极限")
-    )
+    first = service.generate("learner", "workspace_demo", request("material_one", "极限"))
+    replay = service.generate("learner", "workspace_demo", request("material_one", "极限"))
 
     assert replay == first
     assert transport.calls == 1

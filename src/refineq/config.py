@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     auth_rate_limit_requests: int = Field(default=30, ge=1, le=100_000)
     mutation_rate_limit_requests: int = Field(default=240, ge=1, le=1_000_000)
     rate_limit_window_seconds: float = Field(default=60.0, gt=0.0, le=3_600.0)
+    mcp_enabled: bool = False
+    mcp_evaluation_secret: SecretStr | None = None
+    mcp_allowed_hosts: str = ""
+    mcp_run_ttl_seconds: int = Field(default=300, ge=60, le=3_600)
+    mcp_idempotency_ttl_seconds: int = Field(default=86_400, ge=300, le=604_800)
+    mcp_read_rate_limit: int = Field(default=120, ge=1, le=100_000)
+    mcp_write_rate_limit: int = Field(default=30, ge=1, le=100_000)
 
     @field_validator("data_root", mode="after")
     @classmethod
@@ -144,6 +151,35 @@ class Settings(BaseSettings):
             raise ValueError("SMTP STARTTLS and implicit TLS cannot both be enabled")
         if self.resolved_backup_root.is_relative_to(self.data_root):
             raise ValueError("backup root must be outside the data root")
+        if self.mcp_enabled:
+            secret = (
+                self.mcp_evaluation_secret.get_secret_value().strip()
+                if self.mcp_evaluation_secret is not None
+                else ""
+            )
+            normalized_secret = secret.casefold()
+            if (
+                len(secret) < 32
+                or len(set(secret)) < 8
+                or any(
+                    marker in normalized_secret
+                    for marker in (
+                        "change-me",
+                        "replace-me",
+                        "example",
+                        "your-secret",
+                        "secret-here",
+                    )
+                )
+            ):
+                raise ValueError("enabled MCP requires a strong evaluation secret")
+            if not self.allowed_mcp_hosts:
+                raise ValueError("enabled MCP requires at least one allowed host")
+            if any(
+                not host or "://" in host or any(character in host for character in "/*?# ")
+                for host in self.allowed_mcp_hosts
+            ):
+                raise ValueError("MCP allowed hosts must be exact Host header values")
         self.public_site_url = public_site_url
         return self
 
@@ -185,5 +221,15 @@ class Settings(BaseSettings):
         return {
             host.strip().lower().rstrip(".")
             for host in self.object_storage_endpoint_allowed_hosts.split(",")
+            if host.strip()
+        }
+
+    @property
+    def allowed_mcp_hosts(self) -> set[str]:
+        """Return normalized hosts accepted by the MCP transport."""
+
+        return {
+            host.strip().lower().rstrip(".")
+            for host in self.mcp_allowed_hosts.split(",")
             if host.strip()
         }

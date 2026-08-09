@@ -76,9 +76,7 @@ def _heading_candidates(sources: list[SearchResult]) -> list[tuple[str, str]]:
 
 def _claim_has_lexical_evidence(claim: str, evidence: str) -> bool:
     normalized_claim = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", claim.casefold()).strip()
-    normalized_evidence = re.sub(
-        r"[^0-9a-z\u4e00-\u9fff]+", " ", evidence.casefold()
-    ).strip()
+    normalized_evidence = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", evidence.casefold()).strip()
     if len(normalized_claim) >= 2 and normalized_claim in normalized_evidence:
         return True
     tokens = re.findall(r"[a-z0-9]{3,}|[\u4e00-\u9fff]{2,}", normalized_claim)
@@ -238,11 +236,7 @@ class MaterialAnalysisService:
                 "Material AI analysis failed; using local fallback (%s)",
                 type(error).__name__,
             )
-            return (
-                self._analyses.save(owner_id, workspace_id, fallback)
-                if persist
-                else fallback
-            )
+            return self._analyses.save(owner_id, workspace_id, fallback) if persist else fallback
 
         sources_by_citation = {source.citation_id: source for source in sources}
         sections: list[MaterialSection] = []
@@ -272,11 +266,7 @@ class MaterialAnalysisService:
                 )
             )
         if not sections:
-            return (
-                self._analyses.save(owner_id, workspace_id, fallback)
-                if persist
-                else fallback
-            )
+            return self._analyses.save(owner_id, workspace_id, fallback) if persist else fallback
         topics = list(
             dict.fromkeys(
                 topic.strip()
@@ -296,11 +286,7 @@ class MaterialAnalysisService:
             mode="ai",
             analyzed_at=datetime.now(UTC),
         )
-        return (
-            self._analyses.save(owner_id, workspace_id, analysis)
-            if persist
-            else analysis
-        )
+        return self._analyses.save(owner_id, workspace_id, analysis) if persist else analysis
 
     def save(
         self,

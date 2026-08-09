@@ -119,8 +119,7 @@ class TargetedPlanService:
         unsupported = [topic for topic in payload.focus_topics if topic not in supported_topics]
         if unsupported:
             raise ValueError(
-                "focus_topics must be supported by the material analysis: "
-                + ", ".join(unsupported)
+                "focus_topics must be supported by the material analysis: " + ", ".join(unsupported)
             )
         learning_record = self.learning.get_or_create(owner_id, workspace_id)
         request_key = stable_id(
@@ -188,8 +187,7 @@ class TargetedPlanService:
                 used = daily_minutes.get(local_at.date(), 0)
                 overlaps = any(
                     item.planned_at < existing.planned_at + timedelta(minutes=existing.minutes)
-                    and existing.planned_at
-                    < item.planned_at + timedelta(minutes=item.minutes)
+                    and existing.planned_at < item.planned_at + timedelta(minutes=item.minutes)
                     for existing in sessions
                 )
                 if not (
@@ -310,8 +308,7 @@ class TargetedPlanService:
                 for session in plan.sessions
                 if session.id not in protected_ids
                 and not any(
-                    session.planned_at
-                    < protected.planned_at + timedelta(minutes=protected.minutes)
+                    session.planned_at < protected.planned_at + timedelta(minutes=protected.minutes)
                     and protected.planned_at
                     < session.planned_at + timedelta(minutes=session.minutes)
                     for protected in protected_sessions
@@ -322,10 +319,7 @@ class TargetedPlanService:
                     "id": stable_id(
                         "targeted-plan-state",
                         plan.id,
-                        *(
-                            f"{session.id}|{session.status}"
-                            for session in protected_sessions
-                        ),
+                        *(f"{session.id}|{session.status}" for session in protected_sessions),
                     ),
                     "sessions": merged_sessions,
                 }

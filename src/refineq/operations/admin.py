@@ -10,7 +10,14 @@ from sqlalchemy import case, func, insert, select
 
 from refineq.config import Settings
 from refineq.database.engine import Database
-from refineq.database.schema import audit_logs, material_chunks, materials, records, users
+from refineq.database.schema import (
+    audit_logs,
+    material_chunks,
+    materials,
+    records,
+    system_settings,
+    users,
+)
 from refineq.identity.models import User
 from refineq.identity.service import IdentityService
 from refineq.learning.events import learning_journey_metrics
@@ -60,6 +67,16 @@ class AdminOperations:
             "pages": ceil(total / page_size) if total else 0,
         }
 
+    @staticmethod
+    def _interactive_disabled_ids(session) -> set[str]:
+        keys = session.scalars(
+            select(system_settings.c.key).where(
+                system_settings.c.key.like("interactive_access_disabled:%"),
+                system_settings.c.value == "1",
+            )
+        ).all()
+        return {str(key).removeprefix("interactive_access_disabled:") for key in keys}
+
     def list_users(self, *, page: int, page_size: int) -> dict[str, object]:
         material_usage = (
             select(
@@ -80,7 +97,11 @@ class AdminOperations:
             .subquery()
         )
         with self.database.session() as session:
-            total = int(session.scalar(select(func.count()).select_from(users)) or 0)
+            disabled_ids = self._interactive_disabled_ids(session)
+            user_filter = users.c.id.not_in(disabled_ids) if disabled_ids else True
+            total = int(
+                session.scalar(select(func.count()).select_from(users).where(user_filter)) or 0
+            )
             rows = session.execute(
                 select(
                     users.c.id,
@@ -94,6 +115,7 @@ class AdminOperations:
                 )
                 .outerjoin(material_usage, material_usage.c.owner_id == users.c.id)
                 .outerjoin(workspace_usage, workspace_usage.c.owner_id == users.c.id)
+                .where(user_filter)
                 .order_by(users.c.created_at.desc(), users.c.id)
                 .offset((page - 1) * page_size)
                 .limit(page_size)
@@ -122,6 +144,9 @@ class AdminOperations:
 
     def jobs(self) -> dict[str, object]:
         with self.database.session() as session:
+            disabled_ids = self._interactive_disabled_ids(session)
+            material_filter = materials.c.owner_id.not_in(disabled_ids) if disabled_ids else True
+            chunk_filter = material_chunks.c.owner_id.not_in(disabled_ids) if disabled_ids else True
             material_row = session.execute(
                 select(
                     func.count().label("total"),
@@ -130,7 +155,7 @@ class AdminOperations:
                     ),
                     func.sum(case((materials.c.status == "failed", 1), else_=0)).label("failed"),
                     func.max(materials.c.indexed_at).label("last_activity_at"),
-                )
+                ).where(material_filter)
             ).one()
             embedding_row = session.execute(
                 select(
@@ -138,7 +163,7 @@ class AdminOperations:
                     func.sum(case((material_chunks.c.embedding.is_not(None), 1), else_=0)).label(
                         "completed"
                     ),
-                )
+                ).where(chunk_filter)
             ).one()
         material_total = int(material_row.total or 0)
         material_completed = int(material_row.completed or 0)
@@ -180,9 +205,12 @@ class AdminOperations:
         ends_at: datetime,
     ) -> dict[str, object]:
         with self.database.session() as session:
+            disabled_ids = self._interactive_disabled_ids(session)
+            owner_filter = records.c.owner_id.not_in(disabled_ids) if disabled_ids else True
             rows = session.execute(
                 select(records.c.owner_id, records.c.record_id, records.c.data).where(
-                    records.c.collection == "journey_events"
+                    records.c.collection == "journey_events",
+                    owner_filter,
                 )
             ).all()
         event_records = [

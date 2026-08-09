@@ -132,6 +132,14 @@ npm run test:e2e
 运行 Playwright 时可通过 `REFINEQ_PYTHON` 指定后端 Python；测试数据保存在
 `apps/web/.playwright-data`，不得提交到仓库。
 
+## MCP evaluation endpoint
+
+RefineQ can expose an optional, resettable MCP simulation at `/mcp` for external product
+evaluation. It is disabled by default, uses a dedicated bearer secret, exposes exactly five
+tools, and never touches real learner mastery. See
+[`docs/operations/mcp.md`](docs/operations/mcp.md) for setup, tool order,
+security boundaries, and the independent HTTPS smoke test.
+
 ## License
 
 本项目使用 [Apache License 2.0](LICENSE)。依赖组件许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -77,9 +77,7 @@ class MaterialDeletionCoordinator:
         durable_mkdir(self.root)
         lease = RecoveryLease.acquire_wait(self.lease_path)
         if lease is None:
-            raise MaterialMutationBusyError(
-                "Another material object mutation is already active"
-            )
+            raise MaterialMutationBusyError("Another material object mutation is already active")
         directory = self.root / deletion_id
         self._leases[deletion_id] = lease
         entries: list[dict[str, object]] = []
