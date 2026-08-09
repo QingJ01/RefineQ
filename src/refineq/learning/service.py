@@ -795,9 +795,8 @@ class LearningService:
 
     @classmethod
     def _is_material_question(cls, question: dict[str, Any]) -> bool:
-        return (
-            cls._question_grounding(question) == Grounding.MATERIAL
-            and bool(cls._question_sources(question))
+        return cls._question_grounding(question) == Grounding.MATERIAL and bool(
+            cls._question_sources(question)
         )
 
     def quarantine_ungrounded_pending(self, owner_id: str, project_id: str) -> bool:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
 
@@ -44,10 +45,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
             json={"intent": "Study function limits"},
         ).json()["workspace"]["id"]
         assert (
-            client.get(
-                f"/workspaces/{workspace_id}/snapshot", headers=headers
-            ).status_code
-            == 200
+            client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).status_code == 200
         )
 
         blocked = client.post(
@@ -90,8 +88,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
                 "attempt_id": "material-gate-attempt",
                 "question_id": created.json()["id"],
                 "answer": (
-                    "A limit describes the value approached by a function, "
-                    "with a concrete example."
+                    "A limit describes the value approached by a function, with a concrete example."
                 ),
             },
         )
@@ -99,9 +96,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
             f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
             headers=headers,
         )
-        version_after_shown = app.state.learning.get(
-            learner["user_id"], workspace_id
-        ).version
+        version_after_shown = app.state.learning.get(learner["user_id"], workspace_id).version
         shown_replay = client.post(
             f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
             headers=headers,
@@ -116,8 +111,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
     assert shown.json() == shown_replay.json()
     assert stored.version == version_after_shown
     names = [
-        event.name
-        for event in app.state.journey_events.list(learner["user_id"], workspace_id)
+        event.name for event in app.state.journey_events.list(learner["user_id"], workspace_id)
     ]
     assert {
         "intent_submitted",
@@ -164,9 +158,12 @@ def test_workspace_question_rejects_indexed_but_irrelevant_material(
     assert uploaded.status_code == 201
     assert created.status_code == 409
     assert created.json()["error"]["code"] == "material_insufficient"
-    assert app.state.learning.get(
-        learner["user_id"], workspace_id
-    ).data["progress"]["pending_question"] is None
+    assert (
+        app.state.learning.get(learner["user_id"], workspace_id).data["progress"][
+            "pending_question"
+        ]
+        is None
+    )
 
 
 def test_workspace_hides_and_rejects_a_legacy_general_pending_question(
@@ -405,15 +402,67 @@ def test_owner_identity_is_rejected_from_request_json(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
+class _EvidenceProducingModel:
+    """Grades answers as sufficient so plan-session completion stays covered.
+
+    Deterministic grading intentionally never produces mastery evidence, because
+    retrieved material is untrusted and cannot serve as an answer key. Completion
+    on evidence therefore has to be exercised through a configured model.
+    """
+
+    def complete(self, *, settings, messages, response_model):
+        del settings, messages
+        if response_model.__name__ == "QuestionModelOutput":
+            return response_model.model_validate(
+                {
+                    "prompt": "Explain how a coherence protocol keeps processor copies consistent.",
+                    "expected_answer": (
+                        "A protocol invalidates stale copies after a write and measures "
+                        "propagation latency before relying on the new value."
+                    ),
+                    "rubric": [{"criterion": "Explains invalidation", "max_points": 100}],
+                    "explanation": "Checks the core mechanism.",
+                    "citations": [],
+                }
+            )
+        return response_model.model_validate(
+            {
+                "score": 88,
+                "strengths": ["说明了失效机制"],
+                "gaps": [],
+                "misconceptions": [],
+                "feedback": "回答准确。",
+                "citations": [],
+                "sufficient_evidence": True,
+            }
+        )
+
+
 def test_plan_sessions_control_practice_mode_and_complete_only_on_evidence(
     tmp_path: Path,
 ) -> None:
-    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=_EvidenceProducingModel(),
+    )
     exam_at = datetime.now(UTC) + timedelta(days=5)
 
     with TestClient(app) as client:
         learner = _register(client, "plan-loop@example.com")
         headers = _authorization(learner["token"])
+        admin = app.state.identity.register(
+            email="plan-loop-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Platform Admin",
+        )
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
         project_id = client.post(
             "/projects",
             headers=headers,

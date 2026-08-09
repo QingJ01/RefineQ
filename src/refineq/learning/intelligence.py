@@ -171,7 +171,9 @@ def fallback_question(
     sources: list[SearchResult],
     learning_mode: LearningMode = LearningMode.CONCEPT,
 ) -> GeneratedQuestion:
-    source_hint = sources[0].text[:500] if sources else topic_name
+    # Retrieved material is untrusted data. Citing it is safe; treating it as the
+    # answer key is not, because uploaded text would then define what counts as
+    # correct. Deterministic questions therefore carry no material-derived answer.
     case_prompt = (
         f"请基于材料中的真实情境，使用“场景—核心问题—现有替代—行为证据”"
         f"分析“{topic_name}”，并区分表面诉求与底层需求。"
@@ -225,7 +227,7 @@ def fallback_question(
         topic_name=topic_name,
         difficulty_level=difficulty_level,
         prompt=prompts[learning_mode],
-        expected_answer=source_hint,
+        expected_answer=topic_name,
         rubric=rubrics[learning_mode],
         explanation=explanations[learning_mode],
         citations=[source.citation_id for source in sources[:3]],
@@ -290,7 +292,12 @@ def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
     if not expected_terms:
         gaps.insert(
             0,
-            "未找到可核对的学习资料，本次降级反馈不计入掌握度；请上传资料或配置模型后再试。",
+            (
+                "本次为降级出题：资料只作为引用展示，不充当标准答案，"
+                "因此反馈不计入掌握度；配置模型后可获得可核对的判分。"
+            )
+            if question.citations
+            else ("未找到可核对的学习资料，本次降级反馈不计入掌握度；请上传资料或配置模型后再试。"),
         )
     elif not concept_present:
         gaps.insert(0, f"需要解释“{question.topic_name}”的关键含义，不能只复述题目。")
