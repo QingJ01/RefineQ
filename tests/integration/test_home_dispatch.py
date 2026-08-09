@@ -13,6 +13,7 @@ from refineq.api.app import create_app
 from refineq.config import Settings
 from refineq.home.models import HomeConfirmRequest, HomeUndoRequest
 from refineq.operations.admin import ensure_admin
+from refineq.operations.recovery import RecoveryLease
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.models import WorkspaceRoutingDecision
 from refineq.workspaces.service import WorkspaceResolveRequest
@@ -376,6 +377,92 @@ def test_undo_and_coach_session_start_share_one_workspace_transaction(tmp_path: 
     assert receipt.operation == "undo_create_workspace"
     assert session_created is False
     assert remaining == []
+
+
+def test_undo_and_material_upload_share_the_material_recovery_lease(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-material-race",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+            },
+        ).json()["workspace_target"]
+
+        state_read = Event()
+        allow_undo = Event()
+        upload_attempted = Event()
+        upload_lease_acquired = Event()
+        original_hash = app.state.home_dispatch._created_workspace_state_hash
+
+        def paused_hash(owner: str, workspace: str):
+            value = original_hash(owner, workspace)
+            state_read.set()
+            assert allow_undo.wait(timeout=2)
+            return value
+
+        app.state.home_dispatch._created_workspace_state_hash = paused_hash
+
+        def undo_workspace():
+            return app.state.home_dispatch.undo_created_workspace(
+                owner_id,
+                HomeUndoRequest(
+                    request_id="strong-undo-material-race",
+                    workspace_id=created["workspace_id"],
+                    undo_token=created["undo_token"],
+                ),
+            )
+
+        def upload_if_workspace_survives() -> bool:
+            upload_attempted.set()
+            lease = RecoveryLease.acquire_wait(
+                app.state.material_deletions.lease_path,
+                timeout_seconds=5,
+            )
+            assert lease is not None
+            upload_lease_acquired.set()
+            try:
+                try:
+                    app.state.workspaces.get(owner_id, created["workspace_id"])
+                except RecordNotFoundError:
+                    return False
+                app.state.knowledge.add_document(
+                    owner_id=owner_id,
+                    project_id=created["workspace_id"],
+                    material_id="racing-material",
+                    filename="limits.txt",
+                    text="极限与连续性的复习资料",
+                )
+                return True
+            finally:
+                lease.release()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            undo_future = executor.submit(undo_workspace)
+            assert state_read.wait(timeout=2)
+            upload_future = executor.submit(upload_if_workspace_survives)
+            assert upload_attempted.wait(timeout=2)
+            sleep(0.05)
+            assert upload_lease_acquired.is_set() is False
+            allow_undo.set()
+            receipt = undo_future.result(timeout=5)
+            material_created = upload_future.result(timeout=5)
+
+        remaining = client.get("/workspaces", headers=headers).json()
+        materials = app.state.knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=created["workspace_id"],
+        )
+
+    assert receipt.operation == "undo_create_workspace"
+    assert material_created is False
+    assert remaining == []
+    assert materials == []
 
 
 def test_duplicate_named_spaces_return_real_choices_and_honor_the_selection(

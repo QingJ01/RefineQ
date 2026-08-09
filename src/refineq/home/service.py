@@ -281,16 +281,31 @@ class HomeDispatchService:
                 raise HomeConfirmationError("Undo target does not match its signature")
             if claims.proposal_hash != proposal_hash(proposal):
                 raise HomeConfirmationError("Undo request does not match its signature")
-            current_state = self._created_workspace_state_hash(
-                owner_id,
-                payload.workspace_id,
-            )
-            if current_state is not None and current_state != claims.state_hash:
-                raise HomeActionConflictError(
-                    "Created workspace changed after routing and cannot be automatically undone"
+            workspace_exists = any(
+                item.id == payload.workspace_id
+                for item in self._workspace_service.list(
+                    owner_id,
+                    include_archived=True,
                 )
-            if current_state is not None:
-                self._workspace_service.delete(owner_id, payload.workspace_id)
+            )
+            if workspace_exists:
+
+                def require_unchanged_workspace() -> None:
+                    current_state = self._created_workspace_state_hash(
+                        owner_id,
+                        payload.workspace_id,
+                    )
+                    if current_state != claims.state_hash:
+                        raise HomeActionConflictError(
+                            "Created workspace changed after routing and cannot be "
+                            "automatically undone"
+                        )
+
+                self._workspace_service.delete(
+                    owner_id,
+                    payload.workspace_id,
+                    precondition=require_unchanged_workspace,
+                )
             receipt = HomeActionReceipt(
                 request_id=payload.request_id,
                 idempotency_key=idempotency_key,

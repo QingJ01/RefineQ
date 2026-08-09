@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -478,7 +479,13 @@ class WorkspaceService:
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
 
-    def delete(self, owner_id: str, workspace_id: str) -> None:
+    def delete(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        *,
+        precondition: Callable[[], None] | None = None,
+    ) -> None:
         workspace_snapshot = None
         learning_snapshot = None
         journey_event_snapshot = None
@@ -505,6 +512,8 @@ class WorkspaceService:
                     project_id=workspace_id,
                     material_ids=None,
                 )
+                if precondition is not None:
+                    precondition()
                 self._learning.delete(owner_id, workspace_id)
                 self._learning_service.delete_journey_events(owner_id, workspace_id)
                 self._sessions.delete_for_workspace(owner_id, workspace_id)
