@@ -33,6 +33,61 @@ def _register(client: TestClient) -> tuple[str, str]:
     return body["access_token"], body["user"]["id"]
 
 
+def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "每天 30 分钟复习函数极限"},
+        ).json()["workspace"]["id"]
+
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            params={"timezone_offset_minutes": 480},
+            headers=headers,
+        )
+        refreshed = client.get(
+            f"/workspaces/{workspace_id}/next-action",
+            params={"timezone_offset_minutes": 480},
+            headers=headers,
+        )
+
+        assert snapshot.status_code == 200
+        assert snapshot.json()["next_action"] == refreshed.json()
+        assert refreshed.json()["action_type"] == "upload_material"
+        assert refreshed.json()["trigger"] == "material_missing"
+        assert refreshed.json()["preconditions"] == {"has_searchable_material": False}
+
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "limits.txt",
+                    b"A limit describes the value a function approaches near an input.",
+                    "text/plain",
+                )
+            },
+        )
+        assert uploaded.status_code == 201
+
+        ready = client.get(
+            f"/workspaces/{workspace_id}/next-action",
+            params={"timezone_offset_minutes": 480},
+            headers=headers,
+        )
+
+    assert ready.status_code == 200
+    assert ready.json()["action_type"] != "upload_material"
+    assert ready.json()["preconditions"] == {"has_searchable_material": True}
+
+
 class BlockingRoutingTransport:
     def __init__(self) -> None:
         self.started = Event()
@@ -909,6 +964,13 @@ def test_workspace_plan_update_rolls_back_when_goal_sync_fails(
             headers=headers,
             json={"intent": "Prepare calculus"},
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id="rollback-material",
+            filename="calculus.txt",
+            text="Prepare calculus through definitions, examples, and reasoning.",
+        )
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
@@ -1037,6 +1099,13 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             headers=headers,
             json={"intent": "准备微积分考试"},
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=user_id,
+            project_id=workspace_id,
+            material_id="saved-question-material",
+            filename="calculus.txt",
+            text="微积分考试复习资料，包含概念定义、例题与完整推理。",
+        )
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,

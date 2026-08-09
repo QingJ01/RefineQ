@@ -13,6 +13,7 @@ import { InitialDiagnostic } from "../components/initial-diagnostic";
 import { LearningReport } from "../components/learning-report";
 import { LearningSessionCanvas } from "../components/learning-session-canvas";
 import { MaterialDropzone } from "../components/material-dropzone";
+import { executeNextAction, NextActionCard } from "../components/next-action-card";
 import { PlanTimeline } from "../components/plan-timeline";
 import { PlanSettings } from "../components/plan-settings";
 import { ProgressInsights } from "../components/progress-insights";
@@ -28,6 +29,26 @@ import type { SearchSource } from "../lib/types";
 
 
 const t = translator("en");
+
+const uploadNextAction = {
+  id: "next-upload",
+  workspace_id: "math-space",
+  version: 1,
+  expires_at: "2026-08-09T10:05:00Z",
+  action_type: "upload_material" as const,
+  trigger: "material_missing" as const,
+  reason_code: "material_required",
+  reason: "Upload a source before starting a grounded learning task.",
+  preconditions: { has_searchable_material: false },
+  evidence_refs: [],
+  expected_outcome: "Unlock source-grounded questions and feedback.",
+  target_id: null,
+  topic_id: null,
+  minutes: null,
+  alternatives: [],
+  risk_level: "low" as const,
+  approval_mode: "auto_safe" as const,
+};
 
 const sidebarWorkspaces = [{
   id: "math-space",
@@ -52,6 +73,63 @@ const sidebarWorkspaces = [{
   created_at: "2026-08-02T00:00:00Z",
   last_active_at: "2026-08-07T00:00:00Z",
 }];
+
+
+describe("one primary action on Today", () => {
+  it("renders one upload CTA without a competing practice start", () => {
+    const html = renderToStaticMarkup(
+      <NextActionCard
+        locale="en"
+        action={uploadNextAction}
+        busy={false}
+        onUpload={() => undefined}
+        onStartReview={() => undefined}
+        onStartSession={() => undefined}
+        onRepairPlan={() => undefined}
+        onStartPractice={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="next-action-card"');
+    expect(html).toContain('data-testid="next-action-upload_material"');
+    expect(html).toContain("Upload material");
+    expect(html).not.toContain("Start practice");
+    expect(html.match(/class="[^"]*primary-action/g)).toHaveLength(1);
+  });
+
+  it("dispatches each server-selected target through the matching product action", () => {
+    const handlers = {
+      onUpload: vi.fn(),
+      onStartReview: vi.fn(),
+      onStartSession: vi.fn(),
+      onRepairPlan: vi.fn(),
+      onStartPractice: vi.fn(),
+    };
+    const cases = [
+      ["start_review", "review-1", "limits"],
+      ["start_session", "session-1", "limits"],
+      ["repair_pace", "plan-1", null],
+      ["start_practice", "limits", "limits"],
+    ] as const;
+
+    for (const [action_type, target_id, topic_id] of cases) {
+      executeNextAction({
+        ...uploadNextAction,
+        id: `next-${action_type}`,
+        action_type,
+        target_id,
+        topic_id,
+        preconditions: { has_searchable_material: true },
+      }, handlers);
+    }
+
+    expect(handlers.onStartReview).toHaveBeenCalledWith("review-1", "limits");
+    expect(handlers.onStartSession).toHaveBeenCalledWith("session-1");
+    expect(handlers.onRepairPlan).toHaveBeenCalledTimes(1);
+    expect(handlers.onStartPractice).toHaveBeenCalledWith("limits");
+    expect(handlers.onUpload).not.toHaveBeenCalled();
+  });
+});
 
 
 describe("shared authenticated sidebar", () => {
@@ -275,8 +353,10 @@ describe("focused learning components", () => {
       />,
     );
 
-    expect(html).toContain('data-testid="initial-diagnostic"');
-    expect(html).toContain("Function limits");
+      expect(html).toContain('data-testid="initial-diagnostic"');
+      expect(html).toContain("<details");
+      expect(html).not.toContain("<details open");
+      expect(html).toContain("Function limits");
     expect(html).toContain("Derivatives");
     expect(html).toContain('name="diagnostic-limits"');
     expect(html).toContain('name="diagnostic-derivatives"');

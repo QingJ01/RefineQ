@@ -20,6 +20,7 @@ import type {
   IntegrationTestResult,
   IntegrationUpdateInput,
   MaterialRecord,
+  NextAction,
   MaterialUpdateInput,
   ManagedBackup,
   ManagedBackupsResponse,
@@ -337,8 +338,28 @@ export class ApiClient {
     });
   }
 
-  getWorkspaceSnapshot(token: string, workspaceId: string): Promise<WorkspaceSnapshot> {
-    return this.request(`/workspaces/${workspaceId}/snapshot`, {}, token);
+  getWorkspaceSnapshot(
+    token: string,
+    workspaceId: string,
+    timezoneOffsetMinutes = -new Date().getTimezoneOffset(),
+  ): Promise<WorkspaceSnapshot> {
+    return this.request(
+      `/workspaces/${workspaceId}/snapshot?timezone_offset_minutes=${timezoneOffsetMinutes}`,
+      {},
+      token,
+    );
+  }
+
+  getWorkspaceNextAction(
+    token: string,
+    workspaceId: string,
+    timezoneOffsetMinutes = -new Date().getTimezoneOffset(),
+  ): Promise<NextAction> {
+    return this.request(
+      `/workspaces/${workspaceId}/next-action?timezone_offset_minutes=${timezoneOffsetMinutes}`,
+      {},
+      token,
+    );
   }
 
   listWorkspaceTopicSuggestions(

@@ -1369,12 +1369,20 @@ describe("implicit workspace API", () => {
     });
 
     const route = await client.resolveWorkspace("token-1", "复习高数");
-    await client.getWorkspaceSnapshot("token-1", route.workspace.id);
+      await client.getWorkspaceSnapshot("token-1", route.workspace.id, 480);
+      await client.getWorkspaceNextAction("token-1", route.workspace.id, 480);
 
-    expect(requests).toEqual([
-      { path: "/api/workspaces/resolve", method: "POST" },
-      { path: "/api/workspaces/math-space/snapshot", method: "GET" },
-    ]);
+      expect(requests).toEqual([
+        { path: "/api/workspaces/resolve", method: "POST" },
+        {
+          path: "/api/workspaces/math-space/snapshot?timezone_offset_minutes=480",
+          method: "GET",
+        },
+        {
+          path: "/api/workspaces/math-space/next-action?timezone_offset_minutes=480",
+          method: "GET",
+        },
+      ]);
   });
 
   it("updates plan settings through the workspace plan contract", async () => {

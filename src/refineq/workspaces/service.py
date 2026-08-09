@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from refineq.knowledge.deletion import MaterialDeletionCoordinator
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
+from refineq.learning.next_action import NextAction, select_next_action
 from refineq.learning.planning import build_study_plan
 from refineq.learning.service import (
     AnswerResponse,
@@ -56,6 +57,10 @@ class WorkspaceQuotaError(WorkspaceServiceError):
 
 class WorkspaceConflictError(WorkspaceServiceError):
     code = "workspace_conflict"
+
+
+class WorkspaceMaterialRequiredError(WorkspaceServiceError):
+    code = "material_required"
 
 
 class TopicSuggestionNotFoundError(WorkspaceServiceError):
@@ -116,6 +121,7 @@ class WorkspaceSnapshot(BaseModel):
     active_question: QuestionResponse | None = None
     last_answer: AnswerResponse | None = None
     topic_suggestions: list[TopicSuggestion] = Field(default_factory=list)
+    next_action: NextAction
 
 
 def _topic_id(name: str) -> str:
@@ -455,7 +461,59 @@ class WorkspaceService:
                         self._sessions.restore_snapshots(owner_id, session_snapshots)
             raise
 
-    def snapshot(self, owner_id: str, workspace_id: str) -> WorkspaceSnapshot:
+    def require_searchable_material(self, owner_id: str, workspace_id: str) -> None:
+        try:
+            self._workspaces.get(owner_id, workspace_id)
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+        if not self._knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            status="indexed",
+        ):
+            raise WorkspaceMaterialRequiredError(
+                "Upload a searchable material before starting a learning task"
+            )
+
+    def next_action(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        *,
+        now: datetime | None = None,
+        timezone_offset_minutes: int = 0,
+    ) -> NextAction:
+        try:
+            self._workspaces.get(owner_id, workspace_id)
+            learning_record = self._learning.get(owner_id, workspace_id)
+        except RecordNotFoundError as error:
+            raise WorkspaceNotFoundError("Learning workspace not found") from error
+        progress = self._learning_service.progress(owner_id, workspace_id)
+        raw_plan = learning_record.data["progress"].get("plan")
+        plan = StudyPlan.model_validate(raw_plan) if raw_plan else None
+        materials = self._knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=workspace_id,
+        )
+        return select_next_action(
+            workspace_id=workspace_id,
+            version=learning_record.version,
+            plan=plan,
+            material_statuses=[material.status for material in materials],
+            mastery=progress.mastery,
+            topic_names=progress.topics,
+            now=(now or datetime.now(UTC)).astimezone(UTC),
+            timezone_offset_minutes=timezone_offset_minutes,
+        )
+
+    def snapshot(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        *,
+        now: datetime | None = None,
+        timezone_offset_minutes: int = 0,
+    ) -> WorkspaceSnapshot:
         try:
             workspace = self._workspaces.get(owner_id, workspace_id)
         except RecordNotFoundError as error:
@@ -498,4 +556,10 @@ class WorkspaceService:
                 else None
             ),
             topic_suggestions=self.topic_suggestions(owner_id, workspace_id),
+            next_action=self.next_action(
+                owner_id,
+                workspace_id,
+                now=now,
+                timezone_offset_minutes=timezone_offset_minutes,
+            ),
         )

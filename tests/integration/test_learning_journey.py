@@ -32,6 +32,56 @@ def _authorization(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        learner = _register(client, "material-gate@example.com")
+        headers = _authorization(learner["token"])
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+
+        blocked = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "question-without-material"},
+        )
+
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "material_required"
+        record = app.state.learning.get(learner["user_id"], workspace_id)
+        assert record.data["progress"]["pending_question"] is None
+
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "limits.txt",
+                    (
+                        b"Study function limits. A limit is the value a function approaches "
+                        b"as its input approaches a point."
+                    ),
+                    "text/plain",
+                )
+            },
+        )
+        assert uploaded.status_code == 201
+
+        created = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "question-with-material"},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["grounding"] == "material"
+    assert created.json()["sources"]
+
+
 def test_complete_learning_journey_is_owner_scoped_and_idempotent(
     tmp_path: Path,
 ) -> None:
@@ -364,6 +414,13 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
                 "exam_at": (datetime.now(UTC) + timedelta(days=6)).isoformat(),
             },
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=alice["user_id"],
+            project_id=workspace_id,
+            material_id="insights-material",
+            filename="calculus.txt",
+            text="Prepare calculus with limits and derivatives using worked examples.",
+        )
 
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
@@ -567,6 +624,13 @@ def test_attempt_question_snapshot_survives_history_pruning(
             headers=headers,
             json={"intent": "Prepare calculus"},
         ).json()["workspace"]["id"]
+        app.state.knowledge.add_document(
+            owner_id=learner["user_id"],
+            project_id=workspace_id,
+            material_id="history-material",
+            filename="calculus.txt",
+            text="Prepare calculus through definitions, examples, and reasoning.",
+        )
         first_question: dict | None = None
         for index in range(3):
             question = client.post(

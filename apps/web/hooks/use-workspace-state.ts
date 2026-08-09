@@ -7,6 +7,7 @@ import type {
   LearningInsights,
   LearningWorkspace,
   MaterialRecord,
+  NextAction,
   Progress,
   SavedPracticeQuestion,
   StudyPlan,
@@ -25,6 +26,7 @@ export function useWorkspaceState() {
   const [insights, setInsights] = useState<LearningInsights | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [materials, setMaterials] = useState<MaterialRecord[]>([]);
+  const [nextAction, setNextAction] = useState<NextAction | null>(null);
   const [topicSuggestions, setTopicSuggestions] = useState<TopicSuggestion[]>([]);
   const [savedQuestions, setSavedQuestions] = useState<SavedPracticeQuestion[]>([]);
   const [route, setRoute] = useState<WorkspaceRoute | null>(null);
@@ -39,6 +41,7 @@ export function useWorkspaceState() {
     setInsights(null);
     setSelectedTopicId(null);
     setMaterials(snapshot.materials);
+    setNextAction(snapshot.next_action);
     setTopicSuggestions(snapshot.topic_suggestions ?? []);
     setSavedQuestions(snapshot.saved_questions ?? []);
   }, []);
@@ -51,6 +54,7 @@ export function useWorkspaceState() {
     setInsights(null);
     setSelectedTopicId(null);
     setMaterials([]);
+    setNextAction(null);
     setTopicSuggestions([]);
     setSavedQuestions([]);
     setRoute(null);
@@ -63,6 +67,7 @@ export function useWorkspaceState() {
     evidence,
     insights,
     materials,
+    nextAction,
     plan,
     previousWorkspaceId,
     progress,
@@ -72,6 +77,7 @@ export function useWorkspaceState() {
     setEvidence,
     setInsights,
     setMaterials,
+    setNextAction,
     setTopicSuggestions,
     setPlan,
     setPreviousWorkspaceId,

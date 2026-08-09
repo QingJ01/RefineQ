@@ -28,7 +28,10 @@ from refineq.learning.service import (
     SavedQuestionResponse,
     SeedRequest,
 )
-from refineq.workspaces.service import WorkspaceNotFoundError
+from refineq.workspaces.service import (
+    WorkspaceMaterialRequiredError,
+    WorkspaceNotFoundError,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/learning", tags=["learning"])
 workspace_router = APIRouter(
@@ -132,6 +135,10 @@ def create_workspace_question(
     user: CurrentUser,
 ) -> QuestionResponse:
     try:
+        request.app.state.workspace_service.require_searchable_material(
+            user.id,
+            workspace_id,
+        )
         return request.app.state.workspace_learning_service.next_question(
             user.id,
             workspace_id,
@@ -143,6 +150,16 @@ def create_workspace_question(
             review_session_id=payload.review_session_id,
             plan_session_id=payload.plan_session_id,
         )
+    except WorkspaceMaterialRequiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
+    except WorkspaceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
     except LearningServiceError as error:
         _raise_api_error(error)
 

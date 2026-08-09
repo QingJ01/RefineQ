@@ -14,6 +14,22 @@ from refineq.config import Settings
 from refineq.operations.admin import ensure_admin
 
 
+def _add_workspace_material(
+    app,
+    owner_id: str,
+    workspace_id: str,
+    *,
+    text: str = "Workspace study practice material for the selected learning topic.",
+) -> None:
+    app.state.knowledge.add_document(
+        owner_id=owner_id,
+        project_id=workspace_id,
+        material_id=f"fixture-{workspace_id[:16]}",
+        filename="fixture.txt",
+        text=text,
+    )
+
+
 class FakeLearningModel:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -130,6 +146,7 @@ def test_question_model_work_runs_outside_database_transaction(tmp_path: Path) -
             headers=headers,
             json={"intent": "复习高数极限"},
         ).json()["workspace"]["id"]
+        _add_workspace_material(app, auth["user"]["id"], workspace_id)
         admin = ensure_admin(
             app.state.identity,
             email="question-transaction-admin@example.com",
@@ -304,6 +321,7 @@ def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) 
             headers=headers,
             json={"intent": "Learn calculus limits"},
         ).json()["workspace"]["id"]
+        _add_workspace_material(app, auth["user"]["id"], workspace_id)
         before = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()[
             "progress"
         ]["mastery"]
@@ -442,6 +460,7 @@ def test_workspace_practice_can_replace_a_question_at_a_chosen_difficulty(
             headers=headers,
             json={"intent": "复习高数函数极限"},
         ).json()["workspace"]["id"]
+        _add_workspace_material(app, auth["user"]["id"], workspace_id)
         snapshot = client.get(
             f"/workspaces/{workspace_id}/snapshot",
             headers=headers,
@@ -506,6 +525,7 @@ def test_workspace_learning_task_accepts_project_mode(tmp_path: Path) -> None:
             headers=headers,
             json={"intent": "学习产品思维，并练习验证真实用户需求"},
         ).json()["workspace"]["id"]
+        _add_workspace_material(app, auth["user"]["id"], workspace_id)
         response = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
@@ -536,6 +556,12 @@ def test_workspace_case_task_without_matching_material_is_explicitly_general(
             headers=headers,
             json={"intent": "练习识别用户真实需求"},
         ).json()["workspace"]["id"]
+        _add_workspace_material(
+            app,
+            auth["user"]["id"],
+            workspace_id,
+            text="Astronomy notes about stellar orbits and nebulae.",
+        )
         response = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
@@ -572,6 +598,12 @@ def test_configured_model_cannot_claim_uploaded_material_when_retrieval_is_empty
             headers=headers,
             json={"intent": "练习用户需求分析"},
         ).json()["workspace"]["id"]
+        _add_workspace_material(
+            app,
+            auth["user"]["id"],
+            workspace_id,
+            text="Astronomy notes about stellar orbits and nebulae.",
+        )
         admin = ensure_admin(
             app.state.identity,
             email="platform-admin@example.com",

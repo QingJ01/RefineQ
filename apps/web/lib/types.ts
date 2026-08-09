@@ -71,6 +71,32 @@ export interface WorkspaceSnapshot {
   active_question?: PracticeQuestion | null;
   last_answer?: AnswerResult | null;
   topic_suggestions?: TopicSuggestion[];
+  next_action: NextAction;
+}
+
+export interface NextActionAlternative {
+  action_type: "open_materials" | "view_plan" | "start_practice";
+  target_id: string | null;
+}
+
+export interface NextAction {
+  id: string;
+  workspace_id: string;
+  version: number;
+  expires_at: string;
+  action_type: "upload_material" | "start_review" | "start_session" | "repair_pace" | "start_practice";
+  trigger: "material_missing" | "due_review" | "scheduled_session" | "pace_risk" | "weak_topic";
+  reason_code: string;
+  reason: string;
+  preconditions: Record<string, boolean>;
+  evidence_refs: string[];
+  expected_outcome: string;
+  target_id: string | null;
+  topic_id: string | null;
+  minutes: number | null;
+  alternatives: NextActionAlternative[];
+  risk_level: "low" | "medium" | "high";
+  approval_mode: "advise" | "confirm" | "auto_safe";
 }
 
 export interface TopicSuggestion {

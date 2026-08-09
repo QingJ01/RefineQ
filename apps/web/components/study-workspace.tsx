@@ -22,6 +22,7 @@ import { LearningHome } from "@/components/learning-home";
 import { LearningReport } from "@/components/learning-report";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
 import { MaterialDropzone } from "@/components/material-dropzone";
+import { NextActionCard } from "@/components/next-action-card";
 import { PlanSettings } from "@/components/plan-settings";
 import { PlanTimeline } from "@/components/plan-timeline";
 import { ScheduleCalendar } from "@/components/schedule-calendar";
@@ -129,6 +130,7 @@ export function StudyWorkspace({
     evidence,
     insights,
     materials,
+    nextAction,
     plan,
     previousWorkspaceId,
     progress,
@@ -138,6 +140,7 @@ export function StudyWorkspace({
     setEvidence,
     setInsights,
     setMaterials,
+    setNextAction,
     setTopicSuggestions,
     setPlan,
     setPreviousWorkspaceId,
@@ -683,6 +686,7 @@ export function StudyWorkspace({
       setProgress(snapshot.progress);
       setEvidence(snapshot.evidence);
       setPlan(snapshot.plan);
+      setNextAction(snapshot.next_action);
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
@@ -718,6 +722,7 @@ export function StudyWorkspace({
       setProgress(snapshot.progress);
       setEvidence(snapshot.evidence);
       setPlan(snapshot.plan);
+      setNextAction(snapshot.next_action);
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) {
         if (caught instanceof ApiError && caught.status === 409) setSnapshotConflict(true);
@@ -916,7 +921,10 @@ export function StudyWorkspace({
           return Array.from(byId.values());
         });
       }
-      await refreshTopicSuggestions(auth.access_token, targetWorkspaceId);
+      await Promise.all([
+        refreshTopicSuggestions(auth.access_token, targetWorkspaceId),
+        refreshNextAction(auth.access_token, targetWorkspaceId),
+      ]);
       return uploaded;
     } catch (caught) {
       if (isAbortError(caught)) return [];
@@ -929,6 +937,15 @@ export function StudyWorkspace({
     try {
       const suggestions = await api.listWorkspaceTopicSuggestions(token, workspaceId);
       if (workspaceRef.current?.id === workspaceId) setTopicSuggestions(suggestions);
+    } catch (caught) {
+      if (workspaceRef.current?.id === workspaceId) reportError(caught);
+    }
+  }
+
+  async function refreshNextAction(token: string, workspaceId: string) {
+    try {
+      const refreshed = await api.getWorkspaceNextAction(token, workspaceId);
+      if (workspaceRef.current?.id === workspaceId) setNextAction(refreshed);
     } catch (caught) {
       if (workspaceRef.current?.id === workspaceId) reportError(caught);
     }
@@ -964,7 +981,10 @@ export function StudyWorkspace({
     try {
       await api.deleteWorkspaceMaterial(auth.access_token, workspace.id, material.id);
       setMaterials((current) => current.filter((item) => item.id !== material.id));
-      await refreshTopicSuggestions(auth.access_token, workspace.id);
+      await Promise.all([
+        refreshTopicSuggestions(auth.access_token, workspace.id),
+        refreshNextAction(auth.access_token, workspace.id),
+      ]);
     } catch (caught) {
       reportError(caught);
     }
@@ -1013,7 +1033,10 @@ export function StudyWorkspace({
       await api.bulkDeleteWorkspaceMaterials(auth.access_token, workspace.id, ids);
       const removed = new Set(ids);
       setMaterials((current) => current.filter((item) => !removed.has(item.id)));
-      await refreshTopicSuggestions(auth.access_token, workspace.id);
+      await Promise.all([
+        refreshTopicSuggestions(auth.access_token, workspace.id),
+        refreshNextAction(auth.access_token, workspace.id),
+      ]);
     } catch (caught) {
       reportError(caught);
       throw caught;
@@ -1175,6 +1198,7 @@ export function StudyWorkspace({
         ...current,
         sessions: current.sessions.map((item) => item.id === updated.id ? updated : item),
       } : current);
+      await refreshNextAction(auth.access_token, workspace.id);
       return true;
     } catch (caught) {
       reportError(caught);
@@ -1205,6 +1229,7 @@ export function StudyWorkspace({
         plan_id: updated.id,
         topic_order: [...input.topic_order],
       } : current);
+      await refreshNextAction(auth.access_token, workspace.id);
     } catch (caught) {
       reportError(caught);
       throw caught;
@@ -1236,7 +1261,7 @@ export function StudyWorkspace({
         locale,
       });
     }
-    if (workspace && progress) {
+    if (workspace && progress && nextAction) {
       saveWorkspaceSnapshot(window.sessionStorage, {
         workspace,
         progress,
@@ -1247,6 +1272,7 @@ export function StudyWorkspace({
         active_question: question,
         last_answer: result,
         topic_suggestions: topicSuggestions,
+        next_action: nextAction,
         client_state: {
           learningMode,
           masteryBefore,
@@ -1524,7 +1550,30 @@ export function StudyWorkspace({
             </div>
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
-          {section === "today" && progress?.diagnostic_count === 0 && (
+          {section === "today" && !question && !result && nextAction && (
+            <NextActionCard
+              locale={locale}
+              action={nextAction}
+              busy={practiceBusy}
+              onUpload={() => navigateWithinWorkspace(learningPath(workspace.id, "materials"))}
+              onStartReview={(sessionId, topicId) => {
+                if (topicId) startReviewSession(topicId, sessionId);
+              }}
+              onStartSession={(sessionId) => {
+                const session = plan?.sessions.find((item) => item.id === sessionId);
+                if (session) startPlanSession(session);
+              }}
+              onRepairPlan={() => navigateWithinWorkspace(learningPath(workspace.id, "plan"))}
+              onStartPractice={(topicId) => {
+                if (topicId) practiceTopic(topicId);
+                else void getQuestion({ learningMode });
+              }}
+            />
+          )}
+          {section === "today"
+            && progress?.diagnostic_count === 0
+            && progress.attempt_count === 0
+            && (
             <InitialDiagnostic
               locale={locale}
               topics={progress.topics}
@@ -1532,7 +1581,7 @@ export function StudyWorkspace({
               onSubmit={submitInitialDiagnostic}
             />
           )}
-          {section === "today" && (
+          {section === "today" && (question || result) && (
             <LearningSessionCanvas
               locale={locale}
               t={t}

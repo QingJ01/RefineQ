@@ -43,59 +43,59 @@ export function InitialDiagnostic({
     };
 
   return (
-    <form
-      className="content-card initial-diagnostic"
-      data-testid="initial-diagnostic"
-      aria-labelledby="initial-diagnostic-title"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!complete || busy) return;
-        void onSubmit(entries.map(([topicId]) => ({
-          topic_id: topicId,
-          is_correct: answers[topicId],
-        })));
-      }}
-    >
-      <header>
+    <details className="content-card initial-diagnostic" data-testid="initial-diagnostic">
+      <summary>
         <span><ClipboardCheck size={18} /> {copy.eyebrow}</span>
-        <h2 id="initial-diagnostic-title">{copy.title}</h2>
-        <p>{copy.description}</p>
-      </header>
-      <div className="initial-diagnostic-topics">
-        {entries.map(([topicId, topicName]) => (
-          <fieldset key={topicId}>
-            <legend><strong>{topicName}</strong><span>{copy.prompt}</span></legend>
-            <label>
-              <input
-                type="radio"
-                name={`diagnostic-${topicId}`}
-                value="yes"
-                checked={answers[topicId] === true}
-                onChange={() => setAnswers((current) => ({ ...current, [topicId]: true }))}
-              />
-              {copy.yes}
-            </label>
-            <label>
-              <input
-                type="radio"
-                name={`diagnostic-${topicId}`}
-                value="not-yet"
-                checked={answers[topicId] === false}
-                onChange={() => setAnswers((current) => ({ ...current, [topicId]: false }))}
-              />
-              {copy.notYet}
-            </label>
-          </fieldset>
-        ))}
-      </div>
-      <button
-        type="submit"
-        className="primary-action"
-        data-testid="submit-initial-diagnostic"
-        disabled={!complete || busy}
+        <strong id="initial-diagnostic-title">{copy.title}</strong>
+        <small>{copy.description}</small>
+      </summary>
+      <form
+        aria-labelledby="initial-diagnostic-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!complete || busy) return;
+          void onSubmit(entries.map(([topicId]) => ({
+            topic_id: topicId,
+            is_correct: answers[topicId],
+          })));
+        }}
       >
-        {busy ? copy.saving : copy.submit}
-      </button>
-    </form>
+        <div className="initial-diagnostic-topics">
+          {entries.map(([topicId, topicName]) => (
+            <fieldset key={topicId}>
+              <legend><strong>{topicName}</strong><span>{copy.prompt}</span></legend>
+              <label>
+                <input
+                  type="radio"
+                  name={`diagnostic-${topicId}`}
+                  value="yes"
+                  checked={answers[topicId] === true}
+                  onChange={() => setAnswers((current) => ({ ...current, [topicId]: true }))}
+                />
+                {copy.yes}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name={`diagnostic-${topicId}`}
+                  value="not-yet"
+                  checked={answers[topicId] === false}
+                  onChange={() => setAnswers((current) => ({ ...current, [topicId]: false }))}
+                />
+                {copy.notYet}
+              </label>
+            </fieldset>
+          ))}
+        </div>
+        <button
+          type="submit"
+          className="primary-action"
+          data-testid="submit-initial-diagnostic"
+          disabled={!complete || busy}
+        >
+          {busy ? copy.saving : copy.submit}
+        </button>
+      </form>
+    </details>
   );
 }
