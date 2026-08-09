@@ -49,19 +49,19 @@ export function NextActionCard({
     },
     start_session: {
       eyebrow: zh ? "今日计划" : "Today's plan",
-      title: zh ? "完成下一场学习" : "Complete the next session",
+      title: zh ? "继续下一项学习" : "Continue with the next task",
       cta: zh ? "开始学习" : "Start session",
       icon: BookOpen,
     },
     repair_pace: {
       eyebrow: zh ? "进度风险" : "Pace risk",
-      title: zh ? "先修正计划约束" : "Repair the plan first",
-      cta: zh ? "检查计划" : "Review plan",
+      title: zh ? "先调整学习计划" : "Adjust the study plan first",
+      cta: zh ? "调整计划" : "Adjust plan",
       icon: TriangleAlert,
     },
     start_practice: {
       eyebrow: zh ? "下一步" : "Next step",
-      title: zh ? "练习当前最弱主题" : "Practice the weakest topic",
+      title: zh ? "练习最需要加强的内容" : "Practice what needs the most work",
       cta: zh ? "开始练习" : "Start practice",
       icon: ArrowRight,
     },

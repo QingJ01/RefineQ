@@ -131,7 +131,7 @@ class MaterialDeletionCoordinator:
             blob_path.relative_to(pending.directory.resolve())
             self.object_storage.put(
                 owner_id=pending.owner_id,
-                workspace_id=pending.project_id,
+                workspace_id=record.project_id,
                 material_id=record.id,
                 filename=record.filename,
                 payload=blob_path.read_bytes(),
@@ -153,14 +153,12 @@ class MaterialDeletionCoordinator:
         try:
             for entry in pending.entries:
                 self.object_storage.delete(str(entry["storage_key"]))
-            if pending.entries:
+            for entry in pending.entries:
+                record = MaterialRecord.model_validate(entry["material"])
                 self.knowledge.delete_materials(
                     owner_id=pending.owner_id,
-                    project_id=pending.project_id,
-                    material_ids=[
-                        MaterialRecord.model_validate(entry["material"]).id
-                        for entry in pending.entries
-                    ],
+                    project_id=record.project_id,
+                    material_ids=[record.id],
                 )
         except Exception:
             self.rollback(pending)

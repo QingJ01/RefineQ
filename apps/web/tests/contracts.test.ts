@@ -418,19 +418,19 @@ describe("durable learner routing", () => {
     expect(workspaceSource).toContain('data-testid="workspace-routing-summary"');
     expect(workspaceSource).toContain("workspace.routing_summary");
     expect(workspaceSource).not.toContain("}, 7000);");
-    expect(workspaceSource).toContain("route.confidence");
+    expect(workspaceSource).not.toContain("route.confidence");
     expect(workspaceSource).toContain("route.reason");
     expect(workspaceSource).toContain("undoWorkspaceRoute");
   });
 
-  it("keeps reviews on Today and gives learning records their own anchor", () => {
+  it("keeps one next action on Today and gives learning records their own anchor", () => {
     const workspaceSource = readFileSync(
       fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
       "utf8",
     );
 
-    expect(workspaceSource.match(/<ReviewQueue/g)).toHaveLength(1);
-    expect(workspaceSource).toContain('{section === "today" && (');
+    expect(workspaceSource).not.toContain("<ReviewQueue");
+    expect(workspaceSource).toContain("<NextActionCard");
     expect(workspaceSource).toContain('id="learning-record"');
     expect(workspaceSource).toContain('href="#learning-record"');
     expect(workspaceSource).toContain("onStartPlanSession={startPlanSession}");
@@ -453,15 +453,16 @@ describe("responsive learning workspace layout", () => {
     );
   });
 
-  it("places capability progress and the evidence ledger side by side on wide screens", () => {
+  it("keeps the progress overview balanced and the learning record full width", () => {
     const styles = readFileSync(
       fileURLToPath(new URL("../app/styles.css", import.meta.url)),
       "utf8",
     );
 
     expect(styles).toMatch(
-      /\.learning-progress-view\s*\{[^}]*grid-template-columns: minmax\(0, 1\.35fr\) minmax\(320px, 0\.65fr\)/s,
+      /\.progress-overview-grid\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/s,
     );
+    expect(styles).toMatch(/\.learning-progress-view \.learning-record\s*\{[^}]*grid-column: 1 \/ -1/s);
   });
 
   it("keeps mobile section context, shortcuts, focus, and task actions explicit", () => {
@@ -910,6 +911,70 @@ describe("authentication and API errors", () => {
       session_id: "session-1",
       turn_id: "turn-1",
     });
+    vi.useRealTimers();
+  });
+
+  it("polls for an analysis that finishes after the proxy request fails", async () => {
+    vi.useFakeTimers();
+    let requests = 0;
+    const client = new ApiClient("/api", async () => {
+      requests += 1;
+      if (requests < 3) {
+        return new Response(JSON.stringify({
+          error: { code: "material_analysis_not_found", message: "Not ready" },
+        }), { status: 404, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        material_id: "material-1",
+        filename: "notes.pdf",
+        material_type: "textbook",
+        title: "Notes",
+        summary: "Ready",
+        sections: [],
+        topics: [],
+        confidence: 0.8,
+        mode: "ai",
+        analyzed_at: "2026-08-08T00:00:00Z",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const pending = client.waitForWorkspaceMaterialAnalysis("token", "workspace-1", "material-1");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    await expect(pending).resolves.toMatchObject({ material_id: "material-1", mode: "ai" });
+    expect(requests).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it("does not mistake an older saved analysis for the failed request", async () => {
+    vi.useFakeTimers();
+    let requests = 0;
+    const client = new ApiClient("/api", async () => {
+      requests += 1;
+      return new Response(JSON.stringify({
+        material_id: "material-1",
+        filename: "notes.pdf",
+        material_type: "textbook",
+        title: "Notes",
+        summary: requests === 1 ? "Old" : "Fresh",
+        sections: [],
+        topics: [],
+        confidence: 0.8,
+        mode: "ai",
+        analyzed_at: requests === 1 ? "2026-08-07T00:00:00Z" : "2026-08-08T00:00:01Z",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const pending = client.waitForWorkspaceMaterialAnalysis(
+      "token",
+      "workspace-1",
+      "material-1",
+      "2026-08-08T00:00:00Z",
+    );
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(pending).resolves.toMatchObject({ summary: "Fresh" });
+    expect(requests).toBe(2);
     vi.useRealTimers();
   });
 

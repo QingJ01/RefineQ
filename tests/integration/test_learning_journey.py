@@ -605,6 +605,22 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             filename="calculus.txt",
             text="Prepare calculus with limits and derivatives using worked examples.",
         )
+        initial = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=alice_headers,
+        ).json()
+        generated = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=alice_headers,
+            json={
+                "goal": initial["progress"]["goal"],
+                "exam_at": (datetime.now(UTC) + timedelta(days=6)).isoformat(),
+                "daily_minutes": 45,
+                "topic_order": initial["progress"]["topic_order"],
+                "regenerate": True,
+            },
+        )
+        assert generated.status_code == 200
 
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",

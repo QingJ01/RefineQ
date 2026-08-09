@@ -144,7 +144,7 @@ export function AuthPanel({
         <div className="auth-form-card">
           <header className="auth-form-heading">
             <BrandMark className="mobile-brand-mark" size={36} />
-            <div><h2>{heading}</h2><p>{mode === "forgot" || mode === "reset" ? t("resetPasswordHint") : t("authSubline")}</p></div>
+            <div><h2>{heading}</h2><p>{mode === "forgot" || mode === "reset" ? t("resetPasswordHint") : (locale === "zh" ? "使用你的账号继续" : "Continue with your account")}</p></div>
           </header>
           {(mode === "login" || mode === "register") && (
             <div className="auth-tabs">

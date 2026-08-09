@@ -72,4 +72,8 @@ class WorkspaceRoutingIntelligence:
                 return fallback
         elif decision.workspace_id is not None:
             return fallback
+        if decision.action == "created" and any(
+            topic.strip().casefold() == intent.strip().casefold() for topic in decision.topics
+        ):
+            decision = decision.model_copy(update={"topics": fallback.topics})
         return decision

@@ -32,6 +32,7 @@ from refineq.api.routers.health import router as health_router
 from refineq.api.routers.home import router as home_router
 from refineq.api.routers.learning import router as learning_router
 from refineq.api.routers.learning import workspace_router as workspace_learning_router
+from refineq.api.routers.materials import library_router as library_materials_router
 from refineq.api.routers.materials import router as materials_router
 from refineq.api.routers.materials import workspace_router as workspace_materials_router
 from refineq.api.routers.projects import router as projects_router
@@ -59,11 +60,14 @@ from refineq.knowledge.deletion import MaterialDeletionCoordinator
 from refineq.knowledge.embeddings import PlatformEmbeddingService
 from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.intelligence import LearningIntelligenceService
+from refineq.learning.personalized import TargetedPlanService
 from refineq.learning.service import LearningService
+from refineq.materials.service import MaterialAnalysisService
 from refineq.operations.admin import AdminOperations
 from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import InvalidIdentifierError
 from refineq.storage.learning import LearningRepository
+from refineq.storage.material_analyses import MaterialAnalysisRepository
 from refineq.storage.projects import ProjectRepository
 from refineq.storage.sessions import SessionRepository
 from refineq.storage.sql_store import SqlRecordStore
@@ -125,6 +129,7 @@ def create_app(
     app.state.projects = ProjectRepository(app.state.store)
     app.state.workspaces = WorkspaceRepository(app.state.store)
     app.state.learning = LearningRepository(app.state.store)
+    app.state.material_analyses = MaterialAnalysisRepository(app.state.store)
     app.state.journey_events = JourneyEventRepository(app.state.store)
     app.state.home_events = HomeEventRepository(app.state.store)
     app.state.home_receipts = HomeReceiptRepository(app.state.store)
@@ -185,6 +190,20 @@ def create_app(
         app.state.knowledge,
         app.state.model_settings,
         learning_model_transport or OpenAICompatibleStructuredTransport(),
+    )
+    app.state.material_analysis = MaterialAnalysisService(
+        app.state.knowledge,
+        app.state.material_analyses,
+        app.state.model_settings,
+        learning_model_transport
+        or OpenAICompatibleStructuredTransport(timeout=90.0, max_retries=0),
+    )
+    app.state.targeted_plans = TargetedPlanService(
+        app.state.learning,
+        app.state.material_analyses,
+        app.state.model_settings,
+        learning_model_transport
+        or OpenAICompatibleStructuredTransport(timeout=30.0, max_retries=0),
     )
     app.state.learning_service = LearningService(
         app.state.projects,
@@ -272,6 +291,7 @@ def create_app(
     app.include_router(learning_router)
     app.include_router(workspace_learning_router)
     app.include_router(materials_router)
+    app.include_router(library_materials_router)
     app.include_router(workspace_materials_router)
     app.include_router(agent_router)
     app.include_router(workspace_agent_router)

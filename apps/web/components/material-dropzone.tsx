@@ -8,6 +8,7 @@ import {
   Pencil,
   RotateCcw,
   Search,
+  Sparkles,
   Tags,
   Trash2,
   Upload,
@@ -17,10 +18,12 @@ import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "reac
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
+import { ApiError } from "@/lib/api";
 import { consumeHistoryUploadContinuation } from "@/lib/history-navigation-guard";
 import type { Translator } from "@/lib/i18n";
 import type {
   Locale,
+  MaterialAnalysis,
   MaterialRecord,
   MaterialUpdateInput,
   SearchSource,
@@ -40,7 +43,7 @@ interface UploadItem {
   id: string;
   file: File;
   status: UploadState;
-  error?: UploadValidationError | "upload_failed";
+  error?: UploadValidationError | "material_filename_exists" | "upload_failed";
   controller?: AbortController;
 }
 
@@ -109,12 +112,16 @@ export function MaterialDropzone({
   onSearch,
   onDownload,
   onDelete,
+  onAnalyze,
   onUpdate,
   onBulkDelete,
   topicSuggestions = [],
   acceptingTopicSuggestionId = null,
   onAcceptTopicSuggestion,
   onUploadActivityChange,
+  libraryMaterials = [],
+  linkingLibraryMaterialId = null,
+  onLinkLibraryMaterial,
   materials,
 }: {
   t: Translator;
@@ -123,12 +130,16 @@ export function MaterialDropzone({
   onSearch?: (query: string) => Promise<SearchSource[]>;
   onDownload?: (material: MaterialRecord) => void | Promise<void>;
   onDelete?: (material: MaterialRecord) => void | Promise<void>;
+  onAnalyze?: (material: MaterialRecord) => Promise<MaterialAnalysis>;
   onUpdate?: (material: MaterialRecord, input: MaterialUpdateInput) => void | Promise<void>;
   onBulkDelete?: (materials: MaterialRecord[]) => void | Promise<void>;
   topicSuggestions?: TopicSuggestion[];
   acceptingTopicSuggestionId?: string | null;
   onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
   onUploadActivityChange?: (active: boolean) => void;
+  libraryMaterials?: MaterialRecord[];
+  linkingLibraryMaterialId?: string | null;
+  onLinkLibraryMaterial?: (material: MaterialRecord) => void | Promise<void>;
   materials: MaterialRecord[];
 }) {
   const copy = organizationCopy[locale];
@@ -143,7 +154,49 @@ export function MaterialDropzone({
   const [searchedQuery, setSearchedQuery] = useState("");
   const [selectedSources, setSelectedSources] = useState<SearchSource[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<MaterialRecord | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [analyses, setAnalyses] = useState<Record<string, MaterialAnalysis>>({});
+  const [analyzingIds, setAnalyzingIds] = useState<string[]>([]);
+  const [analysisErrors, setAnalysisErrors] = useState<string[]>([]);
+
+  const analysisCopy = locale === "zh" ? {
+    analyze: "分析资料",
+    analyzing: "正在识别章节和知识点…",
+    failed: "分析失败，请检查模型连接后重试。",
+    ai: "AI 分析",
+    fallback: "本地降级分析",
+    confidence: "置信度",
+    topics: "知识点",
+    sections: "章节",
+    citations: "引用内容",
+    types: {
+      textbook: "教材",
+      lecture_notes: "讲义",
+      exam: "试卷",
+      problem_set: "习题集",
+      mixed: "混合资料",
+      unknown: "未识别",
+    },
+  } : {
+    analyze: "Analyze material",
+    analyzing: "Identifying sections and topics…",
+    failed: "Analysis failed. Check the model connection and retry.",
+    ai: "AI analysis",
+    fallback: "Local fallback",
+    confidence: "Confidence",
+    topics: "Topics",
+    sections: "Sections",
+    citations: "Source chunks",
+    types: {
+      textbook: "Textbook",
+      lecture_notes: "Lecture notes",
+      exam: "Exam",
+      problem_set: "Problem set",
+      mixed: "Mixed material",
+      unknown: "Unknown",
+    },
+  };
   const [statusFilter, setStatusFilter] = useState("all");
   const [tagFilter, setTagFilter] = useState("all");
   const [sortOrder, setSortOrder] = useState("newest");
@@ -179,6 +232,9 @@ export function MaterialDropzone({
     });
   }, [materials, sortOrder, statusFilter, tagFilter]);
   const selectedMaterials = materials.filter((material) => selectedIds.has(material.id));
+  const availableLibraryMaterials = libraryMaterials.filter(
+    (material) => !materials.some((linked) => linked.id === material.id),
+  );
   const allVisibleSelected = visibleMaterials.length > 0
     && visibleMaterials.every((material) => selectedIds.has(material.id));
   const uploadActive = queue.some((item) => (
@@ -216,6 +272,7 @@ export function MaterialDropzone({
   function queueLabel(item: UploadItem): string {
     if (item.error === "unsupported_type") return t("uploadUnsupported");
     if (item.error === "file_too_large") return t("uploadTooLarge");
+    if (item.error === "material_filename_exists") return t("uploadDuplicate");
     if (item.status === "queued") return t("uploadQueued");
     if (item.status === "uploading") return t("uploading");
     if (item.status === "uploaded") return t("uploaded");
@@ -236,9 +293,15 @@ export function MaterialDropzone({
           controller: undefined,
         });
       }
-    } catch {
+    } catch (error) {
       if (!controller.signal.aborted) {
-        patchQueue(item.id, { status: "failed", error: "upload_failed", controller: undefined });
+        patchQueue(item.id, {
+          status: "failed",
+          error: error instanceof ApiError && error.code === "material_filename_exists"
+            ? "material_filename_exists"
+            : "upload_failed",
+          controller: undefined,
+        });
       }
     } finally {
       activeControllersRef.current.delete(controller);
@@ -324,6 +387,20 @@ export function MaterialDropzone({
     }
   }
 
+  async function analyzeMaterial(material: MaterialRecord) {
+    if (!onAnalyze || analyzingIds.includes(material.id)) return;
+    setAnalyzingIds((current) => [...current, material.id]);
+    setAnalysisErrors((current) => current.filter((id) => id !== material.id));
+    try {
+      const analysis = await onAnalyze(material);
+      setAnalyses((current) => ({ ...current, [material.id]: analysis }));
+    } catch {
+      setAnalysisErrors((current) => [...current, material.id]);
+    } finally {
+      setAnalyzingIds((current) => current.filter((id) => id !== material.id));
+    }
+  }
+
   function toggleSelection(materialId: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -377,7 +454,13 @@ export function MaterialDropzone({
 
   return (
     <section className="content-card materials-card">
-      <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><FileStack size={24} strokeWidth={1.4} /></div>
+      <div className="section-heading"><div><span className="kicker">KNOWLEDGE / LOCAL</span><h2>{t("upload")}</h2></div><button type="button" className="secondary-action" onClick={() => setLibraryOpen((open) => !open)}><FileStack size={17} />{locale === "zh" ? "从总资料库选择" : "Choose from library"}</button></div>
+      {libraryOpen && (
+        <aside className="space-library-picker" data-testid="space-library-picker">
+          <div><strong>{locale === "zh" ? "选择已有资料" : "Choose existing materials"}</strong><span>{locale === "zh" ? "加入后不会重复上传或解析。" : "Adding a material does not upload or process it again."}</span></div>
+          {availableLibraryMaterials.length === 0 ? <p>{locale === "zh" ? "总资料库里没有可加入的新资料。" : "There are no additional materials to add."}</p> : <ul>{availableLibraryMaterials.map((material) => <li key={material.id}><span>{material.title ?? material.filename}</span><button type="button" disabled={linkingLibraryMaterialId !== null} onClick={() => void onLinkLibraryMaterial?.(material)}>{linkingLibraryMaterialId === material.id ? (locale === "zh" ? "正在加入…" : "Adding…") : (locale === "zh" ? "加入" : "Add")}</button></li>)}</ul>}
+        </aside>
+      )}
       <button
         type="button"
         className={dragging ? "upload-surface dragging" : "upload-surface"}
@@ -417,10 +500,10 @@ export function MaterialDropzone({
           <div>
             <span><ListPlus size={17} /></span>
             <div>
-              <strong>{locale === "zh" ? "从资料信息发现的主题" : "Topics found in material details"}</strong>
+              <strong>{locale === "zh" ? "资料重点" : "Material priorities"}</strong>
               <p>{locale === "zh"
-                ? "这些候选只来自标题和标签。确认后才会加入学习路径。"
-                : "These candidates use titles and tags only. Nothing changes until you confirm."}</p>
+                ? "先根据文件名和标签给出建议；点击下方“分析资料”后，会补充正文中的知识点。"
+                : "Initial suggestions come from names and tags. Analyze a file to add topics from its contents."}</p>
             </div>
           </div>
           <ul>
@@ -580,8 +663,52 @@ export function MaterialDropzone({
                     <div><dt>{t("indexedAt")}</dt><dd>{new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(material.indexed_at))}</dd></div>
                   </dl>
                 </details>
+                {analysisErrors.includes(material.id) && (
+                  <span className="material-analysis-error">{analysisCopy.failed}</span>
+                )}
+                {analyses[material.id] && (
+                  <div className="material-analysis" data-testid={`material-analysis-${material.id}`}>
+                    <div className="material-analysis-heading">
+                      <strong>{analysisCopy.types[analyses[material.id].material_type]}</strong>
+                      <span>{analyses[material.id].mode === "ai" ? analysisCopy.ai : analysisCopy.fallback}</span>
+                      <span>{analysisCopy.confidence} {Math.round(analyses[material.id].confidence * 100)}%</span>
+                    </div>
+                    <p>{analyses[material.id].summary}</p>
+                    {analyses[material.id].topics.length > 0 && (
+                      <div className="material-analysis-group">
+                        <b>{analysisCopy.topics}</b>
+                        <div>{analyses[material.id].topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
+                      </div>
+                    )}
+                    {analyses[material.id].sections.length > 0 && (
+                      <details className="material-analysis-sections">
+                        <summary>{analysisCopy.sections} · {analyses[material.id].sections.length}</summary>
+                        <ol>
+                          {analyses[material.id].sections.map((section) => (
+                            <li key={`${section.title}-${section.citation_ids.join("-")}`}>
+                              <strong>{section.title}</strong>
+                              {section.topics.length > 0 && <span>{section.topics.join(" · ")}</span>}
+                              {section.citation_ids.length > 0 && <code>{analysisCopy.citations}: {section.citation_ids.join(", ")}</code>}
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="material-actions">
+                <button
+                  type="button"
+                  className="material-analyze-button"
+                  data-testid={`material-analyze-${material.id}`}
+                  aria-label={`${analysisCopy.analyze} ${material.filename}`}
+                  disabled={!onAnalyze || analyzingIds.includes(material.id)}
+                  onClick={() => void analyzeMaterial(material)}
+                >
+                  <Sparkles size={15} />
+                  <span>{analyzingIds.includes(material.id) ? analysisCopy.analyzing : analysisCopy.analyze}</span>
+                </button>
                 <button type="button" data-testid={`material-edit-${material.id}`} aria-label={`${copy.edit} ${material.title ?? material.filename}`} onClick={() => beginEdit(material)}><Pencil size={15} /></button>
                 <button type="button" data-testid={`material-download-${material.id}`} aria-label={`${t("download")} ${material.filename}`} onClick={() => void onDownload?.(material)}><Download size={15} /></button>
                 <button

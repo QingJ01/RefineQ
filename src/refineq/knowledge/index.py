@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -30,7 +31,12 @@ from sqlalchemy import (
 
 from refineq.database.engine import Database
 from refineq.database.owner_state import lock_writable_owner
-from refineq.database.schema import EMBEDDING_DIMENSIONS, material_chunks, materials
+from refineq.database.schema import (
+    EMBEDDING_DIMENSIONS,
+    material_chunks,
+    materials,
+    workspace_materials,
+)
 from refineq.knowledge.embeddings import Embedder
 from refineq.storage.json_store import validate_identifier
 
@@ -40,6 +46,12 @@ MIN_SEMANTIC_SIMILARITY = 0.2
 RRF_K = 60
 LEXICAL_RRF_WEIGHT = 0.35
 SEMANTIC_RRF_WEIGHT = 0.65
+
+
+def _filename_key(filename: str) -> str:
+    """Normalize a learner-visible filename for uniqueness checks."""
+
+    return unicodedata.normalize("NFKC", filename).strip().casefold()
 
 
 def _lexical_terms(query: str) -> list[str]:
@@ -136,6 +148,14 @@ class MaterialNotFoundError(LookupError):
 
 class MaterialQuotaExceededError(ValueError):
     """Raised when a material transaction would exceed its owner's quota."""
+
+
+class MaterialFilenameConflictError(ValueError):
+    """Raised when a learner already owns a material with the same filename."""
+
+    def __init__(self, filename: str) -> None:
+        self.filename = filename
+        super().__init__(f"A material named '{filename}' already exists")
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +348,7 @@ class KnowledgeIndex:
                     sql_text("SELECT pg_advisory_xact_lock(hashtextextended(:owner_id, 0))"),
                     {"owner_id": owner_id},
                 )
+            self._ensure_unique_filenames(session=session, owner_id=owner_id, prepared=prepared)
             total_count, total_bytes = session.execute(
                 select(func.count(), func.coalesce(func.sum(materials.c.size), 0)).where(
                     materials.c.owner_id == owner_id
@@ -364,6 +385,24 @@ class KnowledgeIndex:
             )
         return [record for record, _, _ in prepared]
 
+    @staticmethod
+    def _ensure_unique_filenames(*, session, owner_id: str, prepared) -> None:
+        incoming = {_filename_key(record.filename): record for record, _, _ in prepared}
+        rows = session.execute(
+            select(
+                materials.c.project_id,
+                materials.c.material_id,
+                materials.c.filename,
+            ).where(materials.c.owner_id == owner_id)
+        ).all()
+        incoming_identities = {(record.project_id, record.id) for record, _, _ in prepared}
+        for project_id, material_id, filename in rows:
+            if (project_id, material_id) in incoming_identities:
+                continue
+            conflict = incoming.get(_filename_key(filename))
+            if conflict is not None:
+                raise MaterialFilenameConflictError(conflict.filename)
+
     def _prepare_documents(
         self,
         *,
@@ -375,6 +414,7 @@ class KnowledgeIndex:
         owner_id = validate_identifier(owner_id, field="owner_id")
         prepared: list[tuple[MaterialRecord, MaterialDocument, list[str]]] = []
         seen: set[tuple[str, str]] = set()
+        seen_filenames: set[str] = set()
         indexed_at = datetime.now(UTC)
         for document in documents:
             project_id = validate_identifier(document.project_id, field="project_id")
@@ -383,6 +423,10 @@ class KnowledgeIndex:
             if identity in seen:
                 raise ValueError("Material IDs must be unique within a batch")
             seen.add(identity)
+            filename_key = _filename_key(document.filename)
+            if filename_key in seen_filenames:
+                raise MaterialFilenameConflictError(document.filename)
+            seen_filenames.add(filename_key)
             chunks = self._chunks(document.text)
             if not chunks:
                 raise ValueError("Indexed text must not be blank")
@@ -586,10 +630,23 @@ class KnowledgeIndex:
         candidate_limit = max(50, bounded_limit * 8)
         query_embedding = self._query_embedding(query)
         with self.database.session() as session:
-            scope = (
-                material_chunks.c.owner_id == owner_id,
-                material_chunks.c.project_id == project_id,
-            )
+            scope = [material_chunks.c.owner_id == owner_id]
+            if project_id == "library":
+                scope.append(material_chunks.c.project_id == "library")
+            else:
+                linked_ids = select(workspace_materials.c.material_id).where(
+                    workspace_materials.c.owner_id == owner_id,
+                    workspace_materials.c.workspace_id == project_id,
+                )
+                scope.append(
+                    or_(
+                        material_chunks.c.project_id == project_id,
+                        and_(
+                            material_chunks.c.project_id == "library",
+                            material_chunks.c.material_id.in_(linked_ids),
+                        ),
+                    )
+                )
             database_scores: dict[tuple[str, int], float] = {}
             lexical_by_key: dict[tuple[str, int], float] = {}
             if self.database.is_postgresql:
@@ -698,6 +755,18 @@ class KnowledgeIndex:
         project_id = validate_identifier(project_id, field="project_id")
         material_id = validate_identifier(material_id, field="material_id")
         with self.database.session() as session:
+            if project_id != "library":
+                linked = session.scalar(
+                    select(func.count())
+                    .select_from(workspace_materials)
+                    .where(
+                        workspace_materials.c.owner_id == owner_id,
+                        workspace_materials.c.workspace_id == project_id,
+                        workspace_materials.c.material_id == material_id,
+                    )
+                )
+                if linked:
+                    project_id = "library"
             row = session.execute(
                 select(materials).where(
                     materials.c.owner_id == owner_id,
@@ -709,6 +778,59 @@ class KnowledgeIndex:
             raise MaterialNotFoundError(material_id)
         return self._material_record(row)
 
+    def material_chunks(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        material_id: str,
+        limit: int = 24,
+    ) -> list[SearchResult]:
+        """Return evenly sampled chunks for bounded whole-document analysis."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        project_id = validate_identifier(project_id, field="project_id")
+        material_id = validate_identifier(material_id, field="material_id")
+        bounded_limit = max(1, min(limit, 100))
+        if project_id != "library":
+            record = self.get_material(
+                owner_id=owner_id, project_id=project_id, material_id=material_id
+            )
+            project_id = record.project_id
+        with self.database.session() as session:
+            rows = session.execute(
+                select(material_chunks)
+                .where(
+                    material_chunks.c.owner_id == owner_id,
+                    material_chunks.c.project_id == project_id,
+                    material_chunks.c.material_id == material_id,
+                )
+                .order_by(material_chunks.c.chunk_index)
+            ).all()
+        if not rows:
+            raise MaterialNotFoundError(material_id)
+        if len(rows) > bounded_limit:
+            indexes = (
+                {
+                    round(position * (len(rows) - 1) / (bounded_limit - 1))
+                    for position in range(bounded_limit)
+                }
+                if bounded_limit > 1
+                else {0}
+            )
+            rows = [row for index, row in enumerate(rows) if index in indexes]
+        return [
+            SearchResult(
+                citation_id=f"{row.material_id}#{row.chunk_index}",
+                material_id=row.material_id,
+                filename=row.filename,
+                chunk_index=int(row.chunk_index),
+                text=row.content,
+                score=1.0,
+            )
+            for row in rows
+        ]
+
     def get_material_storage_key(
         self,
         *,
@@ -719,6 +841,11 @@ class KnowledgeIndex:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
         material_id = validate_identifier(material_id, field="material_id")
+        if project_id != "library":
+            record = self.get_material(
+                owner_id=owner_id, project_id=project_id, material_id=material_id
+            )
+            project_id = record.project_id
         with self.database.session() as session:
             storage_key = session.scalar(
                 select(materials.c.storage_key).where(
@@ -811,6 +938,11 @@ class KnowledgeIndex:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
         material_id = validate_identifier(material_id, field="material_id")
+        if project_id != "library":
+            record = self.get_material(
+                owner_id=owner_id, project_id=project_id, material_id=material_id
+            )
+            project_id = record.project_id
         values: dict[str, object] = {}
         if title is not None:
             values["title"] = title
@@ -851,10 +983,23 @@ class KnowledgeIndex:
     ) -> list[MaterialRecord]:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
-        filters = [
-            materials.c.owner_id == owner_id,
-            materials.c.project_id == project_id,
-        ]
+        filters = [materials.c.owner_id == owner_id]
+        if project_id != "library":
+            linked_ids = select(workspace_materials.c.material_id).where(
+                workspace_materials.c.owner_id == owner_id,
+                workspace_materials.c.workspace_id == project_id,
+            )
+            filters.append(
+                or_(
+                    materials.c.project_id == project_id,
+                    and_(
+                        materials.c.project_id == "library",
+                        materials.c.material_id.in_(linked_ids),
+                    ),
+                )
+            )
+        else:
+            filters.append(materials.c.project_id == "library")
         if status is not None:
             filters.append(materials.c.status == status)
         with self.database.session() as session:
@@ -876,6 +1021,75 @@ class KnowledgeIndex:
         if sort == "size_desc":
             return sorted(records, key=lambda record: (-record.size, record.id))
         raise ValueError("Unsupported material sort order")
+
+    def list_owner_materials(self, *, owner_id: str) -> list[MaterialRecord]:
+        """List every material owned by a learner across library and workspace scopes."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        with self.database.session() as session:
+            rows = session.execute(
+                select(materials).where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == "library",
+                )
+            ).all()
+        records = [self._material_record(row) for row in rows]
+        return sorted(records, key=lambda record: (-record.indexed_at.timestamp(), record.id))
+
+    def ensure_filenames_available(self, *, owner_id: str, filenames: list[str]) -> None:
+        """Reject duplicate names in a batch or in the learner's global library."""
+
+        keys: dict[str, str] = {}
+        for filename in filenames:
+            key = _filename_key(filename)
+            if key in keys:
+                raise MaterialFilenameConflictError(filename)
+            keys[key] = filename
+        for material in self.list_owner_materials(owner_id=owner_id):
+            conflict = keys.get(_filename_key(material.filename))
+            if conflict is not None:
+                raise MaterialFilenameConflictError(conflict)
+
+    def link_material(self, *, owner_id: str, workspace_id: str, material_id: str) -> None:
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        workspace_id = validate_identifier(workspace_id, field="workspace_id")
+        material_id = validate_identifier(material_id, field="material_id")
+        self.get_material(owner_id=owner_id, project_id="library", material_id=material_id)
+        with self._lock_for(owner_id), self.database.session() as session:
+            self._lock_owner_write(session, owner_id)
+            exists = session.scalar(
+                select(func.count())
+                .select_from(workspace_materials)
+                .where(
+                    workspace_materials.c.owner_id == owner_id,
+                    workspace_materials.c.workspace_id == workspace_id,
+                    workspace_materials.c.material_id == material_id,
+                )
+            )
+            if not exists:
+                session.execute(
+                    insert(workspace_materials).values(
+                        owner_id=owner_id,
+                        workspace_id=workspace_id,
+                        material_id=material_id,
+                    )
+                )
+
+    def unlink_materials(
+        self, *, owner_id: str, workspace_id: str, material_ids: list[str]
+    ) -> None:
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        workspace_id = validate_identifier(workspace_id, field="workspace_id")
+        normalized = [validate_identifier(item, field="material_id") for item in material_ids]
+        with self._lock_for(owner_id), self.database.session() as session:
+            self._lock_owner_write(session, owner_id)
+            session.execute(
+                delete(workspace_materials).where(
+                    workspace_materials.c.owner_id == owner_id,
+                    workspace_materials.c.workspace_id == workspace_id,
+                    workspace_materials.c.material_id.in_(normalized),
+                )
+            )
 
     def material_status_counts_for_projects(
         self,

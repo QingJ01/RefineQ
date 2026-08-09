@@ -60,6 +60,8 @@ _ENGLISH_MONTH = (
 class IntentConstraints:
     exam_at: datetime | None = None
     daily_minutes: int | None = None
+    preferred_hour: int | None = None
+    plan_requested: bool = False
 
 
 def _number(value: str) -> int:
@@ -187,7 +189,62 @@ def _daily_minutes(intent: str) -> int | None:
         matched = re.search(pattern, intent, flags=re.IGNORECASE)
         if matched:
             return _number(matched.group("count"))
+    hour_patterns = (
+        rf"(?:每天|每日).{{0,16}}?(?P<count>{_NUMBER})\s*(?:个)?小时",
+        rf"(?P<count>{_NUMBER})\s*(?:个)?小时.{{0,10}}?(?:每天|每日)",
+        rf"(?P<count>{_NUMBER})\s*hours?\s*(?:a\s+day|per\s+day|each\s+day|daily)",
+        rf"(?:daily|each\s+day).{{0,24}}?(?P<count>{_NUMBER})\s*hours?",
+    )
+    for pattern in hour_patterns:
+        matched = re.search(pattern, intent, flags=re.IGNORECASE)
+        if matched:
+            return _number(matched.group("count")) * 60
     return None
+
+
+def _preferred_hour(intent: str) -> int | None:
+    chinese = re.search(
+        rf"(?P<period>凌晨|早上|早晨|上午|中午|下午|晚上)?\s*"
+        rf"(?P<hour>{_NUMBER})\s*(?:点|时)",
+        intent,
+    )
+    if chinese:
+        hour = _number(chinese.group("hour"))
+        period = chinese.group("period") or ""
+        if (period in {"下午", "晚上"} and hour < 12) or (period == "中午" and hour < 11):
+            hour += 12
+        elif period == "凌晨" and hour == 12:
+            hour = 0
+        return hour if 0 <= hour <= 23 else None
+
+    english = re.search(
+        r"\b(?:at\s+)?(?P<hour>\d{1,2})(?::\d{2})?\s*(?P<period>am|pm)\b",
+        intent,
+        flags=re.IGNORECASE,
+    )
+    if not english:
+        return None
+    hour = int(english.group("hour"))
+    if not 1 <= hour <= 12:
+        return None
+    if english.group("period").casefold() == "pm" and hour != 12:
+        hour += 12
+    elif english.group("period").casefold() == "am" and hour == 12:
+        hour = 0
+    return hour
+
+
+def _plan_requested(intent: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:生成|制定|创建|安排|规划).{0,8}(?:学习计划|复习计划|课表|日程)"
+            r"|(?:学习计划|复习计划|课表|日程).{0,8}(?:生成|制定|创建|安排|规划)"
+            r"|\b(?:create|generate|make|build)\s+(?:a\s+)?(?:study|learning|revision)\s+plan\b"
+            r"|\b(?:create|generate|build)\s+(?:a\s+)?schedule\b",
+            intent,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def infer_intent_constraints(intent: str, *, now: datetime) -> IntentConstraints:
@@ -196,4 +253,6 @@ def infer_intent_constraints(intent: str, *, now: datetime) -> IntentConstraints
     return IntentConstraints(
         exam_at=_relative_exam(intent, now) or _absolute_exam(intent, now),
         daily_minutes=_daily_minutes(intent),
+        preferred_hour=_preferred_hour(intent),
+        plan_requested=_plan_requested(intent),
     )

@@ -10,21 +10,24 @@ import type { Locale, PlanUpdateInput, StudyPlan } from "@/lib/types";
 
 const copy = {
   zh: {
-    currentConstraints: "当前生效计划",
+    currentConstraints: "当前安排",
     minutesPerDay: "分钟/天",
-    historicalInput: "历史原始输入",
-    historicalNote: "此文本只记录最初意图，不再控制当前日程。",
+    historicalInput: "最初目标",
+    historicalNote: "这里只显示创建学习空间时填写的目标，不会改变当前日程。",
     summary: "调整学习计划",
-    description: "修改目标、截止日期、每日投入和主题顺序。保存设置不会打乱现有日程。",
+    createSummary: "生成学习计划",
+    description: "修改目标、日期、每天学习时长和内容顺序。",
     goal: "学习目标",
     examDate: "目标日期",
-    dailyMinutes: "每日分钟数",
-    topicOrder: "主题顺序",
+    dailyMinutes: "每天学习多久",
+    topicOrder: "学习内容顺序",
     moveUp: "上移",
     moveDown: "下移",
     cancel: "取消修改",
     save: "保存设置",
     regenerate: "重新生成课表",
+    generate: "生成课表",
+    notGenerated: "尚未生成日程",
     saved: "计划设置已保存。",
     goalRequired: "请填写学习目标。",
     dateRequired: "目标日期至少应为明天。",
@@ -41,6 +44,7 @@ const copy = {
     historicalInput: "Historical input",
     historicalNote: "This text records the original intent and does not control the current schedule.",
     summary: "Adjust learning plan",
+    createSummary: "Create learning plan",
     description: "Change the goal, target date, daily time, and topic order. Saving does not rearrange existing sessions.",
     goal: "Learning goal",
     examDate: "Target date",
@@ -51,6 +55,8 @@ const copy = {
     cancel: "Cancel changes",
     save: "Save settings",
     regenerate: "Regenerate schedule",
+    generate: "Generate schedule",
+    notGenerated: "No schedule yet",
     saved: "Plan settings saved.",
     goalRequired: "Enter a learning goal.",
     dateRequired: "Choose a target date after today.",
@@ -80,7 +86,7 @@ export function PlanSettings({
   onSave,
 }: {
   locale: Locale;
-  plan: StudyPlan;
+  plan: StudyPlan | null;
   topics: Record<string, string>;
   topicOrder: string[];
   originalGoal: string;
@@ -89,9 +95,14 @@ export function PlanSettings({
 }) {
   const text = copy[locale];
   const availableTopics = useMemo(() => Object.keys(topics), [topics]);
-  const [goal, setGoal] = useState(plan.goal);
-  const [examDate, setExamDate] = useState(plan.exam_at.slice(0, 10));
-  const [dailyMinutes, setDailyMinutes] = useState(plan.daily_minutes);
+  const defaultExamDate = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() + 30);
+    return date.toISOString().slice(0, 10);
+  }, []);
+  const [goal, setGoal] = useState(plan?.goal ?? originalGoal);
+  const [examDate, setExamDate] = useState(plan?.exam_at.slice(0, 10) ?? defaultExamDate);
+  const [dailyMinutes, setDailyMinutes] = useState(plan?.daily_minutes ?? 45);
   const [order, setOrder] = useState(() => initialOrder(topicOrder, topics));
   const [errors, setErrors] = useState<PlanSettingsErrors>({});
   const [saving, setSaving] = useState(false);
@@ -99,9 +110,9 @@ export function PlanSettings({
   const [confirming, setConfirming] = useState(false);
 
   function reset() {
-    setGoal(plan.goal);
-    setExamDate(plan.exam_at.slice(0, 10));
-    setDailyMinutes(plan.daily_minutes);
+    setGoal(plan?.goal ?? originalGoal);
+    setExamDate(plan?.exam_at.slice(0, 10) ?? defaultExamDate);
+    setDailyMinutes(plan?.daily_minutes ?? 45);
     setOrder(initialOrder(topicOrder, topics));
     setErrors({});
     setNotice("");
@@ -138,7 +149,7 @@ export function PlanSettings({
         exam_at: examAt,
         daily_minutes: dailyMinutes,
         topic_order: order,
-        regenerate,
+        regenerate: regenerate || !plan,
       });
       setNotice(text.saved);
       setConfirming(false);
@@ -161,21 +172,21 @@ export function PlanSettings({
     topicOrder: text.topicsInvalid,
   };
   const locked = busy || saving;
-  const formattedExamDate = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+  const formattedExamDate = plan ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
     timeZone: "UTC",
-  }).format(new Date(plan.exam_at));
+  }).format(new Date(plan.exam_at)) : null;
 
   return (
     <details className="content-card plan-settings" data-testid="plan-settings">
       <summary data-testid="plan-settings-toggle">
-        <span><CalendarClock size={18} /><strong>{text.summary}</strong></span>
+        <span><CalendarClock size={18} /><strong>{plan ? text.summary : text.createSummary}</strong></span>
         <small>{text.description}</small>
         <div className="current-plan-constraints" data-testid="current-plan-constraints">
           <span>{text.currentConstraints}</span>
-          <strong>{formattedExamDate} · {plan.daily_minutes} {text.minutesPerDay}</strong>
+          <strong>{plan ? `${formattedExamDate} · ${plan.daily_minutes} ${text.minutesPerDay}` : text.notGenerated}</strong>
         </div>
       </summary>
       <form onSubmit={submit} noValidate>
@@ -257,9 +268,9 @@ export function PlanSettings({
           <button type="button" data-testid="plan-settings-cancel" disabled={locked} onClick={reset}>
             <Undo2 size={15} /> {text.cancel}
           </button>
-          <button type="submit" className="secondary-action" data-testid="plan-settings-save" disabled={locked}>
+          {plan && <button type="submit" className="secondary-action" data-testid="plan-settings-save" disabled={locked}>
             <Save size={15} /> {text.save}
-          </button>
+          </button>}
           <button
             type="button"
             className="danger-action"
@@ -274,9 +285,12 @@ export function PlanSettings({
                 availableTopics,
               });
               setErrors(nextErrors);
-              if (Object.keys(nextErrors).length === 0) setConfirming(true);
+              if (Object.keys(nextErrors).length === 0) {
+                if (plan) setConfirming(true);
+                else void save(true);
+              }
             }}
-          ><RefreshCcw size={15} /> {text.regenerate}</button>
+          ><RefreshCcw size={15} /> {plan ? text.regenerate : text.generate}</button>
         </div>
       </form>
       <ConfirmDialog

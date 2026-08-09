@@ -1341,15 +1341,15 @@
 
 .learning-progress-view {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
-  align-items: start;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
   margin: 0 auto;
 }
 
 .learning-progress-view .page-section-heading {
-  grid-column: 1 / -1;
-  margin-bottom: 2px;
+  position: relative;
+  margin-bottom: 0;
+  padding-right: 140px;
 }
 
 .learning-progress-view .learning-record {
@@ -1358,15 +1358,40 @@
 }
 
 .learning-progress-view > .page-section-heading a {
-  display: inline-block;
-  margin-top: 10px;
+  position: absolute;
+  top: 3px;
+  right: 0;
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
   color: var(--accent);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  text-decoration: none;
+}
+
+.progress-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 16px;
+}
+
+.progress-overview-grid > .content-card {
+  min-width: 0;
+  height: 100%;
 }
 
 @media (max-width: 1180px) {
   .learning-progress-view {
+    grid-template-columns: 1fr;
+  }
+
+  .progress-overview-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3021,8 +3046,8 @@ textarea:focus {
   transform: translateY(-1px);
 }
 
-.composer-send span {
-  font-size: 9px;
+.composer-send[aria-busy="true"] {
+  opacity: 0.78;
 }
 
 .home-dispatch-status {
@@ -4258,7 +4283,7 @@ textarea:focus {
 }
 
 .progress-insights {
-  padding: 28px;
+  padding: 24px;
 }
 
 .topic-mastery-list {
@@ -4268,7 +4293,7 @@ textarea:focus {
 
 .topic-mastery-row {
   display: grid;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(160px, 2fr) 42px;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(120px, 1.4fr) 38px;
   align-items: center;
   gap: 14px;
 }
@@ -4324,8 +4349,9 @@ textarea:focus {
   margin-top: 22px;
   padding: 13px 14px;
   border-radius: 12px;
-  background: var(--apricot-soft);
-  color: #8b561f;
+  border: 1px solid #e4ebfa;
+  background: #f4f7fd;
+  color: var(--muted-strong);
   font-size: 11px;
 }
 
@@ -4975,9 +5001,10 @@ textarea:focus {
   accent-color: var(--accent);
 }
 
-.material-library-list li {
+.material-list.material-library-list > li {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   transition: background 160ms ease, border-color 160ms ease;
 }
 
@@ -4997,17 +5024,19 @@ textarea:focus {
 .material-title-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
 }
 
 .material-title-row > span {
+  min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text);
   font-weight: 650;
 }
 
 .material-title-row small {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -5102,6 +5131,7 @@ textarea:focus {
 }
 
 .material-record-copy {
+  min-width: 0;
   display: grid;
   gap: 4px;
 }
@@ -5147,9 +5177,128 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.material-analysis-status,
+.material-analysis-error {
+  margin-top: 7px;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.material-analysis-error {
+  color: var(--danger);
+}
+
+.material-analysis {
+  display: grid;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+}
+
+.material-analysis-heading,
+.material-analysis-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.material-analysis-heading span,
+.material-analysis-group span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted-strong);
+  font-size: 9px;
+}
+
+.material-analysis p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.material-analysis-group {
+  display: grid;
+  gap: 6px;
+}
+
+.material-analysis-group b,
+.material-analysis-sections summary {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.material-analysis-sections summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.material-analysis-sections ol {
+  display: grid;
+  gap: 8px;
+  margin: 9px 0 0;
+  padding-left: 18px;
+}
+
+.material-analysis-sections li {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+}
+
+.material-analysis-sections span,
+.material-analysis-sections code {
+  color: var(--muted-strong);
+  font-size: 9px;
+}
+
+.calendar-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.calendar-add-editor {
+  margin-bottom: 14px;
+}
+
 .material-actions {
   display: flex;
+  align-items: center;
+  align-self: start;
   gap: 4px;
+}
+
+.material-actions .material-analyze-button {
+  width: auto;
+  min-width: 88px;
+  max-width: 180px;
+  padding: 0 11px;
+  grid-auto-flow: column;
+  gap: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.material-actions .material-analyze-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .material-list em {
@@ -7124,9 +7273,10 @@ textarea:focus {
 .calendar-toolbar h2 { margin: 0; font-size: 25px; letter-spacing: -.02em; }
 .calendar-toolbar-actions { display: flex; align-items: center; gap: 10px; }
 .calendar-today-button { min-height: 34px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(255,255,255,.82); color: var(--accent); font-weight: 650; }
+.calendar-clear-button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid rgba(200,63,73,.28); border-radius: 9px; background: rgba(255,255,255,.82); color: #b1323c; font-weight: 650; }
 .calendar-navigation { display: flex; align-items: center; gap: 12px; }
 .calendar-navigation button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(255,255,255,.82); color: var(--accent); }
-.calendar-layout { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; overflow: hidden; border: 1px solid #dfe2e8; border-radius: 14px; background: #fff; box-shadow: 0 18px 50px rgba(29,35,48,.07); }
+.calendar-layout { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 390px; overflow: hidden; border: 1px solid #dfe2e8; border-radius: 14px; background: #fff; box-shadow: 0 18px 50px rgba(29,35,48,.07); }
 .month-calendar { min-width: 0; padding: 0; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .calendar-weekdays { background: #f7f7f9; border-bottom: 1px solid var(--border); }
@@ -7138,12 +7288,13 @@ textarea:focus {
 .calendar-day.empty { background: #fafafa; }
 .calendar-day > span { display: inline-grid; width: 25px; height: 25px; place-items: center; border-radius: 50%; font-size: 12px; }
 .calendar-day > div { display: grid; gap: 3px; margin-top: 5px; text-align: left; }
-.calendar-event { overflow: hidden; padding: 3px 5px; border-radius: 4px; background: #0a84ff; color: white; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event { display: flex; gap: 4px; overflow: hidden; padding: 3px 5px; border-radius: 4px; background: #0a84ff; color: white; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event time { flex: 0 0 auto; font-weight: 750; }
 .calendar-event.color-1 { background: #ff9f0a; }
 .calendar-event.color-2 { background: #30b95d; }
 .calendar-event.color-3 { background: #af52de; }
+.day-agenda { min-width: 0; overflow: hidden; border-left: 1px solid var(--border); padding: 22px 14px; background: #f7f7f9; }
 .calendar-event.completed { opacity: .58; text-decoration: line-through; }
-.day-agenda { border-left: 1px solid var(--border); padding: 22px 18px; background: #f7f7f9; }
 .day-agenda h3 { margin: 5px 0 18px; }
 .day-agenda > p { color: var(--muted); font-size: 12px; }
 .day-agenda ol { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -7158,6 +7309,23 @@ textarea:focus {
 .calendar-editor label { display: grid; gap: 5px; color: var(--muted-strong); font-size: 11px; }
 .calendar-editor input { min-width: 0; }
 .calendar-editor > div { display: flex; gap: 8px; }
+.calendar-edit-panel { margin-bottom: 12px; }
+.day-timeline { position: relative; height: min(720px, calc(100dvh - 230px)); min-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+.day-timeline-hours { width: 100%; }
+.day-timeline-hour { height: 60px; display: grid; grid-template-columns: 46px 1fr; }
+.day-timeline-hour time { padding: 0 7px; color: var(--muted); font-size: 9px; line-height: 1; transform: translateY(-4px); text-align: right; }
+.day-timeline-hour span { border-top: 1px solid #e7e9ee; }
+.day-timeline-events { position: absolute; inset: 0 7px 0 53px; height: 1440px; pointer-events: none; }
+.timeline-event { position: absolute; z-index: 1; left: 0; right: 0; display: grid; align-content: start; gap: 2px; overflow: hidden; padding: 6px 8px; border: 0; border-left: 4px solid #006edb; border-radius: 6px; background: #dceeff; color: #124f87; text-align: left; pointer-events: auto; }
+.timeline-event.color-1 { border-left-color: #d77a00; background: #fff0d7; color: #89500a; }
+.timeline-event.color-2 { border-left-color: #168f3b; background: #dff5e5; color: #17632d; }
+.timeline-event.color-3 { border-left-color: #8c3fbd; background: #f0e2f8; color: #663083; }
+.timeline-event.completed { opacity: .58; text-decoration: line-through; }
+.timeline-event strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-event small { font-size: 9px; }
+.timeline-event-actions { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; pointer-events: auto; }
+.timeline-event-actions button { min-height: 20px; padding: 2px 5px; border: 1px solid currentColor; border-radius: 5px; background: rgba(255,255,255,.72); color: inherit; font-size: 8px; }
+.timeline-empty { margin: 18px 8px; color: var(--muted); font-size: 11px; }
 @media (max-width: 980px) { .workspace-content-calendar { padding: 16px; } .calendar-layout { grid-template-columns: 1fr; } .day-agenda { border-top: 1px solid var(--border); border-left: 0; } .calendar-day { min-height: 82px; } }
 
 /* Keep the selected session canvas full-width after legacy shell rules. */
@@ -7268,19 +7436,30 @@ textarea:focus {
 
 .learning-report-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .learning-report-grid > div {
   display: grid;
-  gap: 0.25rem;
-  padding: 1rem;
-  border: 1px solid var(--border);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 3px 10px;
+  min-height: 92px;
+  padding: 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.learning-report-grid > div > svg {
+  grid-row: 1 / 3;
+  color: var(--accent);
 }
 
 .learning-report-grid strong {
-  font-size: 1.25rem;
+  font-size: 18px;
+  line-height: 1.2;
 }
 
 .learning-report-grid span {
@@ -7345,7 +7524,17 @@ textarea:focus {
 
 @media (max-width: 640px) {
   .learning-report-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+  }
+
+  .learning-progress-view .page-section-heading {
+    padding-right: 0;
+  }
+
+  .learning-progress-view > .page-section-heading a {
+    position: static;
+    width: fit-content;
+    margin-top: 10px;
   }
 
   .calendar-layout {
@@ -7590,8 +7779,7 @@ textarea:focus {
 }
 
 .app-recent-spaces {
-  max-height: 205px;
-  overflow-y: auto;
+  overflow: visible;
   padding-top: 9px;
 }
 
@@ -7600,6 +7788,70 @@ textarea:focus {
   display: grid;
   grid-template-columns: 7px auto minmax(0, 1fr);
   gap: 8px;
+}
+
+.app-space-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 2px;
+}
+
+.app-space-menu {
+  position: relative;
+}
+
+.app-space-menu-trigger {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.app-space-menu-trigger:hover,
+.app-space-menu-trigger[aria-expanded="true"] {
+  background: rgba(23, 24, 28, 0.06);
+  color: var(--text);
+}
+
+.app-space-menu-popover {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 156px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 30px rgba(31, 39, 61, 0.14);
+}
+
+.app-space-menu-popover > button {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 680;
+  text-align: left;
+}
+
+.app-space-menu-popover > button:hover {
+  background: var(--danger-soft);
 }
 
 .app-space-link > i,
@@ -8453,4 +8705,40 @@ textarea:focus {
   .global-day-agenda {
     padding: 22px 14px 26px;
   }
+}
+.global-library-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  background: #f6f8fc;
+}
+
+.global-library-sidebar { min-width: 0; }
+.global-library-page { padding: 48px clamp(28px, 5vw, 76px); max-width: 1400px; width: 100%; }
+.global-library-page > header h1 { margin: 8px 0; font-size: clamp(32px, 4vw, 52px); }
+.global-library-page > header p { color: var(--muted); margin: 0 0 28px; }
+.global-library-upload { display: flex; align-items: center; gap: 14px; padding: 22px; border: 1.5px dashed #9bb8f7; border-radius: 18px; background: #eef4ff; color: #245ed8; cursor: pointer; }
+.global-library-upload span { color: var(--muted); margin-left: auto; }
+.global-library-summary { display: flex; justify-content: space-between; margin: 28px 0 12px; }
+.global-library-summary span { color: var(--muted); }
+.global-library-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.global-library-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 17px 18px; border: 1px solid var(--line); border-radius: 15px; background: white; }
+.global-library-list li > div { min-width: 0; display: grid; gap: 4px; }
+.global-library-list li > div strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.global-library-list li > div span { color: var(--muted); font-size: 13px; }
+.global-library-list li > label { display: flex; align-items: center; gap: 7px; }
+.global-library-list select { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: white; }
+.space-library-picker { margin: 0 0 18px; padding: 18px; border: 1px solid #d9e3f7; border-radius: 16px; background: #f8faff; }
+.space-library-picker > div { display: grid; gap: 4px; }
+.space-library-picker > div span, .space-library-picker > p { color: var(--muted); font-size: 13px; }
+.space-library-picker ul { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.space-library-picker li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 11px; background: white; border: 1px solid var(--line); }
+.space-library-picker li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-library-picker li button { border: 0; border-radius: 9px; padding: 7px 12px; color: #245ed8; background: #e9f0ff; }
+@media (max-width: 820px) {
+  .global-library-shell { display: block; }
+  .global-library-page { padding: 28px 18px 110px; }
+  .global-library-list li { grid-template-columns: auto minmax(0, 1fr); }
+  .global-library-list li > label { grid-column: 2; }
+  .global-library-upload span { display: none; }
 }

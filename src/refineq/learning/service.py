@@ -303,6 +303,15 @@ class PlanSessionUpdate(BaseModel):
     minutes: int | None = Field(default=None, ge=5, le=480)
 
 
+class PlanSessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic_name: str = Field(min_length=1, max_length=200)
+    planned_at: datetime
+    minutes: int = Field(ge=5, le=480)
+    activity: str = Field(default="practice", pattern=r"^(learn|practice|apply|review)$")
+
+
 class PlanUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -670,7 +679,7 @@ class LearningService:
             nonlocal updated
             progress = self._progress(data)
             plan = progress.get("plan")
-            if not plan:
+            if not plan and not payload.regenerate:
                 raise LearningNotSeededError("Learning plan has not been created")
             for session in plan["sessions"]:
                 if session["id"] != session_id:
@@ -699,6 +708,70 @@ class LearningService:
             raise LearningServiceError("Study session update failed")
         return StudySession.model_validate(updated)
 
+    def add_plan_session(
+        self, owner_id: str, project_id: str, payload: PlanSessionCreate
+    ) -> StudySession:
+        self._require_project(owner_id, project_id)
+        if payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None:
+            raise LearningConflictError("planned_at must be timezone-aware")
+        created = None
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal created
+            progress = self._progress(data)
+            plan = progress.get("plan")
+            if not plan:
+                raise LearningNotSeededError("Learning plan has not been created")
+            topic_id = stable_id("topic", project_id, payload.topic_name.strip())
+            progress["topics"].setdefault(
+                topic_id,
+                {
+                    "id": topic_id,
+                    "name": payload.topic_name.strip(),
+                    "knowledge_type": KnowledgeType.CONCEPT.value,
+                },
+            )
+            progress["bkt_states"].setdefault(topic_id, DEFAULT_BKT.model_dump(mode="json"))
+            progress["difficulty_states"].setdefault(
+                topic_id, DifficultyState().model_dump(mode="json")
+            )
+            progress.setdefault("topic_order", list(progress["topics"]))
+            if topic_id not in progress["topic_order"]:
+                progress["topic_order"].append(topic_id)
+            created = StudySession(
+                id=stable_id(
+                    "manual-session",
+                    plan["id"],
+                    topic_id,
+                    payload.planned_at.isoformat(),
+                    str(len(plan["sessions"])),
+                ),
+                topic_id=topic_id,
+                planned_at=payload.planned_at,
+                minutes=payload.minutes,
+                activity=payload.activity,
+            )
+            plan["sessions"].append(created.model_dump(mode="json"))
+            return data
+
+        with self._learning.plan_transaction(owner_id, project_id):
+            self._learning.mutate(owner_id, project_id, apply)
+        if created is None:
+            raise LearningServiceError("Study session creation failed")
+        return created
+
+    def clear_plan(self, owner_id: str, project_id: str) -> None:
+        """Clear calendar sessions while preserving learning state and materials."""
+        self._require_project(owner_id, project_id)
+
+        def apply(data: dict[str, Any]) -> dict[str, Any]:
+            progress = self._progress(data)
+            progress["plan"] = None
+            return data
+
+        with self._learning.plan_transaction(owner_id, project_id):
+            self._learning.mutate(owner_id, project_id, apply)
+
     def update_plan(
         self,
         owner_id: str,
@@ -717,7 +790,7 @@ class LearningService:
             nonlocal generated
             progress = self._progress(data)
             plan = progress.get("plan")
-            if not plan:
+            if not plan and not payload.regenerate:
                 raise LearningNotSeededError("Learning plan has not been created")
             topic_ids = list(progress["topics"])
             if len(payload.topic_order) != len(set(payload.topic_order)) or set(
@@ -738,14 +811,16 @@ class LearningService:
             except ValueError as error:
                 raise LearningConflictError(str(error)) from error
 
-            existing = StudyPlan.model_validate(plan)
+            existing = StudyPlan.model_validate(plan) if plan else None
             if payload.regenerate:
                 completed_ids = {
-                    session.id for session in existing.sessions if session.status == "completed"
+                    session.id
+                    for session in (existing.sessions if existing else [])
+                    if session.status == "completed"
                 }
                 completed_kinds = Counter(
                     (session.topic_id, session.activity)
-                    for session in existing.sessions
+                    for session in (existing.sessions if existing else [])
                     if session.status == "completed"
                 )
                 sessions: list[StudySession] = []
@@ -766,6 +841,8 @@ class LearningService:
                     {**candidate.model_dump(mode="json"), "sessions": sessions}
                 )
             else:
+                if existing is None:
+                    raise LearningNotSeededError("Learning plan has not been created")
                 generated = StudyPlan.model_validate(
                     {
                         **existing.model_dump(mode="json"),

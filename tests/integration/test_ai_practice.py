@@ -50,6 +50,23 @@ class FakeLearningModel:
                     "citations": ["material-1#0"],
                 }
             )
+        if response_model.__name__ == "MaterialAnalysisModelOutput":
+            return response_model.model_validate(
+                {
+                    "material_type": "lecture_notes",
+                    "title": "函数极限讲义",
+                    "summary": "介绍函数极限的含义。",
+                    "sections": [
+                        {
+                            "title": "函数极限",
+                            "topics": ["函数极限"],
+                            "citation_ids": ["material-1#0", "invalid#9"],
+                        }
+                    ],
+                    "topics": ["函数极限"],
+                    "confidence": 0.91,
+                }
+            )
         return response_model.model_validate(
             {
                 "score": 88,
@@ -254,6 +271,24 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
             ),
         )
 
+        analysis_response = client.post(
+            f"/workspaces/{workspace_id}/materials/material-1/analysis",
+            headers=headers,
+        )
+        assert analysis_response.status_code == 200
+        analysis = analysis_response.json()
+        assert analysis["mode"] == "ai"
+        assert analysis["material_type"] == "lecture_notes"
+        assert analysis["topics"] == ["函数极限"]
+        assert analysis["sections"][0]["citation_ids"] == ["material-1#0"]
+
+        persisted = client.get(
+            f"/workspaces/{workspace_id}/materials/material-1/analysis",
+            headers=headers,
+        )
+        assert persisted.status_code == 200
+        assert persisted.json() == analysis
+
         question_response = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
@@ -313,7 +348,11 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
     assert replay.status_code == 200
     assert replay.json()["replayed"] is True
     assert replay.json()["score"] == 88
-    assert model.calls == ["QuestionModelOutput", "GradingModelOutput"]
+    assert model.calls == [
+        "MaterialAnalysisModelOutput",
+        "QuestionModelOutput",
+        "GradingModelOutput",
+    ]
 
 
 def test_low_confidence_fallback_answer_does_not_change_mastery(tmp_path: Path) -> None:

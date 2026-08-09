@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 
@@ -31,6 +31,30 @@ def _register(client: TestClient) -> tuple[str, str]:
     )
     body = response.json()
     return body["access_token"], body["user"]["id"]
+
+
+def _generate_workspace_plan(
+    client: TestClient,
+    headers: dict[str, str],
+    workspace_id: str,
+) -> dict:
+    snapshot = client.get(
+        f"/workspaces/{workspace_id}/snapshot",
+        headers=headers,
+    ).json()
+    response = client.put(
+        f"/workspaces/{workspace_id}/learning/plan",
+        headers=headers,
+        json={
+            "goal": snapshot["progress"]["goal"],
+            "exam_at": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
+            "daily_minutes": 45,
+            "topic_order": snapshot["progress"]["topic_order"],
+            "regenerate": True,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
 
 
 def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
@@ -170,14 +194,20 @@ def test_workspace_delete_failure_restores_journey_events(
             headers=headers,
             json={"intent": "Study function limits"},
         ).json()["workspace"]["id"]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("notes.txt", b"shared document", "text/plain")},
+        )
+        assert uploaded.status_code == 201
         before = app.state.journey_events.list(owner_id, workspace_id)
 
-        def fail_complete(pending) -> None:
-            del pending
-            raise RuntimeError("simulated material deletion commit failure")
+        def fail_unlink(**kwargs) -> None:
+            del kwargs
+            raise RuntimeError("simulated material unlink failure")
 
-        monkeypatch.setattr(app.state.material_deletions, "complete", fail_complete)
-        with pytest.raises(RuntimeError, match="simulated material deletion"):
+        monkeypatch.setattr(app.state.knowledge, "unlink_materials", fail_unlink)
+        with pytest.raises(RuntimeError, match="simulated material unlink"):
             app.state.workspace_service.delete(owner_id, workspace_id)
 
         restored = app.state.workspaces.get(owner_id, workspace_id)
@@ -462,6 +492,8 @@ def test_intents_create_reuse_switch_and_restore_learning_spaces(
         assert body["progress"]["stable"] == {
             topic_id: False for topic_id in body["progress"]["mastery"]
         }
+        assert set(body["progress"]["mastery"].values()) == {0.0}
+        assert body["plan"] is not None
         assert body["plan"]["sessions"]
         assert body["materials"][0]["filename"] == "limits.md"
 
@@ -551,9 +583,8 @@ def test_material_topic_suggestions_require_owner_confirmation_and_ignore_body(
     assert "epsilon-delta" in accepted_body["workspace"]["topics"]
     accepted_topic_id = by_name["epsilon-delta"]["id"]
     assert accepted_body["progress"]["topics"][accepted_topic_id] == "epsilon-delta"
-    assert any(
-        session["topic_id"] == accepted_topic_id for session in accepted_body["plan"]["sessions"]
-    )
+    assert accepted_body["plan"] is None
+    assert accepted_topic_id in accepted_body["progress"]["topic_order"]
     assert all(item["id"] != accepted_topic_id for item in accepted_body["topic_suggestions"])
     assert replayed.json()["workspace"]["topics"].count("epsilon-delta") == 1
 
@@ -648,7 +679,7 @@ def test_workspace_snapshot_is_owner_scoped(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "workspace_not_found"
 
 
-def test_natural_language_exam_and_daily_time_shape_the_created_plan(
+def test_time_constraints_in_intent_generate_a_plan(
     tmp_path: Path,
 ) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
@@ -666,12 +697,46 @@ def test_natural_language_exam_and_daily_time_shape_the_created_plan(
 
     assert created.status_code == 200
     assert snapshot.status_code == 200
-    plan = snapshot.json()["plan"]
-    assert plan["daily_minutes"] == 20
-    assert 13 <= len(plan["sessions"]) <= 14
+    body = snapshot.json()
+    assert body["plan"] is not None
+    assert body["plan"]["daily_minutes"] == 20
+    assert 13 <= len(body["plan"]["sessions"]) <= 14
 
 
-def test_flexible_capability_goal_uses_a_focused_seven_day_path(tmp_path: Path) -> None:
+def test_home_intent_applies_local_start_hour_and_hour_duration(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={
+                "intent": "我8月15号考试考计算机，每天晚上六点开始学习两个小时",
+                "timezone_offset_minutes": 480,
+            },
+        )
+        workspace_id = created.json()["workspace"]["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+
+    assert created.status_code == 200
+    assert snapshot["plan"]["daily_minutes"] == 120
+    assert all(
+        datetime.fromisoformat(session["planned_at"]).astimezone(timezone(timedelta(hours=8))).hour
+        == 18
+        for session in snapshot["plan"]["sessions"]
+    )
+    assert all(
+        name != "我8月15号考试考计算机，每天晚上六点开始学习两个小时"
+        for name in snapshot["progress"]["topics"].values()
+    )
+
+
+def test_flexible_capability_goal_waits_for_user_to_generate_a_path(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
     with TestClient(app) as client:
@@ -689,20 +754,11 @@ def test_flexible_capability_goal_uses_a_focused_seven_day_path(tmp_path: Path) 
 
     assert created.status_code == 200
     assert snapshot.status_code == 200
-    plan = snapshot.json()["plan"]
-    assert len(plan["sessions"]) == 7
-    assert [session["activity"] for session in plan["sessions"]] == [
-        "learn",
-        "practice",
-        "apply",
-        "review",
-        "learn",
-        "practice",
-        "apply",
-    ]
+    assert snapshot.json()["plan"] is None
+    assert snapshot.json()["progress"]["plan_id"] is None
 
 
-def test_explicit_plan_constraints_override_values_in_intent(tmp_path: Path) -> None:
+def test_explicit_plan_constraints_generate_a_plan(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
     exam_at = datetime.now(UTC) + timedelta(days=4)
 
@@ -719,10 +775,36 @@ def test_explicit_plan_constraints_override_values_in_intent(tmp_path: Path) -> 
             },
         )
         workspace_id = created.json()["workspace"]["id"]
-        plan = client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).json()["plan"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
 
-    assert plan["daily_minutes"] == 30
-    assert 3 <= len(plan["sessions"]) <= 4
+    assert snapshot["plan"] is not None
+    assert snapshot["plan"]["daily_minutes"] == 30
+    assert 3 <= len(snapshot["plan"]["sessions"]) <= 4
+
+
+def test_explicit_plan_request_generates_with_safe_defaults(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "帮我制定一个计算机学习计划"},
+        )
+        workspace_id = created.json()["workspace"]["id"]
+        snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+
+    assert created.status_code == 200
+    assert snapshot["plan"] is not None
+    assert len(snapshot["plan"]["sessions"]) == 7
 
 
 def test_invalid_plan_constraints_do_not_persist_an_orphan_workspace(
@@ -933,10 +1015,7 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
             headers=headers,
             json={"intent": "准备微积分考试"},
         ).json()["workspace"]["id"]
-        original = client.get(
-            f"/workspaces/{workspace_id}/snapshot",
-            headers=headers,
-        ).json()["plan"]
+        original = _generate_workspace_plan(client, headers, workspace_id)
         session = original["sessions"][0]
 
         completed = client.patch(
@@ -966,6 +1045,39 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         ).json()["plan"]["sessions"][0]
         assert restored == rescheduled.json()
 
+        manual_time = datetime.now(UTC) + timedelta(days=2)
+        added = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=headers,
+            json={
+                "topic_name": "定积分复习",
+                "planned_at": manual_time.isoformat(),
+                "minutes": 50,
+                "activity": "review",
+            },
+        )
+        assert added.status_code == 200
+        assert added.json()["minutes"] == 50
+        assert added.json()["activity"] == "review"
+
+        refreshed_sessions = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["plan"]["sessions"]
+        assert added.json() in refreshed_sessions
+
+        cleared = client.delete(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+        )
+        assert cleared.status_code == 204
+        cleared_snapshot = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert cleared_snapshot["plan"] is None
+        assert cleared_snapshot["progress"]["topics"]
+
 
 def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_request(
     tmp_path: Path,
@@ -986,6 +1098,7 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
             },
         ).json()["workspace"]
         workspace_id = created["id"]
+        _generate_workspace_plan(client, headers, workspace_id)
         snapshot = client.get(
             f"/workspaces/{workspace_id}/snapshot",
             headers=headers,
@@ -1048,6 +1161,25 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         assert restored["progress"]["topic_order"] == topic_order
         assert restored["plan"] == regenerated.json()
 
+        cleared = client.delete(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+        )
+        assert cleared.status_code == 204
+        recreated = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": "Create a fresh calculus schedule",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 40,
+                "topic_order": topic_order,
+                "regenerate": True,
+            },
+        )
+        assert recreated.status_code == 200
+        assert recreated.json()["sessions"]
+
         bob = client.post(
             "/auth/register",
             json={
@@ -1103,7 +1235,7 @@ def test_workspace_preserves_original_goal_while_structured_plan_becomes_authori
                 "exam_at": exam_at.isoformat(),
                 "daily_minutes": 35,
                 "topic_order": snapshot["progress"]["topic_order"],
-                "regenerate": False,
+                "regenerate": True,
             },
         )
         restored = client.get(
@@ -1167,6 +1299,7 @@ def test_workspace_plan_update_rolls_back_when_goal_sync_fails(
             filename="calculus.txt",
             text="Prepare calculus through definitions, examples, and reasoning.",
         )
+        _generate_workspace_plan(client, headers, workspace_id)
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
@@ -1302,6 +1435,7 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             filename="calculus.txt",
             text="微积分考试复习资料，包含概念定义、例题与完整推理。",
         )
+        _generate_workspace_plan(client, headers, workspace_id)
         question = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,

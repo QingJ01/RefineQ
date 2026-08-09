@@ -55,7 +55,10 @@ class Database:
             current = connection.scalar(select(schema_versions.c.version).limit(1))
             if current is None:
                 connection.execute(insert(schema_versions).values(version=SCHEMA_VERSION))
-            elif int(current) == 1 and SCHEMA_VERSION == 2:
+                current_version = SCHEMA_VERSION
+            else:
+                current_version = int(current)
+            if current_version == 1:
                 user_columns = {
                     column["name"] for column in inspect(connection).get_columns("users")
                 }
@@ -92,11 +95,37 @@ class Database:
                     connection.execute(text("UPDATE materials SET title = filename"))
                 connection.execute(
                     text("UPDATE schema_versions SET version = :version"),
-                    {"version": SCHEMA_VERSION},
+                    {"version": 2},
                 )
-            elif int(current) != SCHEMA_VERSION:
+                current_version = 2
+            if current_version == 2:
+                connection.execute(
+                    text(
+                        "INSERT INTO workspace_materials "
+                        "(owner_id, workspace_id, material_id, added_at) "
+                        "SELECT owner_id, project_id, material_id, indexed_at FROM materials "
+                        "WHERE project_id <> 'library'"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "UPDATE material_chunks SET project_id = 'library' "
+                        "WHERE project_id <> 'library'"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "UPDATE materials SET project_id = 'library' WHERE project_id <> 'library'"
+                    )
+                )
+                connection.execute(
+                    text("UPDATE schema_versions SET version = :version"),
+                    {"version": 3},
+                )
+                current_version = 3
+            if current_version != SCHEMA_VERSION:
                 raise RuntimeError(
-                    f"Unsupported database schema {current}; expected {SCHEMA_VERSION}"
+                    f"Unsupported database schema {current_version}; expected {SCHEMA_VERSION}"
                 )
             if self.is_postgresql:
                 connection.execute(
