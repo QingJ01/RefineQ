@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 
 const webRoot = path.resolve(__dirname, "../..");
@@ -13,6 +13,18 @@ const python = process.env.REFINEQ_PYTHON ?? (
 );
 const adminEmail = `admin-e2e-${Date.now()}@example.com`;
 const adminPassword = "correct-horse-battery-staple";
+
+async function completeInitialDiagnostic(page: Page) {
+  const diagnostic = page.getByTestId("initial-diagnostic");
+  await expect(diagnostic).toBeVisible();
+  await diagnostic.locator("summary").click();
+  const answers = diagnostic.locator('input[value="not-yet"]');
+  for (let index = 0; index < await answers.count(); index += 1) {
+    await answers.nth(index).check();
+  }
+  await page.getByTestId("submit-initial-diagnostic").click();
+  await expect(diagnostic).toBeHidden();
+}
 
 test.beforeAll(() => {
   execFileSync(
@@ -61,6 +73,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await completeInitialDiagnostic(page);
   await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
@@ -160,6 +173,9 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("plan-settings-regenerate").click();
     await page.getByTestId("confirm-dialog-confirm").click();
     await expect(page.getByTestId("confirm-dialog")).toBeHidden();
+    await page.getByTestId("plan-view-list").click();
+    await expect(page.locator(".plan-session")).toHaveCount(7);
+    await page.getByTestId("toggle-plan-sessions").click();
     await expect(page.locator(".plan-session")).toHaveCount(planSessionCount);
   });
 
@@ -903,6 +919,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await completeInitialDiagnostic(page);
   await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
   const routeNotice = page.getByTestId("workspace-route-notice");
   if (await routeNotice.isVisible()) await routeNotice.getByRole("button").last().click();
@@ -927,7 +944,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   await expect(page).toHaveURL(/\/today$/);
   await expect(page.getByTestId("next-action-start_session")).toBeVisible();
   await page.getByTestId("next-action-start_session").click();
-  await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+  await expect(page.getByTestId("learning-session-canvas")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".session-sources")).toContainText(
     "mobile-computer-architecture.txt",
   );

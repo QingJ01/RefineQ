@@ -726,9 +726,7 @@ def test_home_intent_applies_local_start_hour_and_hour_duration(tmp_path: Path) 
     assert created.status_code == 200
     assert snapshot["plan"]["daily_minutes"] == 120
     assert all(
-        datetime.fromisoformat(session["planned_at"]).astimezone(
-            timezone(timedelta(hours=8))
-        ).hour
+        datetime.fromisoformat(session["planned_at"]).astimezone(timezone(timedelta(hours=8))).hour
         == 18
         for session in snapshot["plan"]["sessions"]
     )
@@ -1123,8 +1121,8 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
                 "goal": "Pass the calculus final with confident problem solving",
                 "exam_at": exam_at.isoformat(),
                 "daily_minutes": 35,
-                    "topic_order": topic_order,
-                    "regenerate": False,
+                "topic_order": topic_order,
+                "regenerate": False,
             },
         )
         assert saved.status_code == 200

@@ -395,9 +395,7 @@ class KnowledgeIndex:
                 materials.c.filename,
             ).where(materials.c.owner_id == owner_id)
         ).all()
-        incoming_identities = {
-            (record.project_id, record.id) for record, _, _ in prepared
-        }
+        incoming_identities = {(record.project_id, record.id) for record, _, _ in prepared}
         for project_id, material_id, filename in rows:
             if (project_id, material_id) in incoming_identities:
                 continue
@@ -640,13 +638,15 @@ class KnowledgeIndex:
                     workspace_materials.c.owner_id == owner_id,
                     workspace_materials.c.workspace_id == project_id,
                 )
-                scope.append(or_(
-                    material_chunks.c.project_id == project_id,
-                    and_(
-                        material_chunks.c.project_id == "library",
-                        material_chunks.c.material_id.in_(linked_ids),
-                    ),
-                ))
+                scope.append(
+                    or_(
+                        material_chunks.c.project_id == project_id,
+                        and_(
+                            material_chunks.c.project_id == "library",
+                            material_chunks.c.material_id.in_(linked_ids),
+                        ),
+                    )
+                )
             database_scores: dict[tuple[str, int], float] = {}
             lexical_by_key: dict[tuple[str, int], float] = {}
             if self.database.is_postgresql:
@@ -757,7 +757,9 @@ class KnowledgeIndex:
         with self.database.session() as session:
             if project_id != "library":
                 linked = session.scalar(
-                    select(func.count()).select_from(workspace_materials).where(
+                    select(func.count())
+                    .select_from(workspace_materials)
+                    .where(
                         workspace_materials.c.owner_id == owner_id,
                         workspace_materials.c.workspace_id == project_id,
                         workspace_materials.c.material_id == material_id,
@@ -808,10 +810,14 @@ class KnowledgeIndex:
         if not rows:
             raise MaterialNotFoundError(material_id)
         if len(rows) > bounded_limit:
-            indexes = {
-                round(position * (len(rows) - 1) / (bounded_limit - 1))
-                for position in range(bounded_limit)
-            } if bounded_limit > 1 else {0}
+            indexes = (
+                {
+                    round(position * (len(rows) - 1) / (bounded_limit - 1))
+                    for position in range(bounded_limit)
+                }
+                if bounded_limit > 1
+                else {0}
+            )
             rows = [row for index, row in enumerate(rows) if index in indexes]
         return [
             SearchResult(
@@ -983,13 +989,15 @@ class KnowledgeIndex:
                 workspace_materials.c.owner_id == owner_id,
                 workspace_materials.c.workspace_id == project_id,
             )
-            filters.append(or_(
-                materials.c.project_id == project_id,
-                and_(
-                    materials.c.project_id == "library",
-                    materials.c.material_id.in_(linked_ids),
-                ),
-            ))
+            filters.append(
+                or_(
+                    materials.c.project_id == project_id,
+                    and_(
+                        materials.c.project_id == "library",
+                        materials.c.material_id.in_(linked_ids),
+                    ),
+                )
+            )
         else:
             filters.append(materials.c.project_id == "library")
         if status is not None:
@@ -1050,18 +1058,22 @@ class KnowledgeIndex:
         with self._lock_for(owner_id), self.database.session() as session:
             self._lock_owner_write(session, owner_id)
             exists = session.scalar(
-                select(func.count()).select_from(workspace_materials).where(
+                select(func.count())
+                .select_from(workspace_materials)
+                .where(
                     workspace_materials.c.owner_id == owner_id,
                     workspace_materials.c.workspace_id == workspace_id,
                     workspace_materials.c.material_id == material_id,
                 )
             )
             if not exists:
-                session.execute(insert(workspace_materials).values(
-                    owner_id=owner_id,
-                    workspace_id=workspace_id,
-                    material_id=material_id,
-                ))
+                session.execute(
+                    insert(workspace_materials).values(
+                        owner_id=owner_id,
+                        workspace_id=workspace_id,
+                        material_id=material_id,
+                    )
+                )
 
     def unlink_materials(
         self, *, owner_id: str, workspace_id: str, material_ids: list[str]
@@ -1071,11 +1083,13 @@ class KnowledgeIndex:
         normalized = [validate_identifier(item, field="material_id") for item in material_ids]
         with self._lock_for(owner_id), self.database.session() as session:
             self._lock_owner_write(session, owner_id)
-            session.execute(delete(workspace_materials).where(
-                workspace_materials.c.owner_id == owner_id,
-                workspace_materials.c.workspace_id == workspace_id,
-                workspace_materials.c.material_id.in_(normalized),
-            ))
+            session.execute(
+                delete(workspace_materials).where(
+                    workspace_materials.c.owner_id == owner_id,
+                    workspace_materials.c.workspace_id == workspace_id,
+                    workspace_materials.c.material_id.in_(normalized),
+                )
+            )
 
     def material_status_counts_for_projects(
         self,

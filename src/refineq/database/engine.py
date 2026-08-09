@@ -115,8 +115,7 @@ class Database:
                 )
                 connection.execute(
                     text(
-                        "UPDATE materials SET project_id = 'library' "
-                        "WHERE project_id <> 'library'"
+                        "UPDATE materials SET project_id = 'library' WHERE project_id <> 'library'"
                     )
                 )
                 connection.execute(

@@ -1,4 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+
+async function completeInitialDiagnostic(page: Page) {
+  const diagnostic = page.getByTestId("initial-diagnostic");
+  await expect(diagnostic).toBeVisible();
+  await diagnostic.locator("summary").click();
+  const answers = diagnostic.locator('input[value="not-yet"]');
+  for (let index = 0; index < await answers.count(); index += 1) {
+    await answers.nth(index).check();
+  }
+  await page.getByTestId("submit-initial-diagnostic").click();
+  await expect(diagnostic).toBeHidden();
+}
 
 
 test("shared shell connects global calendar, workspace task, and account", async ({ page }, testInfo) => {
@@ -18,6 +31,7 @@ test("shared shell connects global calendar, workspace task, and account", async
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await completeInitialDiagnostic(page);
   await expect(page.getByTestId("app-sidebar")).toBeVisible();
   await page.getByTestId("app-nav-calendar").click();
   await expect(page).toHaveURL(/\/calendar$/);

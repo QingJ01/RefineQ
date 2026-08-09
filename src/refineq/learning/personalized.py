@@ -200,11 +200,7 @@ class TargetedPlanService:
             existing = StudyPlan.model_validate(existing_data) if existing_data else current_plan
             if existing:
                 existing_ids = {session.id for session in existing.sessions}
-                additions = [
-                    session
-                    for session in plan.sessions
-                    if session.id not in existing_ids
-                ]
+                additions = [session for session in plan.sessions if session.id not in existing_ids]
                 if not additions:
                     merged_plan = existing
                     progress["goal"] = merged_plan.goal

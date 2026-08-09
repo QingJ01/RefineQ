@@ -211,9 +211,7 @@ def _preferred_hour(intent: str) -> int | None:
     if chinese:
         hour = _number(chinese.group("hour"))
         period = chinese.group("period") or ""
-        if (period in {"下午", "晚上"} and hour < 12) or (
-            period == "中午" and hour < 11
-        ):
+        if (period in {"下午", "晚上"} and hour < 12) or (period == "中午" and hour < 11):
             hour += 12
         elif period == "凌晨" and hour == 12:
             hour = 0

@@ -209,14 +209,20 @@ def test_duplicate_filename_upload_is_rejected_and_existing_material_can_be_atta
         owner_id = client.get("/auth/me", headers=headers).json()["id"]
 
     with app.state.database.session() as session:
-        assert session.scalar(
-            select(func.count()).select_from(materials).where(materials.c.owner_id == owner_id)
-        ) == 1
-        assert session.scalar(
-            select(func.count()).select_from(workspace_materials).where(
-                workspace_materials.c.owner_id == owner_id
+        assert (
+            session.scalar(
+                select(func.count()).select_from(materials).where(materials.c.owner_id == owner_id)
             )
-        ) == 2
+            == 1
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(workspace_materials)
+                .where(workspace_materials.c.owner_id == owner_id)
+            )
+            == 2
+        )
 
 
 def test_duplicate_filename_in_one_upload_is_rejected(tmp_path: Path) -> None:
@@ -447,11 +453,14 @@ def test_bulk_workspace_remove_does_not_delete_shared_objects(
                 project_id=workspace_id,
                 material_id=material["id"],
             )
-        assert app.state.knowledge.get_material(
-            owner_id=owner_id,
-            project_id="library",
-            material_id=material["id"],
-        ).id == material["id"]
+        assert (
+            app.state.knowledge.get_material(
+                owner_id=owner_id,
+                project_id="library",
+                material_id=material["id"],
+            ).id
+            == material["id"]
+        )
 
 
 def test_upload_refuses_to_race_an_active_material_object_deletion(tmp_path: Path) -> None:
@@ -857,11 +866,14 @@ def test_deleting_workspace_removes_only_links_and_keeps_original_materials(tmp_
         == []
     )
     assert stored_path.exists()
-    assert app.state.knowledge.get_material(
-        owner_id=owner.id,
-        project_id="library",
-        material_id=material["id"],
-    ).id == material["id"]
+    assert (
+        app.state.knowledge.get_material(
+            owner_id=owner.id,
+            project_id="library",
+            material_id=material["id"],
+        ).id
+        == material["id"]
+    )
 
 
 def test_mime_mismatch_has_a_stable_error(tmp_path: Path) -> None:

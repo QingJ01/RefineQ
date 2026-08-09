@@ -612,20 +612,20 @@ class WorkspaceService:
             if workspace_snapshot is not None and learning_snapshot is not None:
                 with self._learning.plan_transaction(owner_id, workspace_id):
                     self._workspaces.restore(
-                            owner_id,
-                            workspace_id,
-                            workspace_snapshot,
+                        owner_id,
+                        workspace_id,
+                        workspace_snapshot,
                     )
                     self._learning.restore(
-                            owner_id,
-                            workspace_id,
-                            learning_snapshot,
+                        owner_id,
+                        workspace_id,
+                        learning_snapshot,
                     )
                     if journey_event_snapshot is not None:
                         self._learning_service.restore_journey_events(
-                                owner_id,
-                                workspace_id,
-                                journey_event_snapshot,
+                            owner_id,
+                            workspace_id,
+                            journey_event_snapshot,
                         )
                     self._sessions.restore_snapshots(owner_id, session_snapshots)
             if pending is not None:

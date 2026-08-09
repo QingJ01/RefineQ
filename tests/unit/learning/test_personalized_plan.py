@@ -88,9 +88,7 @@ def test_new_material_plan_is_merged_into_existing_calendar() -> None:
     assert {session.topic_id for session in first.sessions} < {
         session.topic_id for session in second.sessions
     }
-    assert second == service.generate(
-        "learner", "workspace_demo", request("material_two", "导数")
-    )
+    assert second == service.generate("learner", "workspace_demo", request("material_two", "导数"))
     assert first.sessions[0].planned_at.hour == 1
     ordered = sorted(second.sessions, key=lambda session: session.planned_at)
     assert all(

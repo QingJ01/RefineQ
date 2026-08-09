@@ -81,13 +81,16 @@ def test_initialize_migrates_v1_material_metadata_without_losing_rows(tmp_path) 
         assert row.title == "limits.txt"
         assert row.tags == "[]"
         assert row.project_id == "library"
-        assert connection.scalar(
-            text(
-                "SELECT COUNT(*) FROM workspace_materials "
-                "WHERE owner_id = 'owner' AND workspace_id = 'workspace' "
-                "AND material_id = 'material-1'"
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT COUNT(*) FROM workspace_materials "
+                    "WHERE owner_id = 'owner' AND workspace_id = 'workspace' "
+                    "AND material_id = 'material-1'"
+                )
             )
-        ) == 1
+            == 1
+        )
         assert connection.scalar(text("SELECT version FROM schema_versions")) == SCHEMA_VERSION
 
 
