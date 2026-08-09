@@ -224,6 +224,22 @@ class AtomicJsonStore:
                 records.append(self._deserialize(path))
         return records
 
+    def read_many(
+        self,
+        owner_id: str,
+        collection: str,
+        record_ids: list[str],
+    ) -> dict[str, StoredRecord]:
+        """Read a bounded set; SQL-backed stores override this with one query."""
+
+        results: dict[str, StoredRecord] = {}
+        for record_id in dict.fromkeys(record_ids):
+            try:
+                results[record_id] = self.read(owner_id, collection, record_id)
+            except RecordNotFoundError:
+                continue
+        return results
+
     def save(
         self,
         owner_id: str,

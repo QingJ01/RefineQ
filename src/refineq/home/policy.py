@@ -94,7 +94,10 @@ _CLEAR_NON_LEARNING = re.compile(
     r"marketing\s+copy|send\s+(?:an\s+)?email|book\s+(?:a\s+)?flight|order\s+food",
     re.IGNORECASE,
 )
-_LOW_INFORMATION = re.compile(r"^(?:继续|帮帮我|怎么办|开始|hi|hello|continue|help|start)[!！。.\s]*$", re.IGNORECASE)
+_LOW_INFORMATION = re.compile(
+    r"^(?:继续|帮帮我|怎么办|开始|hi|hello|continue|help|start)[!！。.\s]*$",
+    re.IGNORECASE,
+)
 
 
 def _normalized(value: str) -> str:

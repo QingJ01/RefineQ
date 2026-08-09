@@ -199,6 +199,71 @@ class AdminOperations:
             ends_at=ends_at,
         )
 
+    @staticmethod
+    def _percentile(values: list[float], quantile: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = max(0, ceil(len(ordered) * quantile) - 1)
+        return round(ordered[index], 3)
+
+    def home_dispatch_metrics(
+        self,
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> dict[str, object]:
+        """Aggregate the isolated, content-free home event domain."""
+
+        with self.database.session() as session:
+            rows = session.execute(
+                select(records.c.data).where(
+                    records.c.collection == "home_dispatch_events"
+                )
+            ).all()
+        kinds = {
+            kind: 0
+            for kind in (
+                "direct_answer",
+                "open_workspace",
+                "workspace_action",
+                "propose_workspace",
+                "clarify",
+                "out_of_scope",
+            )
+        }
+        direct_latencies: list[float] = []
+        candidates_at_limit = 0
+        errors = 0
+        for row in rows:
+            data = row.data
+            occurred_at = self._aware(datetime.fromisoformat(data["occurred_at"]))
+            if occurred_at is None or not starts_at <= occurred_at < ends_at:
+                continue
+            kind = str(data["result_kind"])
+            if kind in kinds:
+                kinds[kind] += 1
+            if int(data.get("candidate_count", 0)) == 8:
+                candidates_at_limit += 1
+            if data.get("error_code"):
+                errors += 1
+            if kind == "direct_answer":
+                direct_latencies.append(int(data.get("latency_ms", 0)) / 1_000)
+        total = sum(kinds.values())
+        return {
+            "starts_at": starts_at,
+            "ends_at": ends_at,
+            "total_dispatches": total,
+            "result_kind_counts": kinds,
+            "candidate_limit_count": candidates_at_limit,
+            "error_rate": errors / total if total else 0,
+            "direct_answer_seconds": {
+                "sample_size": len(direct_latencies),
+                "p50": self._percentile(direct_latencies, 0.5),
+                "p90": self._percentile(direct_latencies, 0.9),
+            },
+        }
+
     def audit(self, *, actor_id: str, action: str, target: str, details: dict) -> None:
         with self.database.session() as session:
             session.execute(

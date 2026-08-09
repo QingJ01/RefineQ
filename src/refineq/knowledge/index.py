@@ -876,3 +876,37 @@ class KnowledgeIndex:
         if sort == "size_desc":
             return sorted(records, key=lambda record: (-record.size, record.id))
         raise ValueError("Unsupported material sort order")
+
+    def material_status_counts_for_projects(
+        self,
+        *,
+        owner_id: str,
+        project_ids: list[str],
+    ) -> dict[str, dict[str, int]]:
+        """Return status counts for selected projects in one owner-scoped query."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        bounded_ids = list(
+            dict.fromkeys(
+                validate_identifier(item, field="project_id") for item in project_ids
+            )
+        )
+        if not bounded_ids:
+            return {}
+        with self.database.session() as session:
+            rows = session.execute(
+                select(
+                    materials.c.project_id,
+                    materials.c.status,
+                    func.count().label("count"),
+                )
+                .where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id.in_(bounded_ids),
+                )
+                .group_by(materials.c.project_id, materials.c.status)
+            ).all()
+        result: dict[str, dict[str, int]] = {item: {} for item in bounded_ids}
+        for row in rows:
+            result[str(row.project_id)][str(row.status)] = int(row.count)
+        return result

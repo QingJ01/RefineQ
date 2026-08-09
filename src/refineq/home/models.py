@@ -160,6 +160,7 @@ class HomeDispatchResult(BaseModel):
     action_proposal: WorkspaceActionProposal | None = None
     workspace_proposal: WorkspaceProposal | None = None
     clarification: Clarification | None = None
+    manual_recovery: Clarification | None = None
     limitations: list[str] = Field(default_factory=list, max_length=10)
 
     @field_validator("expires_at", mode="after")

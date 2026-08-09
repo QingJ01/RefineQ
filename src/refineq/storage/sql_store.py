@@ -223,6 +223,33 @@ class SqlRecordStore:
             ).all()
             return [self._stored(row) for row in rows]
 
+    def read_many(
+        self,
+        owner_id: str,
+        collection: str,
+        record_ids: list[str],
+    ) -> dict[str, StoredRecord]:
+        """Read selected owner-scoped records in one database round trip."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        collection = validate_identifier(collection, field="collection")
+        bounded_ids = list(
+            dict.fromkeys(
+                validate_identifier(item, field="record_id") for item in record_ids
+            )
+        )
+        if not bounded_ids:
+            return {}
+        with self._session() as session:
+            rows = session.execute(
+                select(records).where(
+                    records.c.owner_id == owner_id,
+                    records.c.collection == collection,
+                    records.c.record_id.in_(bounded_ids),
+                )
+            ).all()
+        return {str(row.record_id): self._stored(row) for row in rows}
+
     def save(
         self,
         owner_id: str,

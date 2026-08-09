@@ -93,6 +93,15 @@ class WorkspaceRouteResponse(BaseModel):
     workspace: LearningWorkspace
 
 
+class WorkspaceResolutionPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    payload: WorkspaceResolveRequest
+    decision: WorkspaceRoutingDecision
+    workspace_snapshot_hash: str
+    observed_at: datetime
+
+
 class WorkspaceUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -197,6 +206,25 @@ class WorkspaceService:
         *,
         now: datetime | None = None,
     ) -> WorkspaceRouteResponse:
+        preview = self.preview_resolution(owner_id, payload, now=now)
+        return self.commit_resolution(owner_id, preview)
+
+    @staticmethod
+    def _workspace_snapshot_hash(workspaces: list[LearningWorkspace]) -> str:
+        serialized = "|".join(
+            item.model_dump_json() for item in sorted(workspaces, key=lambda value: value.id)
+        )
+        return sha256(serialized.encode()).hexdigest()
+
+    def preview_resolution(
+        self,
+        owner_id: str,
+        payload: WorkspaceResolveRequest,
+        *,
+        now: datetime | None = None,
+    ) -> WorkspaceResolutionPreview:
+        """Resolve against an owner snapshot without touching or creating state."""
+
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         workspaces = self._workspaces.list(owner_id)
         decision = (
@@ -204,11 +232,28 @@ class WorkspaceService:
             if self._routing is not None
             else route_workspace(payload.intent, workspaces)
         )
+        return WorkspaceResolutionPreview(
+            payload=payload,
+            decision=decision,
+            workspace_snapshot_hash=self._workspace_snapshot_hash(workspaces),
+            observed_at=observed_at,
+        )
+
+    def commit_resolution(
+        self,
+        owner_id: str,
+        preview: WorkspaceResolutionPreview,
+    ) -> WorkspaceRouteResponse:
+        """Commit a preview only while its owner-scoped workspace snapshot is current."""
+
+        payload = preview.payload
+        decision = preview.decision
+        observed_at = preview.observed_at
         with self._workspaces.quota_transaction(owner_id):
             latest = self._workspaces.list(owner_id)
             if decision.workspace_id is None and len(latest) >= self._max_workspaces:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
-            if latest != workspaces:
+            if self._workspace_snapshot_hash(latest) != preview.workspace_snapshot_hash:
                 raise WorkspaceConflictError("Learning workspaces changed during routing")
             response = self._commit_resolution(
                 owner_id,

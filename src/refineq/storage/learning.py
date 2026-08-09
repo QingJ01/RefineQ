@@ -50,6 +50,15 @@ class LearningRepository:
     def get(self, owner_id: str, project_id: str) -> StoredRecord:
         return self._store.read(owner_id, "learning", project_id)
 
+    def load_dispatch_records(
+        self,
+        owner_id: str,
+        workspace_ids: list[str],
+    ) -> dict[str, StoredRecord]:
+        """Load bounded dispatch inputs without N per-space reads."""
+
+        return self._store.read_many(owner_id, "learning", workspace_ids)
+
     def delete(self, owner_id: str, project_id: str) -> None:
         self._store.delete(owner_id, "learning", project_id)
 
