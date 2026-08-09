@@ -61,21 +61,15 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
-  await expect(page.locator(".session-steps li")).toHaveCount(4);
-  const initialExamDays = Number.parseInt(
-    await page.getByTestId("exam-countdown").innerText(),
-    10,
-  );
-  expect(initialExamDays).toBeGreaterThan(30);
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
 
   await test.step("switch directly between learning spaces with keyboard-safe focus", async () => {
     await page.getByTestId("app-nav-home").click();
     await page.getByTestId("learning-intent").fill(
-      "I want to practice conversational Spanish for an upcoming trip",
+      "I want to practice conversational Spanish for my trip on November 15, 30 minutes daily",
     );
     await page.getByTestId("start-learning").click();
     await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
@@ -103,7 +97,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
     await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
 
-    await page.route(`**/api/workspaces/${secondWorkspaceId}/snapshot`, async (route) => {
+    await page.route(`**/api/workspaces/${secondWorkspaceId}/snapshot**`, async (route) => {
       await route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -112,9 +106,13 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     });
     await page.goBack();
     await expect(page).toHaveURL(secondWorkspaceUrl);
+    await page.addInitScript((workspaceId) => {
+      window.sessionStorage.removeItem(`refineq.workspace-snapshot:${workspaceId}`);
+    }, secondWorkspaceId);
+    await page.reload();
     await expect(page.getByTestId("workspace-route-state")).toBeVisible();
     await expect(page.locator(".workspace-switcher")).toHaveCount(0);
-    await page.unroute(`**/api/workspaces/${secondWorkspaceId}/snapshot`);
+    await page.unroute(`**/api/workspaces/${secondWorkspaceId}/snapshot**`);
     await page.goForward();
     await expect(page.locator(".workspace-switcher > strong")).toHaveText(workspaceTitle);
   });
@@ -199,8 +197,9 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     await page.getByTestId("mobile-shortcut-today").click();
-    await expect(page.getByTestId("mobile-sticky-task-action")).toBeVisible();
-    await expect(page.getByTestId("mobile-sticky-task-action")).toHaveCSS("position", "sticky");
+    const uploadAction = page.getByTestId("next-action-upload_material");
+    await expect(uploadAction).toBeVisible();
+    expect((await uploadAction.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     await page.getByTestId("mobile-shortcut-plan").click();
     await page.waitForTimeout(450);
     await page.screenshot({ path: testInfo.outputPath("exam-learning-mobile.png") });
@@ -297,13 +296,21 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.locator(".material-search button").click();
     await expect(page.locator(".material-search-results")).toContainText("computer-architecture-notes.txt");
     await page.getByTestId("nav-today").click();
+    await expect(page.getByTestId("next-action-start_session")).toBeVisible();
+    await page.getByTestId("next-action-start_session").click();
+    await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+    await expect(page.locator(".session-steps li")).toHaveCount(4);
+    const initialExamDays = Number.parseInt(
+      await page.getByTestId("exam-countdown").innerText(),
+      10,
+    );
+    expect(initialExamDays).toBeGreaterThan(30);
     await expect(page.locator(".session-sources")).toContainText("computer-architecture-notes.txt");
   });
 
   await test.step("complete two exam-learning tasks", async () => {
     await page.getByTestId("learning-mode-exam").click();
     await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute("aria-pressed", "true");
-    await page.getByTestId("session-start-task").click();
     await expect(page.getByTestId("session-practice-stage")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("exam-learning-practice.png") });
     const firstQuestionId = await page.getByTestId("session-practice-stage").getAttribute("data-question-id");
@@ -461,6 +468,424 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
 });
 
 
+test("ambiguous home intent creates a space only after confirmation", async ({ page }) => {
+  const uniqueEmail = `proposal-learner-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Proposal learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.getByTestId("learning-intent").fill("I want to study probability");
+  await page.getByTestId("start-learning").click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("home-result-propose_workspace")).toBeVisible();
+  await expect(page.locator(".recent-card")).toHaveCount(0);
+  await page.getByRole("button", { name: "确认并执行" }).click();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
+});
+
+
+test("edited workspace goals are rerouted and reviewed before execution", async ({ page }) => {
+  const uniqueEmail = `revised-proposal-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Revised proposal learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.getByTestId("learning-intent").fill("我想系统学习高数");
+  await page.getByTestId("start-learning").click();
+
+  await expect(page.getByTestId("home-result-propose_workspace")).toBeVisible();
+  const deadline = page.getByLabel("截止");
+  const originalDeadline = await deadline.inputValue();
+  await deadline.fill("");
+  await expect(page.getByRole("button", { name: "确认并执行" })).toBeDisabled();
+  await expect(page.getByText("请填写有效的空间名称、目标、截止日和每日时间。")).toBeVisible();
+  await deadline.fill(originalDeadline);
+  await page.getByLabel("目标").fill("我想系统学习英语，准备雅思写作");
+  await page.getByRole("button", { name: "确认并执行" }).click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator(".recent-card")).toHaveCount(0);
+  await expect(page.locator(".home-proposal-semantics")).toContainText("language");
+  await expect(page.locator(".home-dispatch-status")).toContainText("再次确认");
+
+  const backgroundCreationStatus = await page.evaluate(async () => {
+    const session = JSON.parse(
+      window.sessionStorage.getItem("refineq.learning-session") ?? "null",
+    );
+    const response = await fetch("/api/home/dispatch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`,
+      },
+      body: JSON.stringify({
+        request_id: `background-${Date.now()}`,
+        text: "I need to pass a chemistry exam on December 20, study 30 minutes daily",
+        timezone_offset_minutes: 480,
+      }),
+    });
+    return response.status;
+  });
+  expect(backgroundCreationStatus).toBe(200);
+
+  await page.getByRole("button", { name: "确认并执行" }).click();
+  await expect(page.locator(".home-dispatch-status")).toContainText("已保留你的修改");
+  await expect(page.getByLabel("目标")).toHaveValue("我想系统学习英语，准备雅思写作");
+  await expect(page.locator(".home-proposal-semantics")).toContainText("language");
+
+  await page.getByRole("button", { name: "确认并执行" }).click();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+});
+
+
+test("an older confirmation cannot navigate over a newer home request", async ({ page }) => {
+  const uniqueEmail = `stale-confirm-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Stale confirmation learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await expect(page.getByTestId("learning-intent")).toBeVisible();
+  const hiddenWorkspaceId = await page.evaluate(async () => {
+    const session = JSON.parse(
+      window.sessionStorage.getItem("refineq.learning-session") ?? "null",
+    );
+    const response = await fetch("/api/home/dispatch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`,
+      },
+      body: JSON.stringify({
+        request_id: `hidden-${Date.now()}`,
+        text: "I need to pass a physics exam on December 20, study 30 minutes daily",
+        timezone_offset_minutes: 480,
+      }),
+    });
+    const body = await response.json();
+    return body.workspace_target.workspace_id as string;
+  });
+
+  let dispatchCount = 0;
+  await page.route("**/api/home/dispatch", async (route) => {
+    const request = route.request().postDataJSON();
+    dispatchCount += 1;
+    const common = {
+      request_id: request.request_id,
+      confidence: 0.95,
+      decided_by: "rule",
+      expires_at: "2026-12-31T12:10:00Z",
+      action_proposal: null,
+      workspace_target: null,
+      clarification: null,
+      manual_recovery: null,
+      limitations: [],
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(dispatchCount === 1 ? {
+        ...common,
+        kind: "propose_workspace",
+        reason: "Review this proposal.",
+        answer: null,
+        workspace_proposal: {
+          proposal_type: "create_workspace",
+          title: "Probability",
+          goal: "Study probability",
+          subject: "mathematics",
+          topics: ["Probability"],
+          keywords: ["probability"],
+          exam_at: "2026-12-20T23:59:00Z",
+          daily_minutes: 45,
+          material_hint: "Upload a source.",
+          reason: "Long-term goal.",
+          idempotency_key: "stale-confirm-key",
+          confirmation_token: "stale-confirm-token",
+          expires_at: "2026-12-31T12:10:00Z",
+        },
+      } : {
+        ...common,
+        kind: "direct_answer",
+        reason: "Newer one-shot answer.",
+        answer: {
+          content: "A matrix determinant measures signed area or volume scaling.",
+          basis: "general_knowledge",
+          material_grounded: false,
+          convertible_goal: "Understand determinants",
+        },
+        workspace_proposal: null,
+      }),
+    });
+  });
+
+  let markConfirmationStarted: () => void = () => undefined;
+  let releaseConfirmation: () => void = () => undefined;
+  const confirmationStarted = new Promise<void>((resolve) => {
+    markConfirmationStarted = resolve;
+  });
+  const confirmationReleased = new Promise<void>((resolve) => {
+    releaseConfirmation = resolve;
+  });
+  await page.route("**/api/home/actions/confirm", async (route) => {
+    const request = route.request().postDataJSON();
+    markConfirmationStarted();
+    await confirmationReleased;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        request_id: request.request_id,
+        idempotency_key: request.idempotency_key,
+        operation: "create_workspace",
+        status: "succeeded",
+        workspace_id: hiddenWorkspaceId,
+        affected_refs: [hiddenWorkspaceId],
+        before_version: null,
+        after_version: 1,
+        undoable: true,
+        replayed: false,
+        route: {
+          workspace_id: hiddenWorkspaceId,
+          title: "Physics exam",
+          goal: "Pass the physics exam",
+          reason: "Old confirmed proposal.",
+          match_kind: "explicit_command",
+          auto_navigate: true,
+          route_action: "created",
+          next_action: null,
+          exam_at: null,
+          pace_risk: "low",
+          deferred_workspace_title: null,
+          undo_token: "undo-token",
+          undo_expires_at: "2026-12-31T12:10:00Z",
+        },
+      }),
+    });
+  });
+
+  await page.getByTestId("learning-intent").fill("I want to study probability");
+  await page.getByTestId("start-learning").click();
+  await page.getByRole("button", { name: "确认并执行" }).click();
+  await confirmationStarted;
+  await page.getByTestId("learning-intent").fill("Explain determinants once");
+  await page.getByTestId("start-learning").click();
+  await expect(page.getByTestId("home-result-direct_answer")).toBeVisible();
+  releaseConfirmation();
+  await page.waitForTimeout(300);
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("home-result-direct_answer")).toBeVisible();
+  await expect(page.getByTestId("workspace-route-notice")).toHaveCount(0);
+});
+
+
+test("strong home creation can be truly undone while unchanged", async ({ page }) => {
+  const uniqueEmail = `undo-created-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Undo learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.getByTestId("learning-intent").fill(
+    "I need to pass the computer architecture final on December 20, study 45 minutes daily",
+  );
+  await page.getByTestId("start-learning").click();
+
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  const notice = page.getByTestId("workspace-route-notice");
+  await expect(notice).toBeVisible();
+  await notice.getByRole("button", { name: "撤销" }).click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("learning-intent")).toBeVisible();
+  await expect(page.locator(".recent-card")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator(".recent-card")).toHaveCount(0);
+});
+
+
+test("a late workspace snapshot cannot reopen content after logout", async ({ page }) => {
+  const uniqueEmail = `stale-snapshot-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Snapshot race learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.getByTestId("learning-intent").fill(
+    "I need to pass the computer architecture final on December 20, study 45 minutes daily",
+  );
+  await page.getByTestId("start-learning").click();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  const workspaceId = new URL(page.url()).pathname.split("/")[2];
+  await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
+  await page.getByTestId("app-nav-home").click();
+  await expect(page).toHaveURL(/\/$/);
+
+  let markSnapshotStarted: () => void = () => undefined;
+  let releaseSnapshot: () => void = () => undefined;
+  const snapshotStarted = new Promise<void>((resolve) => { markSnapshotStarted = resolve; });
+  const snapshotReleased = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+  await page.route(`**/api/workspaces/${workspaceId}/snapshot**`, async (route) => {
+    markSnapshotStarted();
+    await snapshotReleased;
+    await route.continue();
+  });
+
+  await page.locator(".recent-card-open").click();
+  await snapshotStarted;
+  await page.getByTestId("app-logout").click();
+  await expect(page.getByTestId("auth-submit")).toBeVisible();
+  releaseSnapshot();
+  await page.waitForTimeout(250);
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("auth-submit")).toBeVisible();
+  await expect(page.locator(".workspace-shell")).toHaveCount(0);
+});
+
+
+test("one-shot answer stays on home and disappears after refresh", async ({ page }) => {
+  const uniqueEmail = `answer-learner-${Date.now()}@example.com`;
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Answer learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.route("**/api/home/dispatch", async (route) => {
+    const request = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        request_id: request.request_id,
+        kind: "direct_answer",
+        reason: "This is a stable one-shot concept explanation.",
+        confidence: 0.95,
+        decided_by: "hybrid",
+        expires_at: "2026-08-09T12:10:00Z",
+        answer: {
+          content: "Bayes' theorem updates a prior belief using new evidence.",
+          basis: "general_knowledge",
+          material_grounded: false,
+          convertible_goal: "Understand Bayes' theorem",
+        },
+        workspace_target: null,
+        action_proposal: null,
+        workspace_proposal: null,
+        clarification: null,
+        manual_recovery: null,
+        limitations: ["No personal materials or real-time sources were used"],
+      }),
+    });
+  });
+  await page.getByTestId("learning-intent").fill("Explain Bayes' theorem");
+  await page.getByTestId("start-learning").click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("home-result-direct_answer")).toBeVisible();
+  await expect(page.locator(".recent-card")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("home-result-direct_answer")).toHaveCount(0);
+});
+
+
+test("one-shot conversion conflict retries the converted goal", async ({ page }) => {
+  const uniqueEmail = `converted-retry-${Date.now()}@example.com`;
+  const dispatchTexts: string[] = [];
+  await page.goto("/");
+  await page.getByTestId("register-tab").click();
+  await page.getByTestId("display-name").fill("Converted retry learner");
+  await page.getByTestId("email").fill(uniqueEmail);
+  await page.getByTestId("password").fill("correct-horse-battery-staple");
+  await page.getByTestId("auth-submit").click();
+  await page.route("**/api/home/dispatch", async (route) => {
+    const request = route.request().postDataJSON();
+    dispatchTexts.push(request.text);
+    const common = {
+      request_id: request.request_id,
+      confidence: 0.95,
+      decided_by: "rule",
+      expires_at: "2026-12-31T12:10:00Z",
+      action_proposal: null,
+      workspace_target: null,
+      clarification: null,
+      manual_recovery: null,
+      limitations: [],
+    };
+    const response = dispatchTexts.length === 1
+      ? {
+          ...common,
+          kind: "direct_answer",
+          reason: "Answer once.",
+          answer: {
+            content: "Bayes' theorem updates a prior with evidence.",
+            basis: "general_knowledge",
+            material_grounded: false,
+            convertible_goal: "Understand Bayes' theorem",
+          },
+          workspace_proposal: null,
+        }
+      : {
+          ...common,
+          kind: "propose_workspace",
+          reason: "Review this long-term goal.",
+          answer: null,
+          workspace_proposal: {
+            proposal_type: "create_workspace",
+            title: "Bayes theorem",
+            goal: "Understand Bayes' theorem",
+            subject: "general",
+            topics: ["Bayes' theorem"],
+            keywords: ["bayes"],
+            exam_at: "2026-12-20T23:59:00Z",
+            daily_minutes: 45,
+            material_hint: "Upload a source.",
+            reason: "Long-term learning needs a space.",
+            idempotency_key: `convert-${dispatchTexts.length}`,
+            confirmation_token: `token-${dispatchTexts.length}`,
+            expires_at: "2026-12-31T12:10:00Z",
+          },
+        };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(response),
+    });
+  });
+  await page.route("**/api/home/actions/confirm", async (route) => {
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "home_action_conflict", message: "Proposal changed" },
+      }),
+    });
+  });
+
+  await page.getByTestId("learning-intent").fill("Explain Bayes' theorem");
+  await page.getByTestId("start-learning").click();
+  await page.getByRole("button", { name: "转为长期任务" }).click();
+  await expect(page.getByTestId("home-result-propose_workspace")).toBeVisible();
+  await page.getByRole("button", { name: "确认并执行" }).click();
+  await expect.poll(() => dispatchTexts.length).toBe(3);
+
+  expect(dispatchTexts[0]).toBe("Explain Bayes' theorem");
+  expect(dispatchTexts[1]).toContain("Understand Bayes' theorem");
+  expect(dispatchTexts[2]).toBe(dispatchTexts[1]);
+});
+
+
 test("mobile learner completes a source-grounded exam loop", async ({ page }, testInfo) => {
   test.slow();
   const uniqueEmail = `mobile-exam-${Date.now()}@example.com`;
@@ -478,7 +903,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   await page.getByTestId("start-learning").click();
 
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
+  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
   const routeNotice = page.getByTestId("workspace-route-notice");
   if (await routeNotice.isVisible()) await routeNotice.getByRole("button").last().click();
 
@@ -500,6 +925,9 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
 
   await page.getByTestId("mobile-shortcut-today").click();
   await expect(page).toHaveURL(/\/today$/);
+  await expect(page.getByTestId("next-action-start_session")).toBeVisible();
+  await page.getByTestId("next-action-start_session").click();
+  await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
   await expect(page.locator(".session-sources")).toContainText(
     "mobile-computer-architecture.txt",
   );
@@ -508,7 +936,6 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
     "aria-pressed",
     "true",
   );
-  await page.getByTestId("session-start-task").click();
   await expect(page.getByTestId("session-practice-stage")).toBeVisible();
   await page.getByTestId("practice-sources").click();
   await expect(page.getByRole("dialog")).toContainText(

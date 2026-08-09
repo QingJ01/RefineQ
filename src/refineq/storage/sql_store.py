@@ -10,7 +10,7 @@ from hashlib import blake2b
 from threading import Lock, RLock
 from typing import Any
 
-from sqlalchemy import delete, insert, select, text, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -222,6 +222,124 @@ class SqlRecordStore:
                 .order_by(records.c.record_id)
             ).all()
             return [self._stored(row) for row in rows]
+
+    def read_many(
+        self,
+        owner_id: str,
+        collection: str,
+        record_ids: list[str],
+    ) -> dict[str, StoredRecord]:
+        """Read selected owner-scoped records in one database round trip."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        collection = validate_identifier(collection, field="collection")
+        bounded_ids = list(
+            dict.fromkeys(validate_identifier(item, field="record_id") for item in record_ids)
+        )
+        if not bounded_ids:
+            return {}
+        with self._session() as session:
+            rows = session.execute(
+                select(records).where(
+                    records.c.owner_id == owner_id,
+                    records.c.collection == collection,
+                    records.c.record_id.in_(bounded_ids),
+                )
+            ).all()
+        return {str(row.record_id): self._stored(row) for row in rows}
+
+    def read_many_projection(
+        self,
+        owner_id: str,
+        collection: str,
+        record_ids: list[str],
+        field_paths: tuple[tuple[str, ...], ...],
+    ) -> dict[str, StoredRecord]:
+        """Fetch only selected JSON fields in one database round trip."""
+
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        collection = validate_identifier(collection, field="collection")
+        bounded_ids = list(
+            dict.fromkeys(validate_identifier(item, field="record_id") for item in record_ids)
+        )
+        if not bounded_ids:
+            return {}
+        projected_columns = []
+        for index, path in enumerate(field_paths):
+            expression = records.c.data
+            for part in path:
+                expression = expression[part]
+            projected_columns.append(expression.label(f"field_{index}"))
+        with self._session() as session:
+            rows = session.execute(
+                select(
+                    records.c.record_id,
+                    records.c.schema_version,
+                    records.c.version,
+                    *projected_columns,
+                ).where(
+                    records.c.owner_id == owner_id,
+                    records.c.collection == collection,
+                    records.c.record_id.in_(bounded_ids),
+                )
+            ).all()
+        result: dict[str, StoredRecord] = {}
+        for row in rows:
+            data: dict[str, Any] = {}
+            for index, path in enumerate(field_paths):
+                value = getattr(row, f"field_{index}")
+                if value is None:
+                    continue
+                target = data
+                for part in path[:-1]:
+                    target = target.setdefault(part, {})
+                target[path[-1]] = deepcopy(value)
+            result[str(row.record_id)] = StoredRecord(
+                schema_version=int(row.schema_version),
+                version=int(row.version),
+                data=data,
+            )
+        return result
+
+    def trim_collection(
+        self,
+        owner_id: str,
+        collection: str,
+        max_records: int,
+        *,
+        order_field: str,
+        record_id_field: str,
+    ) -> None:
+        """Delete oldest records beyond a collection bound without loading payloads."""
+
+        if max_records < 1:
+            raise ValueError("max_records must be positive")
+        owner_id = validate_identifier(owner_id, field="owner_id")
+        collection = validate_identifier(collection, field="collection")
+        order_field = validate_identifier(order_field, field="order_field")
+        validate_identifier(record_id_field, field="record_id_field")
+        with self._session() as session:
+            where = (
+                records.c.owner_id == owner_id,
+                records.c.collection == collection,
+            )
+            total = int(session.scalar(select(func.count()).where(*where)) or 0)
+            overflow = total - max_records
+            if overflow <= 0:
+                return
+            oldest_ids = list(
+                session.scalars(
+                    select(records.c.record_id)
+                    .where(*where)
+                    .order_by(
+                        records.c.data[order_field].as_string(),
+                        records.c.record_id,
+                    )
+                    .limit(overflow)
+                )
+            )
+            if oldest_ids:
+                session.execute(delete(records).where(*where, records.c.record_id.in_(oldest_ids)))
 
     def save(
         self,

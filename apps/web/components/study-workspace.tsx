@@ -75,6 +75,9 @@ import type {
   ExecutableActionProposal,
   AuthResponse,
   DiagnosticResultInput,
+  HomeActionReceipt,
+  HomeDispatchResult,
+  HomeWorkspaceProposal,
   LearningMode,
   LearningWorkspace,
   MaterialAnalysis,
@@ -202,6 +205,8 @@ export function StudyWorkspace({
     reason: NavigationBlockReason,
     resume: PracticeNavigationAction,
   ) => void>(() => undefined);
+  const latestHomeRequestIdRef = useRef<string | null>(null);
+  const workspaceOpenGenerationRef = useRef(0);
   const authRef = useRef(auth);
   const workspaceRef = useRef(workspace);
   const localeRef = useRef(locale);
@@ -442,6 +447,7 @@ export function StudyWorkspace({
           if (!active) return;
           if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
             clearWorkspaceSnapshots(window.sessionStorage);
+            authRef.current = null;
             resetAuthentication();
             clearWorkspaceState();
             clearPracticeState();
@@ -570,6 +576,7 @@ export function StudyWorkspace({
 
   async function authenticated(response: AuthResponse) {
     if (initialWorkspaceId) setHomeBusy(true);
+    authRef.current = response;
     setAuth(response);
     setError("");
     saveLearningSession(window.sessionStorage, {
@@ -601,13 +608,25 @@ export function StudyWorkspace({
     token = auth?.access_token,
     targetSection: LearningSection = "today",
     navigation: "push" | "replace" = "push",
+    expectedHomeRequestId?: string,
   ) {
     if (!token) return;
+    if (expectedHomeRequestId === undefined) latestHomeRequestIdRef.current = null;
+    const openGeneration = workspaceOpenGenerationRef.current + 1;
+    workspaceOpenGenerationRef.current = openGeneration;
     removeWorkspaceSnapshot(window.sessionStorage, target.id);
     setHomeBusy(true);
     setError("");
     try {
       const snapshot = await api.getWorkspaceSnapshot(token, target.id);
+      if (
+        authRef.current?.access_token !== token
+        || workspaceOpenGenerationRef.current !== openGeneration
+        || (
+          expectedHomeRequestId !== undefined
+          && latestHomeRequestIdRef.current !== expectedHomeRequestId
+        )
+      ) return;
       applySnapshot(snapshot);
       saveLearningSession(window.sessionStorage, {
         token,
@@ -620,41 +639,159 @@ export function StudyWorkspace({
         router.push(learningPath(target.id, targetSection));
       }
     } catch (caught) {
+      if (
+        authRef.current?.access_token !== token
+        || workspaceOpenGenerationRef.current !== openGeneration
+        || (
+          expectedHomeRequestId !== undefined
+          && latestHomeRequestIdRef.current !== expectedHomeRequestId
+        )
+      ) return;
       reportError(caught);
     } finally {
-      setHomeBusy(false);
+      if (
+        authRef.current?.access_token === token
+        && workspaceOpenGenerationRef.current === openGeneration
+      ) setHomeBusy(false);
     }
   }
 
-  async function resolveIntent(intent: string) {
-    if (!auth) return;
-    setHomeBusy(true);
-    setError("");
-    try {
-      const route = await api.resolveWorkspace(auth.access_token, intent);
-      const saved = loadLearningSession(window.sessionStorage);
-      const previousId = workspace?.id ?? saved?.workspaceId ?? null;
-      removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id);
-      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, route.workspace.id);
-      applySnapshot(snapshot);
-      setRoute(route);
-      setPreviousWorkspaceId(previousId === route.workspace.id ? null : previousId);
-      writeWorkspaceRouteNotice(window.sessionStorage, {
-        route,
-        previousWorkspaceId: previousId === route.workspace.id ? null : previousId,
-      });
-      setWorkspaces(await api.listWorkspaces(auth.access_token));
-      saveLearningSession(window.sessionStorage, {
-        token: auth.access_token,
-        workspaceId: route.workspace.id,
-        locale,
-      });
-      router.push(learningPath(route.workspace.id, "today"));
-    } catch (caught) {
-      reportError(caught);
-    } finally {
-      setHomeBusy(false);
+  async function dispatchHome(
+    input: {
+      request_id: string;
+      text: string;
+      timezone_offset_minutes: number;
+      clarification?: { continuation_token: string; option_id: string } | null;
+    },
+    signal: AbortSignal,
+  ): Promise<HomeDispatchResult | null> {
+    const token = auth?.access_token;
+    if (!token) return null;
+    latestHomeRequestIdRef.current = input.request_id;
+    const result = await api.dispatchHome(token, input, signal);
+    if (signal.aborted || authRef.current?.access_token !== token) return null;
+    if (result.kind !== "open_workspace" || !result.workspace_target.auto_navigate) {
+      return result;
     }
+    const recent = await api.listWorkspaces(token, true);
+    if (signal.aborted || authRef.current?.access_token !== token) return null;
+    const target = recent.find((item) => item.id === result.workspace_target.workspace_id);
+    if (!target) {
+      throw new Error(localeRef.current === "zh"
+        ? "目标学习空间已不存在，请重新选择。"
+        : "That learning space no longer exists. Choose again.");
+    }
+    const saved = loadLearningSession(window.sessionStorage);
+    const previousId = workspaceRef.current?.id ?? saved?.workspaceId ?? null;
+    const routeForNotice = {
+      action: result.workspace_target.route_action,
+      confidence: result.confidence,
+      reason: result.reason,
+      workspace: target,
+      requestId: result.request_id,
+      undoToken: result.workspace_target.undo_token ?? undefined,
+      undoExpiresAt: result.workspace_target.undo_expires_at ?? undefined,
+    };
+    setRoute(routeForNotice);
+    setPreviousWorkspaceId(previousId === target.id ? null : previousId);
+    setWorkspaces(recent);
+    writeWorkspaceRouteNotice(window.sessionStorage, {
+      route: routeForNotice,
+      previousWorkspaceId: previousId === target.id ? null : previousId,
+    });
+    await openWorkspace(target, token, "today", "push", input.request_id);
+    return null;
+  }
+
+  async function reviseHomeResult(
+    result: HomeDispatchResult,
+    proposalChanges: {
+      title?: string;
+      goal?: string;
+      exam_at?: string;
+      daily_minutes?: number;
+    },
+  ): Promise<HomeWorkspaceProposal> {
+    const token = auth?.access_token;
+    if (!token) throw new Error("Authentication required");
+    if (latestHomeRequestIdRef.current !== result.request_id) {
+      throw new Error("This proposal is no longer the active home request");
+    }
+    if (result.kind !== "propose_workspace") {
+      throw new Error("This result has no revisable workspace proposal");
+    }
+    const proposal = await api.reviseHomeWorkspaceProposal(token, {
+      request_id: result.request_id,
+      confirmation_token: result.workspace_proposal.confirmation_token,
+      original_proposal: result.workspace_proposal,
+      changes: proposalChanges,
+    });
+    if (
+      authRef.current?.access_token !== token
+      || latestHomeRequestIdRef.current !== result.request_id
+    ) {
+      throw new Error("User session changed before proposal review");
+    }
+    return proposal;
+  }
+
+  async function confirmHomeResult(
+    result: HomeDispatchResult,
+  ): Promise<HomeActionReceipt> {
+    const token = auth?.access_token;
+    if (!token) throw new Error("Authentication required");
+    if (latestHomeRequestIdRef.current !== result.request_id) {
+      throw new Error("This proposal is no longer the active home request");
+    }
+    const proposal = result.kind === "workspace_action"
+      ? result.action_proposal
+      : result.kind === "propose_workspace"
+        ? result.workspace_proposal
+        : null;
+    if (!proposal) throw new Error("This result has no confirmable action");
+    const receipt = await api.confirmHomeAction(token, {
+      request_id: result.request_id,
+      confirmation_token: proposal.confirmation_token,
+      proposal: proposal as unknown as Record<string, unknown>,
+      idempotency_key: proposal.idempotency_key,
+    });
+    if (
+      authRef.current?.access_token !== token
+      || latestHomeRequestIdRef.current !== result.request_id
+    ) return receipt;
+    if (receipt.route?.auto_navigate) {
+      const recent = await api.listWorkspaces(token);
+      if (
+        authRef.current?.access_token !== token
+        || latestHomeRequestIdRef.current !== result.request_id
+      ) return receipt;
+      const target = recent.find((item) => item.id === receipt.workspace_id);
+      if (target) {
+        const routeForNotice = {
+          action: receipt.route.route_action,
+          confidence: 1,
+          reason: receipt.route.reason,
+          workspace: target,
+          requestId: receipt.request_id,
+          undoToken: receipt.route.undo_token ?? undefined,
+          undoExpiresAt: receipt.route.undo_expires_at ?? undefined,
+        };
+        setWorkspaces(recent);
+        setRoute(routeForNotice);
+        writeWorkspaceRouteNotice(window.sessionStorage, {
+          route: routeForNotice,
+          previousWorkspaceId: null,
+        });
+        await openWorkspace(target, token, "today", "push", result.request_id);
+      }
+    }
+    return receipt;
+  }
+
+  async function cancelHomeResult(result: HomeDispatchResult): Promise<void> {
+    const token = auth?.access_token;
+    if (!token) return;
+    await api.cancelHomeAction(token, result.request_id);
   }
 
   async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
@@ -1321,6 +1458,47 @@ export function StudyWorkspace({
   }
 
   async function undoWorkspaceRoute() {
+    if (!route) return;
+    if (route.action === "created") {
+      const token = auth?.access_token;
+      if (!token || !route.requestId || !route.undoToken) {
+        setError(locale === "zh"
+          ? "撤销凭证已失效；你仍可在首页手动删除这个学习空间。"
+          : "The undo proof expired. You can still delete this learning space from home.");
+        return;
+      }
+      setHomeBusy(true);
+      setError("");
+      try {
+        await api.undoHomeCreation(token, {
+          request_id: route.requestId,
+          workspace_id: route.workspace.id,
+          undo_token: route.undoToken,
+        });
+        if (authRef.current?.access_token !== token) return;
+        const previous = workspaces.find((item) => item.id === previousWorkspaceId);
+        clearWorkspaceRouteNotice(window.sessionStorage);
+        removeWorkspaceSnapshot(window.sessionStorage, route.workspace.id);
+        setRoute(null);
+        setPreviousWorkspaceId(null);
+        setWorkspaces((current) => current.filter((item) => item.id !== route.workspace.id));
+        workspaceRef.current = null;
+        clearWorkspaceState();
+        clearPracticeState();
+        resetAgent();
+        if (previous) {
+          await openWorkspace(previous, token);
+        } else {
+          saveLearningSession(window.sessionStorage, { token, locale });
+          router.push("/");
+        }
+      } catch (caught) {
+        if (authRef.current?.access_token === token) reportError(caught);
+      } finally {
+        if (authRef.current?.access_token === token) setHomeBusy(false);
+      }
+      return;
+    }
     clearWorkspaceRouteNotice(window.sessionStorage);
     setRoute(null);
     const previous = workspaces.find((item) => item.id === previousWorkspaceId);
@@ -1423,6 +1601,10 @@ export function StudyWorkspace({
   function logout() {
     api.clearReadCache(auth?.access_token);
     clearUserScopedSessionState(window.sessionStorage);
+    authRef.current = null;
+    latestHomeRequestIdRef.current = null;
+    workspaceOpenGenerationRef.current += 1;
+    setHomeBusy(false);
     resetAuthentication();
     clearWorkspaceState();
     clearPracticeState();
@@ -1505,7 +1687,10 @@ export function StudyWorkspace({
           t={t}
           busy={homeBusy}
           workspaces={workspaces}
-          onResolve={resolveIntent}
+            onDispatch={dispatchHome}
+            onRevise={reviseHomeResult}
+            onConfirm={confirmHomeResult}
+            onCancel={cancelHomeResult}
           onOpen={openWorkspace}
           onUpdate={updateLearningWorkspace}
           onDelete={deleteLearningWorkspace}

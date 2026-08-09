@@ -38,6 +38,28 @@ def test_same_record_id_is_isolated_by_owner(tmp_path: Path) -> None:
     assert store.read("bob", "projects", "shared").data["name"] == "Bob project"
 
 
+def test_read_many_projection_omits_unrequested_nested_fields(tmp_path: Path) -> None:
+    store = AtomicJsonStore(tmp_path)
+    store.create(
+        "owner",
+        "learning",
+        "space",
+        {
+            "progress": {"plan": {"id": "plan"}, "evidence": ["private"]},
+            "attempts": {"secret": True},
+        },
+    )
+
+    records = store.read_many_projection(
+        "owner",
+        "learning",
+        ["space"],
+        (("progress", "plan"),),
+    )
+
+    assert records["space"].data == {"progress": {"plan": {"id": "plan"}}}
+
+
 def test_compare_and_swap_rejects_stale_versions(tmp_path: Path) -> None:
     store = AtomicJsonStore(tmp_path)
     original = store.create("owner", "projects", "project-1", {"count": 0})

@@ -14,6 +14,7 @@
 | [06-demo-script.md](06-demo-script.md) | 演示账号准备、2 分钟视频分镜、动态测评预算、4 分钟路演与故障预案 | 动态测评 50%，技术连通性 10% |
 | [07-submission-kit.md](07-submission-kit.md) | 提交表单逐项草稿、Agent 简介文案、源码 ZIP 打包规范、最终检查表 | 初赛提交 |
 | [08-adversarial-experience-agentization-review.md](08-adversarial-experience-agentization-review.md) | 导航整治后的完整流程、交互体验、价值实现与 Agent 化对抗性审查，以及第一性原理方案 | 赛后产品与 Agent 演进基线 |
+| [09-home-supervisor-adversarial-review.md](09-home-supervisor-adversarial-review.md) | 主页调度 Agent 完整落地、三维对抗性审查与第一性原理方案 | 主页 Agent 演进基线 |
 
 ## 使用顺序
 

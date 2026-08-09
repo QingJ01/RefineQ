@@ -29,6 +29,7 @@ from refineq.api.routers.agent import workspace_router as workspace_agent_router
 from refineq.api.routers.auth import router as auth_router
 from refineq.api.routers.calendar import router as calendar_router
 from refineq.api.routers.health import router as health_router
+from refineq.api.routers.home import router as home_router
 from refineq.api.routers.learning import router as learning_router
 from refineq.api.routers.learning import workspace_router as workspace_learning_router
 from refineq.api.routers.materials import library_router as library_materials_router
@@ -40,6 +41,10 @@ from refineq.api.routers.workspaces import router as workspaces_router
 from refineq.calendar.service import CalendarService
 from refineq.config import Settings
 from refineq.database.engine import Database
+from refineq.home.events import HomeEventRepository, HomeReceiptRepository
+from refineq.home.intelligence import HomeIntelligence
+from refineq.home.service import HomeDispatchService
+from refineq.home.tokens import HomeTokenSigner
 from refineq.identity.deletion import AccountDeletionCoordinator
 from refineq.identity.password_reset import (
     PasswordResetDelivery,
@@ -77,6 +82,8 @@ def create_app(
     model_transport: ModelTransport | None = None,
     learning_model_transport: StructuredModelTransport | None = None,
     agent_intent_transport: StructuredModelTransport | None = None,
+    home_classifier_transport: StructuredModelTransport | None = None,
+    home_answer_transport: StructuredModelTransport | None = None,
     database: Database | None = None,
     password_reset_delivery: PasswordResetDelivery | None = None,
 ) -> FastAPI:
@@ -124,6 +131,8 @@ def create_app(
     app.state.learning = LearningRepository(app.state.store)
     app.state.material_analyses = MaterialAnalysisRepository(app.state.store)
     app.state.journey_events = JourneyEventRepository(app.state.store)
+    app.state.home_events = HomeEventRepository(app.state.store)
+    app.state.home_receipts = HomeReceiptRepository(app.state.store)
     app.state.calendar_service = CalendarService(
         workspaces=app.state.workspaces,
         learning=app.state.learning,
@@ -228,6 +237,31 @@ def create_app(
         ),
         max_workspaces=app.state.settings.max_workspaces_per_user,
     )
+    app.state.home_signer = HomeTokenSigner(
+        key_path=app.state.settings.data_root / "system" / "home-action-signing.key"
+    )
+    app.state.home_intelligence = HomeIntelligence(
+        app.state.model_settings,
+        classifier=(
+            home_classifier_transport
+            or OpenAICompatibleStructuredTransport(timeout=5.0, max_retries=0)
+        ),
+        answerer=(
+            home_answer_transport
+            or OpenAICompatibleStructuredTransport(timeout=15.0, max_retries=1)
+        ),
+    )
+    app.state.home_dispatch = HomeDispatchService(
+        workspace_service=app.state.workspace_service,
+        learning=app.state.learning,
+        learning_service=app.state.workspace_learning_service,
+        knowledge=app.state.knowledge,
+        intelligence=app.state.home_intelligence,
+        signer=app.state.home_signer,
+        events=app.state.home_events,
+        receipts=app.state.home_receipts,
+        sessions=app.state.sessions,
+    )
     app.state.agent = AgentService(
         projects=app.state.projects,
         learning=app.state.learning,
@@ -264,6 +298,7 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(workspaces_router)
     app.include_router(calendar_router)
+    app.include_router(home_router)
     app.include_router(admin_router)
     app.router.add_event_handler("shutdown", app.state.account_deletions.close)
     app.router.add_event_handler("shutdown", app.state.material_deletions.close)

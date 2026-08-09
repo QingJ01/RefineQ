@@ -14,6 +14,9 @@ import type {
   AuthCapabilities,
   AuthResponse,
   CalendarResponse,
+  HomeActionReceipt,
+  HomeDispatchResult,
+  HomeWorkspaceProposal,
   LearningWorkspace,
   LearningInsights,
   IntegrationKind,
@@ -350,6 +353,97 @@ export class ApiClient {
       this.clearWorkspaceReadCache(token);
       return route;
     });
+  }
+
+  dispatchHome(
+    token: string,
+    input: {
+      request_id: string;
+      text: string;
+      timezone_offset_minutes: number;
+      clarification?: { continuation_token: string; option_id: string } | null;
+    },
+    signal?: AbortSignal,
+  ): Promise<HomeDispatchResult> {
+    return this.request<HomeDispatchResult>(
+      "/home/dispatch",
+      { method: "POST", body: JSON.stringify(input), signal },
+      token,
+      20_000,
+    ).then((result) => {
+      if (
+        result.kind === "open_workspace"
+        && result.workspace_target.route_action === "created"
+      ) this.clearWorkspaceReadCache(token);
+      return result;
+    });
+  }
+
+  confirmHomeAction(
+    token: string,
+    input: {
+      request_id: string;
+      confirmation_token: string;
+      proposal: Record<string, unknown>;
+      idempotency_key: string;
+    },
+  ): Promise<HomeActionReceipt> {
+    return this.request<HomeActionReceipt>(
+      "/home/actions/confirm",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+      30_000,
+    ).then((receipt) => {
+      if (receipt.operation === "create_workspace" && receipt.status === "succeeded") {
+        this.clearWorkspaceReadCache(token);
+      }
+      return receipt;
+    });
+  }
+
+  cancelHomeAction(token: string, requestId: string): Promise<void> {
+    return this.request(
+      "/home/actions/cancel",
+      { method: "POST", body: JSON.stringify({ request_id: requestId }) },
+      token,
+    );
+  }
+
+  undoHomeCreation(
+    token: string,
+    input: { request_id: string; workspace_id: string; undo_token: string },
+  ): Promise<HomeActionReceipt> {
+    return this.request<HomeActionReceipt>(
+      "/home/actions/undo",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+      30_000,
+    ).then((receipt) => {
+      if (receipt.status === "succeeded") this.clearWorkspaceReadCache(token);
+      return receipt;
+    });
+  }
+
+  reviseHomeWorkspaceProposal(
+    token: string,
+    input: {
+      request_id: string;
+      confirmation_token: string;
+      original_proposal: HomeWorkspaceProposal;
+      changes: {
+        title?: string;
+        goal?: string;
+        exam_at?: string;
+        daily_minutes?: number;
+      };
+    },
+  ): Promise<HomeWorkspaceProposal> {
+    return this.request(
+      "/home/actions/revise",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+      30_000,
+    );
   }
 
   getWorkspaceSnapshot(

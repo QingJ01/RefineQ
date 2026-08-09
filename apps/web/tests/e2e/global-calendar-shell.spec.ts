@@ -37,14 +37,14 @@ test("shared shell connects global calendar, workspace task, and account", async
     fullPage: true,
   });
 
-  const eventDay = page.locator(".global-calendar-day:has(i)").first();
+  const eventDay = page.locator(".global-calendar-day:not([data-empty])").first();
   await expect(eventDay).toBeVisible();
   await eventDay.click();
   const taskLink = page.locator(".global-day-agenda a").first();
   await expect(taskLink).toBeVisible();
   await taskLink.click();
   await expect(page).toHaveURL(/\/learn\/[^/]+\/today\?session=.+/);
-  await expect(page.getByTestId("session-start-task")).toContainText(/Start today’s plan|开始今日计划/);
+  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
 
   await page.getByTestId("app-nav-account").click();
   await expect(page).toHaveURL(/\/account$/);

@@ -61,6 +61,21 @@ Event writes share the workspace lifecycle lock with deletion. A failed workspac
 the event snapshot alongside workspace, learning, and session state; a successful deletion cannot be
 followed by a late request recreating an orphan event record.
 
+## Home supervisor metrics
+
+The homepage supervisor has a separate aggregate and never contributes to learning-loop activity:
+
+```text
+GET /admin/metrics/home-dispatch?starts_at=2026-08-03T00:00:00Z&ends_at=2026-08-10T00:00:00Z
+```
+
+It reports result-kind counts, candidate truncation, proposal confirmation/cancellation/expiry,
+error rate, and direct-answer P50/P90 latency. Events contain only a request-ID hash, result kind,
+decision source, latency, bounded candidate metadata, proposal outcome, error code, and timestamp.
+They contain no prompt, answer, goal, material, workspace title, user email, or owner ID, and are
+bounded to the newest 1000 records per owner. Failed event writes log only the event name and
+exception type and never turn a successful user operation into an error.
+
 ## Demo data
 
 ```powershell
