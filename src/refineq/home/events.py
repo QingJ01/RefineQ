@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Literal
@@ -150,6 +151,14 @@ class HomeReceiptRepository:
         except RecordNotFoundError:
             return None
         return HomeActionReceipt.model_validate(record.data)
+
+    @contextmanager
+    def transaction(self, owner_id: str, idempotency_key: str) -> Iterator[None]:
+        """Serialize check, domain mutation, and receipt commit for one action."""
+
+        scope = f"home-confirm-{self._record_id(idempotency_key)}"
+        with self._store.owner_transaction(owner_id, scope):
+            yield
 
     def save(self, owner_id: str, receipt: HomeActionReceipt) -> HomeActionReceipt:
         record_id = self._record_id(receipt.idempotency_key)

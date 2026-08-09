@@ -29,6 +29,7 @@ from refineq.home.models import (
     HomeDispatchRequest,
     HomeDispatchResult,
     HomeProposalRevisionRequest,
+    HomeUndoRequest,
     WorkspaceActionProposal,
     WorkspaceDispatchSummary,
     WorkspaceProposal,
@@ -52,6 +53,7 @@ from refineq.learning.service import (
 from refineq.storage.learning import LearningRepository
 from refineq.workspaces.constraints import infer_intent_constraints
 from refineq.workspaces.models import LearningWorkspace, WorkspaceRoutingDecision
+from refineq.workspaces.routing import route_workspace
 from refineq.workspaces.service import (
     DEFAULT_CAPABILITY_HORIZON_DAYS,
     WorkspaceConflictError,
@@ -109,6 +111,13 @@ def _workspace_proposal_payload(proposal: WorkspaceProposal | dict) -> dict:
         parsed_exam_at = datetime.fromisoformat(str(raw_exam_at).replace("Z", "+00:00"))
     result["exam_at"] = parsed_exam_at.astimezone(UTC).isoformat()
     return result
+
+
+def _undo_proposal_payload(request_id: str, workspace_id: str) -> dict[str, str]:
+    return {
+        "request_id_hash": request_id_hash(request_id),
+        "workspace_id": workspace_id,
+    }
 
 
 def _action_proposal_payload(proposal: WorkspaceActionProposal | dict) -> dict:
@@ -173,6 +182,51 @@ class HomeDispatchService:
                 type(error).__name__,
             )
 
+    def _created_workspace_state_hash(self, owner_id: str, workspace_id: str) -> str | None:
+        workspace = next(
+            (
+                item
+                for item in self._workspace_service.list(owner_id, include_archived=True)
+                if item.id == workspace_id
+            ),
+            None,
+        )
+        if workspace is None:
+            return None
+        record = self._learning.get(owner_id, workspace_id)
+        materials = self._knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=workspace_id,
+        )
+        serialized = "|".join(
+            [
+                workspace.model_dump_json(),
+                str(record.version),
+                *(item.model_dump_json() for item in sorted(materials, key=lambda value: value.id)),
+            ]
+        )
+        return sha256(serialized.encode()).hexdigest()
+
+    def _issue_created_workspace_undo(
+        self,
+        owner_id: str,
+        request_id: str,
+        workspace_id: str,
+        *,
+        now: datetime,
+    ) -> tuple[str, datetime]:
+        state_hash = self._created_workspace_state_hash(owner_id, workspace_id)
+        if state_hash is None:
+            raise HomeActionConflictError("Created workspace is no longer available")
+        return self._signer.issue(
+            owner_id=owner_id,
+            operation="undo_create_workspace",
+            target=workspace_id,
+            proposal=_undo_proposal_payload(request_id, workspace_id),
+            state_hash=state_hash,
+            now=now,
+        )
+
     def cancel_proposal(self, owner_id: str, request_id: str) -> None:
         """Record an explicit UI cancellation without affecting the proposed domain state."""
 
@@ -183,6 +237,56 @@ class HomeDispatchService:
                 "event=home_dispatch_cancellation_event_write_failed reason=%s",
                 type(error).__name__,
             )
+
+    def undo_created_workspace(
+        self,
+        owner_id: str,
+        payload: HomeUndoRequest,
+        *,
+        now: datetime | None = None,
+    ) -> HomeActionReceipt:
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        idempotency_key = f"undo-{request_id_hash(payload.request_id)}"
+        with self._receipts.transaction(owner_id, idempotency_key):
+            existing = self._receipts.get(owner_id, idempotency_key)
+            if existing is not None:
+                if (
+                    existing.request_id != payload.request_id
+                    or existing.workspace_id != payload.workspace_id
+                ):
+                    raise HomeConfirmationError("Undo key belongs to another request")
+                return existing.model_copy(update={"replayed": True})
+            try:
+                claims = self._signer.verify(
+                    payload.undo_token,
+                    owner_id=owner_id,
+                    operation="undo_create_workspace",
+                    now=observed_at,
+                )
+            except HomeTokenError as error:
+                raise HomeConfirmationError(str(error)) from error
+            proposal = _undo_proposal_payload(payload.request_id, payload.workspace_id)
+            if claims.target != payload.workspace_id:
+                raise HomeConfirmationError("Undo target does not match its signature")
+            if claims.proposal_hash != proposal_hash(proposal):
+                raise HomeConfirmationError("Undo request does not match its signature")
+            current_state = self._created_workspace_state_hash(owner_id, payload.workspace_id)
+            if current_state is not None and current_state != claims.state_hash:
+                raise HomeActionConflictError(
+                    "Created workspace changed after routing and cannot be automatically undone"
+                )
+            if current_state is not None:
+                self._workspace_service.delete(owner_id, payload.workspace_id)
+            receipt = HomeActionReceipt(
+                request_id=payload.request_id,
+                idempotency_key=idempotency_key,
+                operation="undo_create_workspace",
+                status="succeeded",
+                workspace_id=payload.workspace_id,
+                affected_refs=[payload.workspace_id],
+                undoable=False,
+            )
+            return self._receipts.save(owner_id, receipt)
 
     def load_dispatch_summaries(
         self,
@@ -634,6 +738,15 @@ class HomeDispatchService:
         summary = summaries[0] if summaries else None
         next_action = summary.next_action if summary else None
         limitations = ["仅比较了最近活跃的 8 个学习空间"] if truncated else []
+        undo_token = None
+        undo_expires_at = None
+        if route_action == "created":
+            undo_token, undo_expires_at = self._issue_created_workspace_undo(
+                owner_id,
+                payload.request_id,
+                target.id,
+                now=now,
+            )
         return HomeDispatchResult(
             request_id=payload.request_id,
             kind="open_workspace",
@@ -652,6 +765,8 @@ class HomeDispatchService:
                 next_action=next_action,
                 exam_at=summary.exam_at if summary else None,
                 pace_risk=summary.pace_risk if summary else "low",
+                undo_token=undo_token,
+                undo_expires_at=undo_expires_at,
             ),
             limitations=limitations,
         )
@@ -813,9 +928,10 @@ class HomeDispatchService:
         decision: PolicyDecision,
         now: datetime,
     ) -> HomeDispatchResult:
+        selected_id = decision.workspace_ids[0] if len(decision.workspace_ids) == 1 else None
         target = next(
-            (item for item in candidates if item.id in decision.workspace_ids),
-            candidates[0] if len(candidates) == 1 else None,
+            (item for item in candidates if item.id == selected_id),
+            candidates[0] if not decision.workspace_ids and len(candidates) == 1 else None,
         )
         if target is None:
             return self._clarify_result(
@@ -824,7 +940,10 @@ class HomeDispatchService:
                 candidates,
                 reason="请先选择要修改计划的学习空间。",
                 now=now,
-                workspace_ids=tuple(item.id for item in candidates[:3]),
+                workspace_ids=(
+                    decision.workspace_ids
+                    or tuple(item.id for item in candidates[:3])
+                ),
                 workspace_action=True,
             )
         record = self._learning.get(owner_id, target.id)
@@ -1176,6 +1295,16 @@ class HomeDispatchService:
         *,
         now: datetime | None = None,
     ) -> HomeActionReceipt:
+        with self._receipts.transaction(owner_id, payload.idempotency_key):
+            return self._confirm_locked(owner_id, payload, now=now)
+
+    def _confirm_locked(
+        self,
+        owner_id: str,
+        payload: HomeConfirmRequest,
+        *,
+        now: datetime | None = None,
+    ) -> HomeActionReceipt:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         existing = self._receipts.get(owner_id, payload.idempotency_key)
         if existing is not None:
@@ -1264,6 +1393,15 @@ class HomeDispatchService:
             raise HomeActionConflictError("Learning spaces changed; generate a new preview")
         changes = payload.changes.model_dump(exclude_none=True, mode="json")
         revised_data = {**original.model_dump(mode="json"), **changes}
+        if "goal" in changes:
+            decision = route_workspace(str(revised_data["goal"]), [])
+            revised_data.update(
+                subject=decision.subject,
+                topics=decision.topics,
+                keywords=decision.keywords,
+            )
+            if "title" not in changes:
+                revised_data["title"] = decision.title
         revised_data["confirmation_token"] = payload.confirmation_token
         revised = WorkspaceProposal.model_validate(revised_data)
         token, expires_at = self._signer.issue(
@@ -1314,6 +1452,19 @@ class HomeDispatchService:
             auto_navigate=True,
             route_action=route.action,
         )
+        if route.action == "created":
+            undo_token, undo_expires_at = self._issue_created_workspace_undo(
+                owner_id,
+                request.request_id,
+                route.workspace.id,
+                now=now,
+            )
+            target = target.model_copy(
+                update={
+                    "undo_token": undo_token,
+                    "undo_expires_at": undo_expires_at,
+                }
+            )
         receipt = HomeActionReceipt(
             request_id=request.request_id,
             idempotency_key=request.idempotency_key,

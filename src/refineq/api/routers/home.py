@@ -12,6 +12,7 @@ from refineq.home.models import (
     HomeDispatchRequest,
     HomeDispatchResult,
     HomeProposalRevisionRequest,
+    HomeUndoRequest,
     WorkspaceProposal,
 )
 from refineq.home.service import (
@@ -90,3 +91,19 @@ def cancel_home_action(
 ) -> Response:
     request.app.state.home_dispatch.cancel_proposal(user.id, payload.request_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/actions/undo", response_model=HomeActionReceipt)
+def undo_home_action(
+    payload: HomeUndoRequest,
+    request: Request,
+    user: CurrentUser,
+) -> HomeActionReceipt:
+    try:
+        return request.app.state.home_dispatch.undo_created_workspace(user.id, payload)
+    except HomeConfirmationError as error:
+        _raise(error, status.HTTP_422_UNPROCESSABLE_CONTENT, error.code)
+    except HomeActionConflictError as error:
+        _raise(error, status.HTTP_409_CONFLICT, error.code)
+    except HomeServiceError as error:
+        _raise(error, status.HTTP_500_INTERNAL_SERVER_ERROR, error.code)

@@ -35,6 +35,7 @@ export function LearningHome({
   busy,
   workspaces,
   onDispatch,
+  onRevise,
   onConfirm,
   onCancel,
   onOpen,
@@ -61,8 +62,11 @@ export function LearningHome({
   ) => Promise<HomeDispatchResult | null>;
   onConfirm: (
     result: HomeDispatchResult,
-    proposalChanges?: Partial<Pick<HomeWorkspaceProposal, "title" | "goal" | "exam_at" | "daily_minutes">>,
   ) => Promise<HomeActionReceipt>;
+  onRevise: (
+    result: HomeDispatchResult,
+    proposalChanges: Partial<Pick<HomeWorkspaceProposal, "title" | "goal" | "exam_at" | "daily_minutes">>,
+  ) => Promise<HomeWorkspaceProposal>;
   onCancel?: (result: HomeDispatchResult) => void | Promise<void>;
   onOpen: (workspace: LearningWorkspace) => void | Promise<void>;
   onUpdate?: (
@@ -94,6 +98,7 @@ export function LearningHome({
   const [deleteTarget, setDeleteTarget] = useState<LearningWorkspace | null>(null);
   const [deleting, setDeleting] = useState(false);
   const requestRef = useRef<{ id: string; controller: AbortController } | null>(null);
+  const latestRequestTextRef = useRef("");
   const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeWorkspaces = workspaces.filter((item) => !item.archived);
@@ -137,6 +142,7 @@ export function LearningHome({
         || (result && result.request_id !== current.id)
       ) return;
       if (result) {
+        latestRequestTextRef.current = normalized;
         setLatestResult(result);
         setProposalDraft(result.kind === "propose_workspace" ? {
           title: result.workspace_proposal.title,
@@ -169,15 +175,35 @@ export function LearningHome({
 
   async function confirmResult() {
     if (!latestResult) return;
+    const currentResult = latestResult;
     setConfirming(true);
     setDispatchError("");
     try {
-      const receipt = await onConfirm(
-        latestResult,
-        latestResult.kind === "propose_workspace" && proposalDraft
-          ? proposalDraft
-          : undefined,
-      );
+      if (currentResult.kind === "propose_workspace" && proposalDraft) {
+        const original = currentResult.workspace_proposal;
+        const changes: Partial<Pick<HomeWorkspaceProposal, "title" | "goal" | "exam_at" | "daily_minutes">> = {};
+        if (proposalDraft.title !== original.title) changes.title = proposalDraft.title;
+        if (proposalDraft.goal !== original.goal) changes.goal = proposalDraft.goal;
+        if (proposalDraft.exam_at !== original.exam_at) changes.exam_at = proposalDraft.exam_at;
+        if (proposalDraft.daily_minutes !== original.daily_minutes) {
+          changes.daily_minutes = proposalDraft.daily_minutes;
+        }
+        if (Object.keys(changes).length > 0) {
+          const revised = await onRevise(currentResult, changes);
+          if (requestRef.current?.id !== currentResult.request_id) return;
+          setLatestResult({ ...currentResult, workspace_proposal: revised });
+          setProposalDraft({
+            title: revised.title,
+            goal: revised.goal,
+            exam_at: revised.exam_at,
+            daily_minutes: revised.daily_minutes,
+          });
+          setReceiptNotice(t("homeProposalUpdated"));
+          requestAnimationFrame(() => resultHeadingRef.current?.focus());
+          return;
+        }
+      }
+      const receipt = await onConfirm(currentResult);
       if (receipt.status === "succeeded") {
         setReceiptNotice(receipt.replayed ? t("homeAlreadyConfirmed") : t("homeConfirmed"))
       }
@@ -186,7 +212,7 @@ export function LearningHome({
         caught instanceof ApiError
         && (caught.code === "invalid_home_confirmation" || caught.code === "home_action_conflict")
       ) {
-        await dispatchText(intent);
+        await dispatchText(latestRequestTextRef.current || intent);
         return;
       }
       setDispatchError(caught instanceof Error ? caught.message : "Confirmation failed");
@@ -336,6 +362,10 @@ export function LearningHome({
                   <label><span>{t("learningGoal")}</span><textarea maxLength={500} value={proposalDraft?.goal ?? ""} onChange={(event) => setProposalDraft((current) => current ? { ...current, goal: event.target.value } : current)} /></label>
                   <label><span>{t("homeDeadline")}</span><input type="date" value={(proposalDraft?.exam_at ?? "").slice(0, 10)} onChange={(event) => setProposalDraft((current) => current ? { ...current, exam_at: new Date(`${event.target.value}T23:59:00Z`).toISOString() } : current)} /></label>
                   <label><span>{t("homeDaily")}</span><input type="number" min={5} max={480} value={proposalDraft?.daily_minutes ?? 45} onChange={(event) => setProposalDraft((current) => current ? { ...current, daily_minutes: Number(event.target.value) } : current)} /></label>
+                  <div className="home-proposal-semantics">
+                    <span>{t("homeSubject")}: {latestResult.workspace_proposal.subject}</span>
+                    <span>{t("homeTopics")}: {latestResult.workspace_proposal.topics.join(" · ")}</span>
+                  </div>
                   <small>{latestResult.workspace_proposal.material_hint}</small>
                 </div>
               )}
@@ -378,7 +408,11 @@ export function LearningHome({
                 {latestResult.kind === "direct_answer" && (
                   <>
                     <button type="button" className="primary-action" onClick={() => void navigator.clipboard.writeText(latestResult.answer.content)}><Copy size={16} />{t("homeCopy")}</button>
-                    <button type="button" onClick={() => void dispatchText(`${locale === "zh" ? "我想系统学习" : "I want to study"}：${latestResult.answer.convertible_goal}`)}><BookOpen size={16} />{t("homeConvert")}</button>
+                    <button type="button" onClick={() => {
+                      const converted = `${locale === "zh" ? "我想系统学习" : "I want to study"}：${latestResult.answer.convertible_goal}`;
+                      setIntent(converted);
+                      void dispatchText(converted);
+                    }}><BookOpen size={16} />{t("homeConvert")}</button>
                     <button type="button" onClick={() => { setLatestResult(null); setIntent(""); inputRef.current?.focus(); }}>{t("homeNewQuestion")}</button>
                   </>
                 )}

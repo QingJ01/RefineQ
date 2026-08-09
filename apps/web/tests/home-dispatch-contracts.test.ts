@@ -58,11 +58,15 @@ describe("home supervisor contracts", () => {
     expect(apiSource).toContain('"/home/actions/revise"');
     expect(apiSource).toContain('"/home/actions/confirm"');
     expect(apiSource).toContain('"/home/actions/cancel"');
+    expect(apiSource).toContain('"/home/actions/undo"');
     expect(apiSource).toContain('result.workspace_target.route_action === "created"');
     expect(apiSource).toContain('receipt.operation === "create_workspace"');
     expect(homeSource).toContain('caught.code === "home_action_conflict"');
     expect(homeSource).toContain('caught.code === "invalid_home_confirmation"');
-    expect(homeSource).toContain("await dispatchText(intent)");
+    expect(homeSource).toContain("latestRequestTextRef.current || intent");
+    expect(homeSource).toContain('t("homeProposalUpdated")');
+    expect(workspaceSource).toContain("await api.undoHomeCreation");
+    expect(workspaceSource).toContain("authRef.current = null");
   });
 
   it("keeps mobile actions touchable and respects reduced motion", () => {

@@ -397,6 +397,21 @@ export class ApiClient {
     );
   }
 
+  undoHomeCreation(
+    token: string,
+    input: { request_id: string; workspace_id: string; undo_token: string },
+  ): Promise<HomeActionReceipt> {
+    return this.request<HomeActionReceipt>(
+      "/home/actions/undo",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+      30_000,
+    ).then((receipt) => {
+      if (receipt.status === "succeeded") this.clearWorkspaceReadCache(token);
+      return receipt;
+    });
+  }
+
   reviseHomeWorkspaceProposal(
     token: string,
     input: {

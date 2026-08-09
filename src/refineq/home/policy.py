@@ -53,17 +53,19 @@ _EVALUATION = re.compile(
     r"quiz\s+me|test\s+me|grade\s+(?:me|this)|score\s+(?:me|this)|practice\s+questions?",
     re.IGNORECASE,
 )
-_LEARNING_OBJECT = re.compile(
+_KNOWN_LEARNING_OBJECT = re.compile(
     r"数学|高数|微积分|英语|雅思|托福|编程|算法|计算机|组成原理|操作系统|数据库|"
     r"机器学习|人工智能|网络|物理|化学|生物|历史|"
-    r"经济学|产品|写作|研究|[A-Za-z][A-Za-z0-9+#.-]{1,30}",
+    r"经济学|产品|写作|研究",
     re.IGNORECASE,
 )
+_LATIN_LEARNING_OBJECT = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]{1,30}", re.IGNORECASE)
 _LEARNING_VERB = re.compile(
     r"学习|复习|备考|掌握|练习|理解|系统学|学一下|"
     r"learn|study|review|prepare\s+for|master|practice|understand",
     re.IGNORECASE,
 )
+_EXAM_CONTEXT = re.compile(r"考试|期中|期末|备考|\b(?:exam|midterm|final)\b", re.IGNORECASE)
 _TIME_CONSTRAINT = re.compile(
     r"\d{4}[-/年]\d{1,2}(?:[-/月]\d{1,2})?|\d{1,2}\s*月\s*\d{1,2}\s*日|"
     r"(?:明天|后天|下周|本周|月底|期末|考试|截止)|"
@@ -154,8 +156,9 @@ def select_dispatch_candidates(
         reverse=True,
     )
     selected = ordered[:MAX_DISPATCH_CANDIDATES]
-    named = _named_workspaces(text, workspaces)
-    for workspace in named:
+    preserved = [*_named_workspaces(text, workspaces), *_topic_matched_workspaces(text, workspaces)]
+    preserved_by_id = {item.id: item for item in preserved}
+    for workspace in preserved_by_id.values():
         if workspace in selected:
             continue
         if len(selected) == MAX_DISPATCH_CANDIDATES:
@@ -191,6 +194,12 @@ class HomeRoutingPolicy:
                 "该请求需要实时或高风险判断，或涉及主页禁止的破坏性操作。",
             )
 
+        if _CLEAR_NON_LEARNING.search(normalized):
+            return PolicyDecision(
+                PolicyKind.OUT_OF_SCOPE,
+                "这不是 RefineQ 当前支持的学习任务。",
+            )
+
         if _OPEN_COMMAND.search(normalized) and named:
             if len(named) == 1:
                 return PolicyDecision(
@@ -208,7 +217,7 @@ class HomeRoutingPolicy:
             return PolicyDecision(
                 PolicyKind.WORKSPACE_ACTION,
                 "请求会修改计划会话，必须先展示前后差异并确认。",
-                tuple(item.id for item in named[:1]),
+                tuple(item.id for item in named[:3]),
             )
 
         if _CROSS_SPACE.search(normalized):
@@ -231,8 +240,12 @@ class HomeRoutingPolicy:
                 "这是不依赖既有长期状态的一次性学习时间建议。",
             )
 
-        has_learning_object = bool(_LEARNING_OBJECT.search(normalized))
         has_learning_verb = bool(_LEARNING_VERB.search(normalized))
+        has_exam_context = bool(_EXAM_CONTEXT.search(normalized))
+        has_learning_object = bool(_KNOWN_LEARNING_OBJECT.search(normalized)) or (
+            bool(_LATIN_LEARNING_OBJECT.search(normalized))
+            and (has_learning_verb or has_exam_context)
+        )
         has_time_constraint = bool(_TIME_CONSTRAINT.search(normalized))
         if has_learning_object and has_time_constraint:
             return PolicyDecision(
@@ -249,11 +262,6 @@ class HomeRoutingPolicy:
             return PolicyDecision(
                 PolicyKind.DIRECT_ANSWER,
                 "这是可在本次完成的稳定概念解释或文本转换。",
-            )
-        if _CLEAR_NON_LEARNING.search(normalized):
-            return PolicyDecision(
-                PolicyKind.OUT_OF_SCOPE,
-                "这不是 RefineQ 当前支持的学习任务。",
             )
         if _LOW_INFORMATION.fullmatch(normalized):
             return PolicyDecision(

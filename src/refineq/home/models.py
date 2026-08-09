@@ -71,8 +71,10 @@ class WorkspaceTarget(BaseModel):
     exam_at: datetime | None = None
     pace_risk: Literal["low", "medium", "high"] = "low"
     deferred_workspace_title: str | None = None
+    undo_token: str | None = Field(default=None, max_length=4_096)
+    undo_expires_at: datetime | None = None
 
-    @field_validator("exam_at", mode="after")
+    @field_validator("exam_at", "undo_expires_at", mode="after")
     @classmethod
     def normalize_exam_at(cls, value: datetime | None) -> datetime | None:
         if value is None:
@@ -85,6 +87,10 @@ class WorkspaceTarget(BaseModel):
     def explicit_navigation_only(self):
         if self.auto_navigate and self.match_kind != "explicit_command":
             raise ValueError("auto_navigate requires an explicit command")
+        if (self.undo_token is None) != (self.undo_expires_at is None):
+            raise ValueError("undo token and expiry must be provided together")
+        if self.undo_token is not None and self.route_action != "created":
+            raise ValueError("only a created workspace can be undone")
         return self
 
 
@@ -214,6 +220,14 @@ class HomeCancelRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
 
 
+class HomeUndoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    workspace_id: str = Field(min_length=1, max_length=128)
+    undo_token: str = Field(min_length=1, max_length=4_096)
+
+
 class WorkspaceProposalChanges(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -246,7 +260,12 @@ class HomeActionReceipt(BaseModel):
 
     request_id: str
     idempotency_key: str
-    operation: Literal["create_workspace", "reschedule_session", "adjust_session_minutes"]
+    operation: Literal[
+        "create_workspace",
+        "undo_create_workspace",
+        "reschedule_session",
+        "adjust_session_minutes",
+    ]
     status: Literal["succeeded", "conflict", "failed"]
     workspace_id: str
     affected_refs: list[str]

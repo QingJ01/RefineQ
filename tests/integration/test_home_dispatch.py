@@ -1,6 +1,8 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from time import sleep
 
 from fastapi.testclient import TestClient
 from sqlalchemy import event
@@ -8,6 +10,7 @@ from sqlalchemy import event
 from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.home.models import HomeConfirmRequest
 from refineq.operations.admin import ensure_admin
 from refineq.workspaces.models import WorkspaceRoutingDecision
 from refineq.workspaces.service import WorkspaceResolveRequest
@@ -186,6 +189,68 @@ def test_strong_signal_creates_and_routes_without_preview(tmp_path: Path) -> Non
     assert len(workspaces) == 1
 
 
+def test_strong_creation_can_be_safely_and_idempotently_undone(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+                "timezone_offset_minutes": 480,
+            },
+        ).json()["workspace_target"]
+        undo = {
+            "request_id": "strong-undo",
+            "workspace_id": created["workspace_id"],
+            "undo_token": created["undo_token"],
+        }
+        first = client.post("/home/actions/undo", headers=headers, json=undo)
+        replay = client.post("/home/actions/undo", headers=headers, json=undo)
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert first.status_code == 200, first.json()
+    assert first.json()["operation"] == "undo_create_workspace"
+    assert replay.status_code == 200, replay.json()
+    assert replay.json()["replayed"] is True
+    assert workspaces == []
+
+
+def test_strong_creation_undo_rejects_a_workspace_changed_after_creation(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-conflict",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+            },
+        ).json()["workspace_target"]
+        updated = client.patch(
+            f"/workspaces/{created['workspace_id']}",
+            headers=headers,
+            json={"title": "已经开始使用的空间"},
+        )
+        undo = client.post(
+            "/home/actions/undo",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-conflict",
+                "workspace_id": created["workspace_id"],
+                "undo_token": created["undo_token"],
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert updated.status_code == 200, updated.json()
+    assert undo.status_code == 409, undo.json()
+    assert len(workspaces) == 1
+
+
 def test_duplicate_named_spaces_return_real_choices_and_honor_the_selection(
     tmp_path: Path,
 ) -> None:
@@ -316,6 +381,88 @@ def test_ambiguous_signal_requires_confirmation_and_is_idempotent(tmp_path: Path
     assert len(workspaces) == 1
     assert workspaces[0]["title"] == "我的高数计划"
     assert app.state.home_events.list(auth["user"]["id"])[0].proposal_confirmed is True
+
+
+def test_concurrent_confirmation_replays_the_single_committed_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        proposal = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={"request_id": "concurrent-confirm", "text": "我想系统学习高数"},
+        ).json()["workspace_proposal"]
+        payload = HomeConfirmRequest.model_validate(
+            {
+                "request_id": "concurrent-confirm",
+                "confirmation_token": proposal["confirmation_token"],
+                "proposal": proposal,
+                "idempotency_key": proposal["idempotency_key"],
+            }
+        )
+        original = app.state.home_dispatch._confirm_workspace
+
+        def slow_confirm(*args, **kwargs):
+            sleep(0.05)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(app.state.home_dispatch, "_confirm_workspace", slow_confirm)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda _: app.state.home_dispatch.confirm(owner_id, payload),
+                    range(2),
+                )
+            )
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert len(workspaces) == 1
+    assert {result.workspace_id for result in results} == {workspaces[0]["id"]}
+    assert sorted(result.replayed for result in results) == [False, True]
+
+
+def test_revising_goal_recomputes_workspace_semantics_before_confirmation(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        proposal = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={"request_id": "revise-semantics", "text": "我想系统学习高数"},
+        ).json()["workspace_proposal"]
+        revised_response = client.post(
+            "/home/actions/revise",
+            headers=headers,
+            json={
+                "request_id": "revise-semantics",
+                "confirmation_token": proposal["confirmation_token"],
+                "original_proposal": proposal,
+                "changes": {"goal": "我想系统学习英语，准备雅思写作"},
+            },
+        )
+        revised = revised_response.json()
+        confirmed = client.post(
+            "/home/actions/confirm",
+            headers=headers,
+            json={
+                "request_id": "revise-semantics",
+                "confirmation_token": revised["confirmation_token"],
+                "proposal": revised,
+                "idempotency_key": revised["idempotency_key"],
+            },
+        )
+        created = client.get("/workspaces", headers=headers).json()[0]
+    assert revised_response.status_code == 200, revised_response.json()
+    assert revised["subject"] == "language"
+    assert "高数" not in revised["topics"]
+    assert confirmed.status_code == 200, confirmed.json()
+    assert created["subject"] == "language"
+    assert created["topics"] == revised["topics"]
 
 
 def test_confirmation_token_is_owner_bound(tmp_path: Path) -> None:

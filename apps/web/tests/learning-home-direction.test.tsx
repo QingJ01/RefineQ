@@ -15,6 +15,7 @@ describe("dialog-first learning home", () => {
         busy={false}
         workspaces={[]}
         onDispatch={async () => null}
+        onRevise={async () => { throw new Error("not used"); }}
         onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}
@@ -38,6 +39,7 @@ describe("dialog-first learning home", () => {
         busy={false}
         workspaces={[]}
         onDispatch={async () => null}
+        onRevise={async () => { throw new Error("not used"); }}
         onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}
@@ -78,6 +80,7 @@ describe("dialog-first learning home", () => {
           last_active_at: "2026-08-08T00:00:00Z",
         }]}
         onDispatch={async () => null}
+        onRevise={async () => { throw new Error("not used"); }}
         onConfirm={async () => { throw new Error("not used"); }}
         onOpen={() => undefined}
         onLogout={() => undefined}

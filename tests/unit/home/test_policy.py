@@ -65,6 +65,8 @@ def workspace(
         ("给我投资建议", PolicyKind.OUT_OF_SCOPE),
         ("删除所有学习计划", PolicyKind.OUT_OF_SCOPE),
         ("帮我发一封销售邮件", PolicyKind.OUT_OF_SCOPE),
+        ("send an email by Friday", PolicyKind.OUT_OF_SCOPE),
+        ("marketing copy by Friday", PolicyKind.OUT_OF_SCOPE),
         ("继续", PolicyKind.CLARIFY),
     ],
 )
@@ -76,6 +78,13 @@ def test_duplicate_explicit_workspace_names_require_clarification() -> None:
     spaces = [workspace("a", "高数期末"), workspace("b", "高数期末", age=1)]
     decision = HomeRoutingPolicy().decide("打开高数期末", spaces)
     assert decision.kind == PolicyKind.CLARIFY
+    assert decision.workspace_ids == ("a", "b")
+
+
+def test_duplicate_named_workspace_action_preserves_every_real_candidate() -> None:
+    spaces = [workspace("a", "高数期末"), workspace("b", "高数期末", age=1)]
+    decision = HomeRoutingPolicy().decide("把高数期末的复习移到周六", spaces)
+    assert decision.kind == PolicyKind.WORKSPACE_ACTION
     assert decision.workspace_ids == ("a", "b")
 
 
@@ -99,6 +108,15 @@ def test_candidate_limit_keeps_explicitly_named_old_workspace() -> None:
     assert len(selected) == 8
     assert "w9" in {item.id for item in selected}
     assert "w8" not in {item.id for item in selected}
+
+
+def test_candidate_limit_keeps_old_workspace_matched_by_evaluation_topic() -> None:
+    spaces = [workspace(f"w{index}", f"空间{index}", age=index) for index in range(10)]
+    spaces[-1] = spaces[-1].model_copy(update={"topics": ["limit"], "keywords": ["limit"]})
+    selected, truncated = select_dispatch_candidates("quiz me on limit", spaces)
+    assert truncated is True
+    assert len(selected) == 8
+    assert "w9" in {item.id for item in selected}
 
 
 def test_explicitly_named_archived_workspace_is_still_a_candidate() -> None:

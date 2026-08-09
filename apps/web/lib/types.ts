@@ -60,6 +60,9 @@ export interface WorkspaceRoute {
   confidence: number;
   reason: string;
   workspace: LearningWorkspace;
+  requestId?: string;
+  undoToken?: string;
+  undoExpiresAt?: string;
 }
 
 export interface HomeDirectAnswer {
@@ -81,6 +84,8 @@ export interface HomeWorkspaceTarget {
   exam_at: string | null;
   pace_risk: "low" | "medium" | "high";
   deferred_workspace_title: string | null;
+  undo_token: string | null;
+  undo_expires_at: string | null;
 }
 
 export interface HomeWorkspaceProposal {
@@ -182,7 +187,7 @@ export type HomeDispatchResult =
 export interface HomeActionReceipt {
   request_id: string;
   idempotency_key: string;
-  operation: "create_workspace" | "reschedule_session" | "adjust_session_minutes";
+  operation: "create_workspace" | "reschedule_session" | "adjust_session_minutes" | "undo_create_workspace";
   status: "succeeded" | "conflict" | "failed";
   workspace_id: string;
   affected_refs: string[];

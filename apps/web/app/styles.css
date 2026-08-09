@@ -3123,6 +3123,11 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.home-proposal-preview .home-proposal-semantics {
+  grid-column: 1 / -1;
+  gap: 6px;
+}
+
 .home-change-preview {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
