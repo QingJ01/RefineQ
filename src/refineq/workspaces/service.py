@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from refineq.knowledge.deletion import MaterialDeletionCoordinator
+from refineq.knowledge.deletion import MaterialDeletionCoordinator, PendingMaterialDeletion
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.next_action import NextAction, select_next_action
@@ -66,6 +67,13 @@ class WorkspaceMaterialRequiredError(WorkspaceServiceError):
 
 class TopicSuggestionNotFoundError(WorkspaceServiceError):
     code = "topic_suggestion_not_found"
+
+
+@dataclass(frozen=True, slots=True)
+class DeferredWorkspaceDeletion:
+    """A prepared deletion whose material lease remains held until finalization."""
+
+    pending_materials: PendingMaterialDeletion
 
 
 class WorkspaceResolveRequest(BaseModel):
@@ -485,7 +493,8 @@ class WorkspaceService:
         workspace_id: str,
         *,
         precondition: Callable[[], None] | None = None,
-    ) -> None:
+        defer_material_finalization: bool = False,
+    ) -> DeferredWorkspaceDeletion | None:
         workspace_snapshot = None
         learning_snapshot = None
         journey_event_snapshot = None
@@ -519,7 +528,10 @@ class WorkspaceService:
                 self._sessions.delete_for_workspace(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)
 
+            if defer_material_finalization:
+                return DeferredWorkspaceDeletion(pending_materials=pending)
             self._material_deletions.complete(pending)
+            return None
         except Exception:
             try:
                 if pending is not None and pending.directory.exists():
@@ -545,6 +557,16 @@ class WorkspaceService:
                             )
                         self._sessions.restore_snapshots(owner_id, session_snapshots)
             raise
+
+    def finalize_deferred_delete(self, deletion: DeferredWorkspaceDeletion) -> None:
+        """Finalize staged materials and release the lease after the caller commits."""
+
+        self._material_deletions.complete(deletion.pending_materials)
+
+    def abort_deferred_delete(self, deletion: DeferredWorkspaceDeletion) -> None:
+        """Discard staged material recovery state after the caller rolls back."""
+
+        self._material_deletions.rollback(deletion.pending_materials)
 
     def require_searchable_material(self, owner_id: str, workspace_id: str) -> None:
         try:

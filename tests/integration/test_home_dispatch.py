@@ -5,12 +5,14 @@ from pathlib import Path
 from threading import Event
 from time import sleep
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
 
 from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.home.events import request_id_hash
 from refineq.home.models import HomeConfirmRequest, HomeUndoRequest
 from refineq.operations.admin import ensure_admin
 from refineq.operations.recovery import RecoveryLease
@@ -463,6 +465,151 @@ def test_undo_and_material_upload_share_the_material_recovery_lease(tmp_path: Pa
     assert material_created is False
     assert remaining == []
     assert materials == []
+
+
+def test_undo_holds_the_material_lease_until_the_outer_transaction_commits(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-material-commit-race",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+            },
+        ).json()["workspace_target"]
+
+        receipt_save_started = Event()
+        allow_receipt_save = Event()
+        upload_attempted = Event()
+        upload_lease_acquired = Event()
+        upload_saw_workspace = Event()
+        allow_upload_write = Event()
+        original_save = app.state.home_receipts.save
+
+        def paused_receipt_save(*args, **kwargs):
+            receipt_save_started.set()
+            assert allow_receipt_save.wait(timeout=2)
+            return original_save(*args, **kwargs)
+
+        monkeypatch.setattr(app.state.home_receipts, "save", paused_receipt_save)
+
+        def undo_workspace():
+            return app.state.home_dispatch.undo_created_workspace(
+                owner_id,
+                HomeUndoRequest(
+                    request_id="strong-undo-material-commit-race",
+                    workspace_id=created["workspace_id"],
+                    undo_token=created["undo_token"],
+                ),
+            )
+
+        def upload_if_workspace_survives() -> bool:
+            upload_attempted.set()
+            lease = RecoveryLease.acquire_wait(
+                app.state.material_deletions.lease_path,
+                timeout_seconds=5,
+            )
+            assert lease is not None
+            upload_lease_acquired.set()
+            try:
+                try:
+                    app.state.workspaces.get(owner_id, created["workspace_id"])
+                except RecordNotFoundError:
+                    return False
+                upload_saw_workspace.set()
+                assert allow_upload_write.wait(timeout=5)
+                app.state.knowledge.add_document(
+                    owner_id=owner_id,
+                    project_id=created["workspace_id"],
+                    material_id="post-undo-orphan",
+                    filename="orphan.txt",
+                    text="不应写入已撤销空间的资料",
+                )
+                return True
+            finally:
+                lease.release()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            undo_future = executor.submit(undo_workspace)
+            assert receipt_save_started.wait(timeout=2)
+            upload_future = executor.submit(upload_if_workspace_survives)
+            assert upload_attempted.wait(timeout=2)
+            acquired_before_commit = upload_lease_acquired.wait(timeout=0.2)
+            allow_receipt_save.set()
+            receipt = undo_future.result(timeout=5)
+            allow_upload_write.set()
+            material_created = upload_future.result(timeout=5)
+
+        remaining = client.get("/workspaces", headers=headers).json()
+        materials = app.state.knowledge.list_materials(
+            owner_id=owner_id,
+            project_id=created["workspace_id"],
+        )
+
+    assert receipt.operation == "undo_create_workspace"
+    assert acquired_before_commit is False
+    assert upload_saw_workspace.is_set() is False
+    assert material_created is False
+    assert remaining == []
+    assert materials == []
+
+
+def test_undo_receipt_failure_rolls_back_and_releases_the_material_lease(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        created = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-undo-receipt-failure",
+                "text": "我要准备9月1日的高数考试，每天45分钟",
+            },
+        ).json()["workspace_target"]
+        payload = HomeUndoRequest(
+            request_id="strong-undo-receipt-failure",
+            workspace_id=created["workspace_id"],
+            undo_token=created["undo_token"],
+        )
+        original_save = app.state.home_receipts.save
+
+        def fail_receipt_save(*args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("receipt storage failed")
+
+        monkeypatch.setattr(app.state.home_receipts, "save", fail_receipt_save)
+        with pytest.raises(RuntimeError, match="receipt storage failed"):
+            app.state.home_dispatch.undo_created_workspace(owner_id, payload)
+
+        assert app.state.workspaces.get(owner_id, created["workspace_id"]).id == created[
+            "workspace_id"
+        ]
+        assert app.state.home_receipts.get(
+            owner_id,
+            f"undo-{request_id_hash('strong-undo-receipt-failure')}",
+        ) is None
+        lease = RecoveryLease.acquire(app.state.material_deletions.lease_path)
+        assert lease is not None
+        lease.release()
+
+        monkeypatch.setattr(app.state.home_receipts, "save", original_save)
+        receipt = app.state.home_dispatch.undo_created_workspace(owner_id, payload)
+        remaining = client.get("/workspaces", headers=headers).json()
+
+    assert receipt.operation == "undo_create_workspace"
+    assert remaining == []
 
 
 def test_duplicate_named_spaces_return_real_choices_and_honor_the_selection(

@@ -255,67 +255,83 @@ class HomeDispatchService:
     ) -> HomeActionReceipt:
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         idempotency_key = f"undo-{request_id_hash(payload.request_id)}"
-        with (
-            self._learning.plan_transaction(owner_id, payload.workspace_id),
-            self._receipts.transaction(owner_id, idempotency_key),
-        ):
-            existing = self._receipts.get(owner_id, idempotency_key)
-            if existing is not None:
-                if (
-                    existing.request_id != payload.request_id
-                    or existing.workspace_id != payload.workspace_id
-                ):
-                    raise HomeConfirmationError("Undo key belongs to another request")
-                return existing.model_copy(update={"replayed": True})
-            try:
-                claims = self._signer.verify(
-                    payload.undo_token,
-                    owner_id=owner_id,
-                    operation="undo_create_workspace",
-                    now=observed_at,
+        deferred_delete = None
+        try:
+            with (
+                self._learning.plan_transaction(owner_id, payload.workspace_id),
+                self._receipts.transaction(owner_id, idempotency_key),
+            ):
+                existing = self._receipts.get(owner_id, idempotency_key)
+                if existing is not None:
+                    if (
+                        existing.request_id != payload.request_id
+                        or existing.workspace_id != payload.workspace_id
+                    ):
+                        raise HomeConfirmationError("Undo key belongs to another request")
+                    return existing.model_copy(update={"replayed": True})
+                try:
+                    claims = self._signer.verify(
+                        payload.undo_token,
+                        owner_id=owner_id,
+                        operation="undo_create_workspace",
+                        now=observed_at,
+                    )
+                except HomeTokenError as error:
+                    raise HomeConfirmationError(str(error)) from error
+                proposal = _undo_proposal_payload(payload.request_id, payload.workspace_id)
+                if claims.target != payload.workspace_id:
+                    raise HomeConfirmationError("Undo target does not match its signature")
+                if claims.proposal_hash != proposal_hash(proposal):
+                    raise HomeConfirmationError("Undo request does not match its signature")
+                workspace_exists = any(
+                    item.id == payload.workspace_id
+                    for item in self._workspace_service.list(
+                        owner_id,
+                        include_archived=True,
+                    )
                 )
-            except HomeTokenError as error:
-                raise HomeConfirmationError(str(error)) from error
-            proposal = _undo_proposal_payload(payload.request_id, payload.workspace_id)
-            if claims.target != payload.workspace_id:
-                raise HomeConfirmationError("Undo target does not match its signature")
-            if claims.proposal_hash != proposal_hash(proposal):
-                raise HomeConfirmationError("Undo request does not match its signature")
-            workspace_exists = any(
-                item.id == payload.workspace_id
-                for item in self._workspace_service.list(
-                    owner_id,
-                    include_archived=True,
-                )
-            )
-            if workspace_exists:
+                if workspace_exists:
 
-                def require_unchanged_workspace() -> None:
-                    current_state = self._created_workspace_state_hash(
+                    def require_unchanged_workspace() -> None:
+                        current_state = self._created_workspace_state_hash(
+                            owner_id,
+                            payload.workspace_id,
+                        )
+                        if current_state != claims.state_hash:
+                            raise HomeActionConflictError(
+                                "Created workspace changed after routing and cannot be "
+                                "automatically undone"
+                            )
+
+                    deferred_delete = self._workspace_service.delete(
                         owner_id,
                         payload.workspace_id,
+                        precondition=require_unchanged_workspace,
+                        defer_material_finalization=True,
                     )
-                    if current_state != claims.state_hash:
-                        raise HomeActionConflictError(
-                            "Created workspace changed after routing and cannot be "
-                            "automatically undone"
-                        )
-
-                self._workspace_service.delete(
-                    owner_id,
-                    payload.workspace_id,
-                    precondition=require_unchanged_workspace,
+                receipt = HomeActionReceipt(
+                    request_id=payload.request_id,
+                    idempotency_key=idempotency_key,
+                    operation="undo_create_workspace",
+                    status="succeeded",
+                    workspace_id=payload.workspace_id,
+                    affected_refs=[payload.workspace_id],
+                    undoable=False,
                 )
-            receipt = HomeActionReceipt(
-                request_id=payload.request_id,
-                idempotency_key=idempotency_key,
-                operation="undo_create_workspace",
-                status="succeeded",
-                workspace_id=payload.workspace_id,
-                affected_refs=[payload.workspace_id],
-                undoable=False,
-            )
-            return self._receipts.save(owner_id, receipt)
+                saved_receipt = self._receipts.save(owner_id, receipt)
+        except Exception:
+            if deferred_delete is not None:
+                try:
+                    self._workspace_service.abort_deferred_delete(deferred_delete)
+                except Exception as cleanup_error:
+                    logger.error(
+                        "event=home_undo_material_abort_failed reason=%s",
+                        type(cleanup_error).__name__,
+                    )
+            raise
+        if deferred_delete is not None:
+            self._workspace_service.finalize_deferred_delete(deferred_delete)
+        return saved_receipt
 
     def load_dispatch_summaries(
         self,
