@@ -102,6 +102,23 @@ class LearningMetricsResponse(BaseModel):
     revisit_open_to_question_seconds: DurationPercentiles
 
 
+class HomeDispatchMetricsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    starts_at: datetime
+    ends_at: datetime
+    total_dispatches: int = Field(ge=0)
+    result_kind_counts: dict[str, int]
+    candidate_limit_count: int = Field(ge=0)
+    candidate_truncation_count: int = Field(ge=0)
+    proposal_confirmed_count: int = Field(ge=0)
+    proposal_cancelled_count: int = Field(ge=0)
+    proposal_expired_count: int = Field(ge=0)
+    proposal_confirmation_rate: float = Field(ge=0, le=1)
+    error_rate: float = Field(ge=0, le=1)
+    direct_answer_seconds: DurationPercentiles
+
+
 class AuditEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -195,6 +212,32 @@ def learning_metrics(
             raise ValueError("Metric windows cannot exceed 31 days")
         return LearningMetricsResponse.model_validate(
             request.app.state.admin_operations.learning_metrics(
+                starts_at=starts_at,
+                ends_at=ends_at,
+            )
+        )
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "invalid_metric_range", "message": str(error)},
+        ) from error
+
+
+@router.get("/metrics/home-dispatch", response_model=HomeDispatchMetricsResponse)
+def home_dispatch_metrics(
+    request: Request,
+    admin: AdminUser,
+    starts_at: Annotated[datetime, Query()],
+    ends_at: Annotated[datetime, Query()],
+) -> HomeDispatchMetricsResponse:
+    del admin
+    try:
+        if ends_at <= starts_at:
+            raise ValueError("ends_at must be after starts_at")
+        if ends_at - starts_at > timedelta(days=31):
+            raise ValueError("Metric windows cannot exceed 31 days")
+        return HomeDispatchMetricsResponse.model_validate(
+            request.app.state.admin_operations.home_dispatch_metrics(
                 starts_at=starts_at,
                 ends_at=ends_at,
             )

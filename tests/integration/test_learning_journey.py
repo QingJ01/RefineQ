@@ -44,10 +44,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
             json={"intent": "Study function limits"},
         ).json()["workspace"]["id"]
         assert (
-            client.get(
-                f"/workspaces/{workspace_id}/snapshot", headers=headers
-            ).status_code
-            == 200
+            client.get(f"/workspaces/{workspace_id}/snapshot", headers=headers).status_code == 200
         )
 
         blocked = client.post(
@@ -90,8 +87,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
                 "attempt_id": "material-gate-attempt",
                 "question_id": created.json()["id"],
                 "answer": (
-                    "A limit describes the value approached by a function, "
-                    "with a concrete example."
+                    "A limit describes the value approached by a function, with a concrete example."
                 ),
             },
         )
@@ -99,9 +95,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
             f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
             headers=headers,
         )
-        version_after_shown = app.state.learning.get(
-            learner["user_id"], workspace_id
-        ).version
+        version_after_shown = app.state.learning.get(learner["user_id"], workspace_id).version
         shown_replay = client.post(
             f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
             headers=headers,
@@ -116,8 +110,7 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
     assert shown.json() == shown_replay.json()
     assert stored.version == version_after_shown
     names = [
-        event.name
-        for event in app.state.journey_events.list(learner["user_id"], workspace_id)
+        event.name for event in app.state.journey_events.list(learner["user_id"], workspace_id)
     ]
     assert {
         "intent_submitted",
@@ -164,9 +157,12 @@ def test_workspace_question_rejects_indexed_but_irrelevant_material(
     assert uploaded.status_code == 201
     assert created.status_code == 409
     assert created.json()["error"]["code"] == "material_insufficient"
-    assert app.state.learning.get(
-        learner["user_id"], workspace_id
-    ).data["progress"]["pending_question"] is None
+    assert (
+        app.state.learning.get(learner["user_id"], workspace_id).data["progress"][
+            "pending_question"
+        ]
+        is None
+    )
 
 
 def test_workspace_hides_and_rejects_a_legacy_general_pending_question(

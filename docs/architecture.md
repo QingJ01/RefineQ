@@ -8,6 +8,7 @@ Browser
   -> FastAPI HTTP API
        -> identity and access checks
        -> administrator integration control plane
+       -> home supervisor policy, one-shot answers, and signed action previews
        -> implicit workspace routing (AI + deterministic fallback)
        -> learning-domain services
        -> grounded question generation and structured grading
@@ -20,6 +21,7 @@ Browser
 ## Backend boundaries
 
 - `identity` owns accounts, password verification, sessions, and request identity.
+- `home` owns deterministic homepage scope/routing policy, isolated one-shot generation, bounded cross-space projections, signed previews, and content-free dispatch events. It delegates every durable learning mutation to existing domain services.
 - `workspaces` resolves each intent to an existing or new private learning space and restores it.
 - `learning` owns the bounded initial self-assessment, planning, mastery, attempts, grading evidence, and review state.
 - `knowledge` validates and extracts uploads, then indexes chunks per owner and learning space.
@@ -50,7 +52,7 @@ unrelated outer scope.
 
 ## Frontend boundary
 
-`apps/web` exposes one Agent-first entry instead of asking learners to create containers manually.
+`apps/web` exposes one Agent-first supervisor entry instead of asking learners to create containers manually. The homepage keeps one transient typed result, never a chat history; server `auto_navigate` is the only navigation authority, while writes require a visible diff or editable preview and a signed confirmation.
 It calls the backend through the same-origin `/api` rewrite, so browser code never needs direct
 access to backend credentials or storage paths.
 

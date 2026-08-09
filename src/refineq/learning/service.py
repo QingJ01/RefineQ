@@ -660,6 +660,8 @@ class LearningService:
         project_id: str,
         session_id: str,
         payload: PlanSessionUpdate,
+        *,
+        expected_version: int | None = None,
     ):
         self._require_project(owner_id, project_id)
         updated = None
@@ -686,6 +688,12 @@ class LearningService:
             raise LearningConflictError("Study session not found")
 
         with self._learning.plan_transaction(owner_id, project_id):
+            if expected_version is not None:
+                current = self._learning.get(owner_id, project_id)
+                if current.version != expected_version:
+                    raise LearningConflictError(
+                        f"Expected learning version {expected_version}, found {current.version}"
+                    )
             self._learning.mutate(owner_id, project_id, apply)
         if updated is None:
             raise LearningServiceError("Study session update failed")
@@ -795,9 +803,8 @@ class LearningService:
 
     @classmethod
     def _is_material_question(cls, question: dict[str, Any]) -> bool:
-        return (
-            cls._question_grounding(question) == Grounding.MATERIAL
-            and bool(cls._question_sources(question))
+        return cls._question_grounding(question) == Grounding.MATERIAL and bool(
+            cls._question_sources(question)
         )
 
     def quarantine_ungrounded_pending(self, owner_id: str, project_id: str) -> bool:

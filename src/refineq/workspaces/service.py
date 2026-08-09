@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from refineq.knowledge.deletion import MaterialDeletionCoordinator
+from refineq.knowledge.deletion import MaterialDeletionCoordinator, PendingMaterialDeletion
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.next_action import NextAction, select_next_action
@@ -67,6 +69,13 @@ class TopicSuggestionNotFoundError(WorkspaceServiceError):
     code = "topic_suggestion_not_found"
 
 
+@dataclass(frozen=True, slots=True)
+class DeferredWorkspaceDeletion:
+    """A prepared deletion whose material lease remains held until finalization."""
+
+    pending_materials: PendingMaterialDeletion
+
+
 class WorkspaceResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,6 +100,15 @@ class WorkspaceRouteResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
     workspace: LearningWorkspace
+
+
+class WorkspaceResolutionPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    payload: WorkspaceResolveRequest
+    decision: WorkspaceRoutingDecision
+    workspace_snapshot_hash: str
+    observed_at: datetime
 
 
 class WorkspaceUpdateRequest(BaseModel):
@@ -197,18 +215,55 @@ class WorkspaceService:
         *,
         now: datetime | None = None,
     ) -> WorkspaceRouteResponse:
+        preview = self.preview_resolution(owner_id, payload, now=now)
+        return self.commit_resolution(owner_id, preview)
+
+    @staticmethod
+    def _workspace_snapshot_hash(workspaces: list[LearningWorkspace]) -> str:
+        serialized = "|".join(
+            item.model_dump_json() for item in sorted(workspaces, key=lambda value: value.id)
+        )
+        return sha256(serialized.encode()).hexdigest()
+
+    def preview_resolution(
+        self,
+        owner_id: str,
+        payload: WorkspaceResolveRequest,
+        *,
+        now: datetime | None = None,
+        use_model: bool = True,
+    ) -> WorkspaceResolutionPreview:
+        """Resolve against an owner snapshot without touching or creating state."""
+
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
         workspaces = self._workspaces.list(owner_id)
         decision = (
             self._routing.route(payload.intent, owner_id, workspaces)
-            if self._routing is not None
+            if use_model and self._routing is not None
             else route_workspace(payload.intent, workspaces)
         )
+        return WorkspaceResolutionPreview(
+            payload=payload,
+            decision=decision,
+            workspace_snapshot_hash=self._workspace_snapshot_hash(workspaces),
+            observed_at=observed_at,
+        )
+
+    def commit_resolution(
+        self,
+        owner_id: str,
+        preview: WorkspaceResolutionPreview,
+    ) -> WorkspaceRouteResponse:
+        """Commit a preview only while its owner-scoped workspace snapshot is current."""
+
+        payload = preview.payload
+        decision = preview.decision
+        observed_at = preview.observed_at
         with self._workspaces.quota_transaction(owner_id):
             latest = self._workspaces.list(owner_id)
             if decision.workspace_id is None and len(latest) >= self._max_workspaces:
                 raise WorkspaceQuotaError("Learning workspace quota reached")
-            if latest != workspaces:
+            if self._workspace_snapshot_hash(latest) != preview.workspace_snapshot_hash:
                 raise WorkspaceConflictError("Learning workspaces changed during routing")
             response = self._commit_resolution(
                 owner_id,
@@ -432,7 +487,14 @@ class WorkspaceService:
         except RecordNotFoundError as error:
             raise WorkspaceNotFoundError("Learning workspace not found") from error
 
-    def delete(self, owner_id: str, workspace_id: str) -> None:
+    def delete(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        *,
+        precondition: Callable[[], None] | None = None,
+        defer_material_finalization: bool = False,
+    ) -> DeferredWorkspaceDeletion | None:
         workspace_snapshot = None
         learning_snapshot = None
         journey_event_snapshot = None
@@ -459,12 +521,17 @@ class WorkspaceService:
                     project_id=workspace_id,
                     material_ids=None,
                 )
+                if precondition is not None:
+                    precondition()
                 self._learning.delete(owner_id, workspace_id)
                 self._learning_service.delete_journey_events(owner_id, workspace_id)
                 self._sessions.delete_for_workspace(owner_id, workspace_id)
                 self._workspaces.delete(owner_id, workspace_id)
 
+            if defer_material_finalization:
+                return DeferredWorkspaceDeletion(pending_materials=pending)
             self._material_deletions.complete(pending)
+            return None
         except Exception:
             try:
                 if pending is not None and pending.directory.exists():
@@ -490,6 +557,16 @@ class WorkspaceService:
                             )
                         self._sessions.restore_snapshots(owner_id, session_snapshots)
             raise
+
+    def finalize_deferred_delete(self, deletion: DeferredWorkspaceDeletion) -> None:
+        """Finalize staged materials and release the lease after the caller commits."""
+
+        self._material_deletions.complete(deletion.pending_materials)
+
+    def abort_deferred_delete(self, deletion: DeferredWorkspaceDeletion) -> None:
+        """Discard staged material recovery state after the caller rolls back."""
+
+        self._material_deletions.rollback(deletion.pending_materials)
 
     def require_searchable_material(self, owner_id: str, workspace_id: str) -> None:
         try:

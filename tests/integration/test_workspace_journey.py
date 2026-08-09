@@ -68,8 +68,7 @@ def test_workspace_snapshot_and_refresh_expose_material_gated_next_action(
         assert snapshot.json()["next_action"] == refreshed.json()
         assert repeated_snapshot.json()["next_action"] == snapshot.json()["next_action"]
         assert (
-            app.state.learning.get(owner_id, workspace_id).version
-            == learning_before_open.version
+            app.state.learning.get(owner_id, workspace_id).version == learning_before_open.version
         )
         assert refreshed.json()["action_type"] == "upload_material"
         assert refreshed.json()["trigger"] == "material_missing"

@@ -47,9 +47,7 @@ def build_journey_event(
     occurred_at: datetime,
     ref_id: str | None = None,
 ) -> JourneyEvent:
-    digest = sha256(
-        f"{workspace_id}:{name}:{idempotency_key}".encode()
-    ).hexdigest()[:24]
+    digest = sha256(f"{workspace_id}:{name}:{idempotency_key}".encode()).hexdigest()[:24]
     return JourneyEvent(
         id=f"journey_{digest}",
         workspace_id=workspace_id,
@@ -153,9 +151,7 @@ def learning_journey_metrics(
         "ends_at": ends_at,
         "active_learners": len(active),
         "grounded_loop_completers": len(completers),
-        "grounded_loop_completion_rate": (
-            len(completers) / len(active) if active else 0.0
-        ),
+        "grounded_loop_completion_rate": (len(completers) / len(active) if active else 0.0),
         "intent_to_grounded_grade_seconds": _percentiles(intent_durations),
         "revisit_open_to_question_seconds": _percentiles(revisit_durations),
     }
