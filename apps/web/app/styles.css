@@ -7037,6 +7037,18 @@ textarea:focus {
     box-shadow: 0 8px 24px rgba(26, 32, 44, 0.16);
   }
 
+  /* The reflect stage is a reading surface; a floating button there overlaps the
+     score and feedback the learner is still reading. Keep the full-width button
+     but let it sit in normal flow. */
+  .session-feedback .mobile-sticky-task-action {
+    position: static;
+    z-index: auto;
+  }
+
+  .session-feedback .mobile-sticky-task-action .primary-action {
+    box-shadow: none;
+  }
+
   .material-filter-grid,
   .material-edit-form {
     grid-template-columns: 1fr;
