@@ -1093,6 +1093,8 @@ describe("focused learning components", () => {
     expect(html).not.toContain("auth-memory-step");
     expect(html).toContain('class="auth-illustration"');
     expect(html).toContain("refineq-learning-illustration.png");
+    expect(html).toContain('src="/assets/refineq-learning-illustration.png"');
+    expect(html).not.toContain("/_next/image?url=%2Fassets%2Frefineq-learning-illustration.png");
     expect(html).toMatch(/<img(?=[^>]*class="auth-illustration")(?=[^>]*aria-hidden="true")[^>]*>/);
     expect(html).toContain("目标、资料和学习进度");
     expect(html).toContain("使用你的账号继续");
