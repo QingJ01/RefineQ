@@ -1645,7 +1645,10 @@ describe("focused learning components", () => {
     expect(html).not.toContain("notes#0");
     expect(html).toContain("notes.md");
     expect(html).toContain('role="dialog"');
-    expect(html).toContain("91% match");
+    // The score is a weighted-RRF fusion rank, not cosine similarity, so it is
+    // labelled as relevance rather than "match"/"similarity".
+    expect(html).toContain("91% relevance");
+    expect(html).not.toContain("91% match");
   });
 
   it("renders a localized empty source disclosure", () => {

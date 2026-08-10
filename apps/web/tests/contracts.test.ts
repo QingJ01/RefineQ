@@ -1869,6 +1869,10 @@ describe("recoverable material and Agent interactions", () => {
     expect(materialSource).toContain('data-testid="clear-material-search"');
     expect(materialSource).toContain('data-testid="clear-upload-queue"');
     expect(materialSource).toContain("SourceDrawer");
+    // Search-result scores are a weighted-RRF fusion rank, not similarity, so
+    // the percentage is labelled (relevance) instead of shown bare.
+    expect(materialSource).toContain('{Math.round(source.score * 100)}% {t("sourceMatch")}');
+    expect(materialSource).not.toContain("<em>{Math.round(source.score * 100)}%</em>");
     expect(materialSource).toContain('data-testid="material-filter-status"');
     expect(materialSource).toContain('data-testid="material-bulk-delete"');
     expect(workspaceSource).toContain("updateWorkspaceMaterial");

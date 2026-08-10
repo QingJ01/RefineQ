@@ -232,7 +232,7 @@ export const messages = {
     noArchivedWorkspaces: "没有已归档的学习空间。",
     close: "关闭",
     groundedEvidence: "参考资料",
-    sourceMatch: "匹配",
+    sourceMatch: "相关度",
     noSourceExcerpts: "当前没有可展示的资料片段。",
   },
   en: {
@@ -465,7 +465,7 @@ export const messages = {
     noArchivedWorkspaces: "No archived learning spaces.",
     close: "Close",
     groundedEvidence: "Grounded evidence",
-    sourceMatch: "match",
+    sourceMatch: "relevance",
     noSourceExcerpts: "No source excerpts are available.",
   },
 } as const;
