@@ -57,6 +57,12 @@ def test_web_runtime_binds_to_all_container_interfaces() -> None:
     assert "HOSTNAME=0.0.0.0" in web_image
 
 
+def test_web_runtime_contains_public_assets() -> None:
+    web_image = _read("infra/Dockerfile.web")
+
+    assert "/app/public ./public" in web_image
+
+
 def test_custom_deployment_environment_is_namespaced() -> None:
     deployment_text = "\n".join(
         _read(path) for path in ["infra/compose.yml", "infra/Caddyfile", ".env.example"]
