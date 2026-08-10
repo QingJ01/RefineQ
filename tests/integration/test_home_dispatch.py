@@ -130,6 +130,88 @@ def test_direct_answer_does_not_mutate_learning_domains(tmp_path: Path) -> None:
     assert "workspaces" not in str(answer_call["messages"])
 
 
+def test_quoted_explanation_with_negation_creates_no_workspace_or_calendar_session(
+    tmp_path: Path,
+) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        before = {
+            collection: app.state.store.list(owner, collection)
+            for collection in ("workspaces", "learning", "sessions", "journey_events")
+        }
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "quoted-negation",
+                "text": (
+                    'What does this quoted sentence mean: "I have a math exam on '
+                    'October 25 and study 90 minutes daily"? '
+                    "Explain it only; do not create a workspace."
+                ),
+                "timezone_offset_minutes": 480,
+            },
+        )
+        after = {collection: app.state.store.list(owner, collection) for collection in before}
+        workspaces = client.get("/workspaces", headers=headers).json()
+        calendar = client.get(
+            "/calendar",
+            headers=headers,
+            params={
+                "starts_at": "2026-08-01T00:00:00Z",
+                "ends_at": "2026-12-31T00:00:00Z",
+            },
+        )
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] in {"direct_answer", "clarify"}
+    assert workspaces == []
+    assert before == after
+    assert calendar.status_code == 200, calendar.json()
+    assert calendar.json()["tasks"] == []
+
+
+def test_negated_learning_workspace_request_is_answered_directly(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "negated-creation",
+                "text": "Explain least squares. Do not create a learning workspace.",
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] == "direct_answer"
+    assert workspaces == []
+
+
+def test_genuine_dated_study_intent_still_opens_a_workspace(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "genuine-strong",
+                "text": "我要准备9月20日的高数期中，每天90分钟",
+                "timezone_offset_minutes": 480,
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] in {"open_workspace", "propose_workspace"}
+    assert len(workspaces) == 1
+
+
 def test_answer_timeout_is_retryable_and_records_only_an_error_code(tmp_path: Path) -> None:
     app, _ = app_with_model(tmp_path, TimeoutAnswerTransport())
     with TestClient(app) as client:

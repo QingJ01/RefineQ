@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from refineq.workspaces.constraints import infer_intent_constraints
+from refineq.workspaces.constraints import _strip_quoted_spans, infer_intent_constraints
 from refineq.workspaces.models import LearningWorkspace
 
 MAX_DISPATCH_CANDIDATES = 8
@@ -85,7 +85,17 @@ _EXPLICIT_QUOTED_EXPLANATION = re.compile(
     r"(?:[“\"「『].{1,500}[”\"」』]\s*(?:是什么意思|表示什么|如何理解)|"
     r"(?:解释|说明|解读).{0,6}(?:这句(?:话)?|这段(?:话|文字|内容)?|以下|下面).{0,8}[：:]|"
     r"what\s+does\s+[\"“].{1,500}[\"”]\s+mean|"
-    r"explain\s+(?:this|the\s+following)\s+(?:sentence|text|passage))",
+    r"what\s+does\s+(?:this|the)\s+(?:quoted\s+|following\s+|above\s+)?"
+    r"(?:sentence|text|passage|phrase|line|quote|quotation)\s+mean|"
+    r"explain\s+(?:this|the\s+following)\s+(?:sentence|text|passage)|"
+    r"explain\s+it\b)",
+    re.IGNORECASE,
+)
+_NEGATED_CREATION_OR_ONE_SHOT = re.compile(
+    r"do\s+not\s+create|don'?t\s+create|without\s+creating|"
+    r"explain\s+it\s+only|only\s+explain|just\s+answer|answer\s+(?:it\s+)?only|"
+    r"不要创建|不用创建|别创建|不要建|不用建|别建|"
+    r"一次性|仅解释|只解释|仅回答|只回答|只需回答",
     re.IGNORECASE,
 )
 _ONE_SHOT_STUDY_PLAN = re.compile(
@@ -246,10 +256,21 @@ class HomeRoutingPolicy:
                 "这是不依赖既有长期状态的一次性学习时间建议。",
             )
 
-        has_learning_verb = bool(_LEARNING_VERB.search(normalized))
-        has_exam_context = bool(_EXAM_CONTEXT.search(normalized))
-        has_learning_object = bool(_KNOWN_LEARNING_OBJECT.search(normalized)) or (
-            bool(_LATIN_LEARNING_OBJECT.search(normalized))
+        # Long-term learning signals must come from the learner's OWN words, not
+        # from quoted material to be explained nor from a negated-creation clause.
+        # Strip quoted spans first, then honour an explicit request to only answer
+        # this once ("do not create a workspace", "explain it only", "只回答"...).
+        unquoted_normalized = _normalized(_strip_quoted_spans(text))
+        if _NEGATED_CREATION_OR_ONE_SHOT.search(unquoted_normalized):
+            return PolicyDecision(
+                PolicyKind.DIRECT_ANSWER,
+                "用户明确要求只做一次性解答，不建立长期学习空间。",
+            )
+
+        has_learning_verb = bool(_LEARNING_VERB.search(unquoted_normalized))
+        has_exam_context = bool(_EXAM_CONTEXT.search(unquoted_normalized))
+        has_learning_object = bool(_KNOWN_LEARNING_OBJECT.search(unquoted_normalized)) or (
+            bool(_LATIN_LEARNING_OBJECT.search(unquoted_normalized))
             and (has_learning_verb or has_exam_context)
         )
         constraints = infer_intent_constraints(text, now=now or datetime.now(UTC))
