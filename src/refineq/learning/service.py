@@ -1723,17 +1723,19 @@ class LearningService:
         with self._learning.plan_transaction(owner_id, project_id):
             if scope_guard is not None:
                 scope_guard()
-            if payload.expected_state_version is not None or payload.prompt_hash is not None:
+            # The fence must identify the *question*, not the learning record as a
+            # whole: the record version also advances on unrelated writes (saving a
+            # question, completing a plan session, a second tab), and it is not
+            # carried by every question producer. prompt_hash is stable across all
+            # of those and changes exactly when the pending question changes, so it
+            # is the token that fails a superseded answer closed.
+            if payload.prompt_hash is not None:
                 current = self._learning.get(owner_id, project_id)
                 is_replay = payload.attempt_id in current.data.get("attempts", {})
                 if not is_replay:
                     pending = self._progress(current.data).get("pending_question")
                     if (
-                        payload.expected_state_version is not None
-                        and current.version != payload.expected_state_version
-                    ) or (
-                        payload.prompt_hash is not None
-                        and pending is not None
+                        pending is not None
                         and stable_id("question-prompt", pending["id"], pending["prompt"])
                         != payload.prompt_hash
                     ):

@@ -880,10 +880,7 @@ export function StudyWorkspace({
           question.id,
           answer,
           attemptId,
-          {
-            expectedStateVersion: question.state_version,
-            promptHash: question.prompt_hash,
-          },
+          { promptHash: question.prompt_hash },
         );
       if (!isPracticeGenerationCurrent(generation)) return;
       setResult(graded);

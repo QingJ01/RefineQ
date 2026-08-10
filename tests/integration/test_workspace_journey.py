@@ -1511,7 +1511,7 @@ def test_workspace_delete_waits_for_plan_update_and_leaves_no_orphan(
             app.state.workspaces.get(user.id, workspace.id)
 
 
-def test_answer_fails_closed_on_a_stale_question_state_version(tmp_path: Path) -> None:
+def test_answer_fails_closed_on_a_superseded_question(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
     with TestClient(app) as client:
@@ -1535,22 +1535,24 @@ def test_answer_fails_closed_on_a_stale_question_state_version(tmp_path: Path) -
             headers=headers,
             json={"request_id": "stale-first"},
         ).json()
-        assert "state_version" in q1
-        first_version = q1["state_version"]
+        assert q1["prompt_hash"]
+        first_prompt_hash = q1["prompt_hash"]
 
-        # Regenerating a question advances the learning state version.
+        # Regenerating replaces the pending question, so the first question's
+        # identity token is now stale.
         q2 = client.post(
             f"/workspaces/{workspace_id}/learning/question",
             headers=headers,
             json={"request_id": "stale-second", "replace": True},
         ).json()
-        assert q2["state_version"] != first_version
+        assert q2["prompt_hash"] != first_prompt_hash
 
         answer_body = (
             "A limit is the value a function approaches near an input; "
             "for example sin(x)/x approaches 1 as x approaches 0."
         )
-        # Submit against the current pending question but with the stale version → fail closed.
+        # An answer written for the superseded question must fail closed rather
+        # than be graded against the question that replaced it.
         stale = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
             headers=headers,
@@ -1558,12 +1560,12 @@ def test_answer_fails_closed_on_a_stale_question_state_version(tmp_path: Path) -
                 "attempt_id": "attempt-stale",
                 "question_id": q2["id"],
                 "answer": answer_body,
-                "expected_state_version": first_version,
+                "prompt_hash": first_prompt_hash,
             },
         )
         assert stale.status_code == 409
 
-        # Submitting with the current version succeeds and is graded.
+        # Answering the question actually on screen succeeds.
         fresh = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
             headers=headers,
@@ -1571,10 +1573,75 @@ def test_answer_fails_closed_on_a_stale_question_state_version(tmp_path: Path) -
                 "attempt_id": "attempt-fresh",
                 "question_id": q2["id"],
                 "answer": answer_body,
-                "expected_state_version": q2["state_version"],
+                "prompt_hash": q2["prompt_hash"],
             },
         )
         assert fresh.status_code == 200
+
+
+def test_answer_survives_a_reload_and_unrelated_learning_writes(tmp_path: Path) -> None:
+    """The identity fence must bind the question, not every learning-record write.
+
+    A reloaded page re-reads the question from the snapshot, and bookmarking or
+    any other learning mutation advances the record version. Neither changes
+    which question the learner is answering, so neither may block the answer.
+    """
+
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]
+        workspace_id = workspace["id"]
+        topic_text = f"{workspace['topics'][0]} is explained by this source.".encode()
+        client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("limits.txt", topic_text, "text/plain")},
+        )
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "fence-question"},
+        ).json()
+
+        # A reload serves the same question from the snapshot; its identity token
+        # must be usable to answer.
+        snapshot_question = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["active_question"]
+        assert snapshot_question["id"] == question["id"]
+        assert snapshot_question["prompt_hash"] == question["prompt_hash"]
+
+        # An unrelated learning write (bookmarking) advances the record version.
+        client.put(
+            f"/workspaces/{workspace_id}/learning/questions/{question['id']}/saved",
+            headers=headers,
+            json={"saved": True},
+        )
+
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "fence-attempt",
+                "question_id": question["id"],
+                "answer": (
+                    "A limit is the value a function approaches near an input; "
+                    "for example sin(x)/x approaches 1 as x approaches 0."
+                ),
+                "expected_state_version": snapshot_question["state_version"],
+                "prompt_hash": snapshot_question["prompt_hash"],
+            },
+        )
+
+    assert answer.status_code == 200, answer.json()
 
 
 def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:
