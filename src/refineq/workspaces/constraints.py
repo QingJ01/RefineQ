@@ -56,12 +56,33 @@ _ENGLISH_MONTH = (
 )
 
 
+_QUOTED_SPAN = re.compile(
+    r'"[^"]*"'  # straight double quotes
+    r"|“[^”]*”"  # curly double quotes
+    r"|「[^」]*」"  # CJK corner brackets
+    r"|『[^』]*』",  # CJK white corner brackets
+)
+
+
 @dataclass(frozen=True, slots=True)
 class IntentConstraints:
     exam_at: datetime | None = None
     daily_minutes: int | None = None
     preferred_hour: int | None = None
     plan_requested: bool = False
+
+
+def _strip_quoted_spans(text: str) -> str:
+    """Blank out quoted spans so their contents cannot become real constraints.
+
+    A date or minute budget written *inside* a quotation describes the quoted
+    sentence (for example ``What does "I have an exam on October 25" mean?``),
+    not the learner's own long-term commitment, so it must never be extracted as
+    an ``exam_at`` or ``daily_minutes``. Only matched quote pairs are removed, so
+    ordinary unquoted text is left untouched.
+    """
+
+    return _QUOTED_SPAN.sub(" ", text)
 
 
 def _number(value: str) -> int:
@@ -250,9 +271,10 @@ def _plan_requested(intent: str) -> bool:
 def infer_intent_constraints(intent: str, *, now: datetime) -> IntentConstraints:
     """Extract unambiguous exam deadlines and per-day minute budgets."""
 
+    unquoted = _strip_quoted_spans(intent)
     return IntentConstraints(
-        exam_at=_relative_exam(intent, now) or _absolute_exam(intent, now),
-        daily_minutes=_daily_minutes(intent),
-        preferred_hour=_preferred_hour(intent),
-        plan_requested=_plan_requested(intent),
+        exam_at=_relative_exam(unquoted, now) or _absolute_exam(unquoted, now),
+        daily_minutes=_daily_minutes(unquoted),
+        preferred_hour=_preferred_hour(unquoted),
+        plan_requested=_plan_requested(unquoted),
     )
