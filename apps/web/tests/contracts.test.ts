@@ -511,6 +511,20 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toMatch(/\.calendar-grid\s*\{[^}]*grid-template-columns: 1fr/s);
     expect(styles).toMatch(/\.calendar-day\.empty\s*\{[^}]*display: none/s);
   });
+
+  it("keeps shared action buttons at a 44px touch target", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    // The account page save/export/logout/delete controls all use these
+    // shared classes, so the base rule must meet the 44px touch target.
+    expect(styles).toMatch(
+      /\.primary-action,\s*\.secondary-action,\s*\.danger-action\s*\{[^}]*min-height: 44px/s,
+    );
+    expect(styles).toMatch(/\.account-panel input\s*\{[^}]*min-height: 44px/s);
+  });
 });
 
 

@@ -2148,7 +2148,7 @@ h3 {
 .primary-action,
 .secondary-action,
 .danger-action {
-  min-height: 42px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
