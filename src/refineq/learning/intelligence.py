@@ -133,7 +133,7 @@ GradingReasonCode = Literal[
     "insufficient_answer_evidence",
     "grader_unavailable",
     "retrieval_empty",
-    "question_state_conflict",
+    "untrusted_answer_key",
 ]
 
 
@@ -435,14 +435,18 @@ def fallback_grade(
     )
     gaps = [] if example_present else [application_gap]
     has_material = bool(question.citations or question.sources)
-    if not grader_available:
-        reason_code: GradingReasonCode = "grader_unavailable"
-    elif not has_material and not question.answer_key_trusted:
-        reason_code = "retrieval_empty"
+    # Missing material is the more actionable problem, so it outranks an
+    # unreachable grader: telling a learner only "the grader is down" would drop
+    # the one step they can actually take.
+    if not has_material and not question.answer_key_trusted:
+        reason_code: GradingReasonCode = "retrieval_empty"
+    elif not grader_available:
+        reason_code = "grader_unavailable"
     elif question.mode == "ai" and not question.answer_key_trusted:
-        # An AI question that lost its trusted key is a state/version conflict,
-        # not a missing-material problem — its citations are right there.
-        reason_code = "question_state_conflict"
+        # The question kept its citations but no verifiable answer key, so this is
+        # an untrusted-key degradation, not the question-identity conflict that
+        # the answer fence reports.
+        reason_code = "untrusted_answer_key"
     elif not substantive:
         reason_code = "insufficient_answer_evidence"
     else:
@@ -453,7 +457,7 @@ def fallback_grade(
                 0,
                 "未找到可核对的学习资料，本次降级反馈不计入掌握度；请上传资料或配置模型后再试。",
             )
-        elif reason_code == "question_state_conflict":
+        elif reason_code == "untrusted_answer_key":
             gaps.insert(
                 0,
                 "题目状态已更新，本次未能对齐可核对的标准答案；请重做当前题后再作答。",

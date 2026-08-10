@@ -312,7 +312,7 @@ export type GradingReasonCode =
   | "insufficient_answer_evidence"
   | "grader_unavailable"
   | "retrieval_empty"
-  | "question_state_conflict";
+  | "untrusted_answer_key";
 
 export interface SavedPracticeQuestion extends PracticeQuestion {
   saved: boolean;

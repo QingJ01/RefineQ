@@ -57,10 +57,19 @@ _ENGLISH_MONTH = (
 
 
 _QUOTED_SPAN = re.compile(
+    # Closed spans first, then an unterminated opener runs to the end of the text:
+    # a missing closing quote must not hand the quoted content back to constraint
+    # extraction, which is exactly the bug this stripping exists to prevent.
+    # Single quotes are deliberately excluded: apostrophes ("I'm", "don't") are
+    # far more common than single-quoted spans, and stripping them would swallow
+    # a genuine goal's date.
     r'"[^"]*"'  # straight double quotes
     r"|“[^”]*”"  # curly double quotes
+    r"|‘[^’]*’"  # curly single quotes (typographic, not apostrophes)
+    r"|«[^»]*»"  # guillemets
     r"|「[^」]*」"  # CJK corner brackets
-    r"|『[^』]*』",  # CJK white corner brackets
+    r"|『[^』]*』"  # CJK white corner brackets
+    r"|[\"“‘«「『][^\"”’»」』]*$",  # unterminated opener
 )
 
 

@@ -519,7 +519,7 @@ def test_fallback_reason_code_distinguishes_missing_material_from_untrusted_key(
     )
 
     # Material is present, so the recovery copy must not claim "no material".
-    assert grade.reason_code == "question_state_conflict"
+    assert grade.reason_code == "untrusted_answer_key"
     assert "未找到可核对的学习资料" not in grade.feedback
 
 

@@ -135,3 +135,30 @@ def test_unquoted_constraints_survive_when_only_a_phrase_is_quoted() -> None:
 
     assert mixed.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC)
     assert mixed.daily_minutes == 90
+
+
+def test_quote_variants_and_unterminated_quotes_stay_inert() -> None:
+    """A missing closing quote must not hand quoted content back to extraction."""
+
+    quoted_body = "I have a math exam on October 25 and study 90 minutes daily"
+    for text in (
+        f'What does this mean: "{quoted_body}',  # unterminated
+        f"What does this mean: «{quoted_body}»",  # guillemets
+        f"What does this mean: 「{quoted_body}」",  # CJK corner brackets
+    ):
+        constraints = infer_intent_constraints(text, now=NOW)
+        assert constraints.exam_at is None, text
+        assert constraints.daily_minutes is None, text
+
+
+def test_apostrophes_do_not_swallow_a_real_goal() -> None:
+    """Single quotes are not stripped: apostrophes are far more common."""
+
+    constraints = infer_intent_constraints(
+        "I'm preparing and don't want to slip; my exam is on October 25 "
+        "and I study 90 minutes daily",
+        now=NOW,
+    )
+
+    assert constraints.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC)
+    assert constraints.daily_minutes == 90
