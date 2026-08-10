@@ -1695,3 +1695,90 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
     assert unsaved.json()["saved"] is False
     assert unsaved.json()["saved_at"] is None
     assert after.json() == []
+
+
+def test_targeted_plan_idempotency_key_replays_despite_changed_fields(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study linear algebra"},
+        ).json()["workspace"]["id"]
+        material_id = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "linear-algebra.txt",
+                    (
+                        b"Chapter 1 Eigenvalues\n"
+                        b"Eigenvalues describe invariant directions of a linear map."
+                    ),
+                    "text/plain",
+                )
+            },
+        ).json()[0]["id"]
+        analysis = client.post(
+            f"/workspaces/{workspace_id}/materials/{material_id}/analysis",
+            headers=headers,
+        )
+        assert analysis.status_code == 200
+        topics = analysis.json()["topics"]
+        assert topics, "fallback analysis should surface at least one topic"
+
+        def payload(idempotency_key: str, routine_notes: str) -> dict:
+            return {
+                "idempotency_key": idempotency_key,
+                "material_id": material_id,
+                "focus_topics": topics[:1],
+                "exam_at": (datetime.now(UTC) + timedelta(days=14)).isoformat(),
+                "daily_minutes": 45,
+                "study_weekdays": [0, 1, 2, 3, 4, 5, 6],
+                "preferred_hour": 9,
+                "timezone_offset_minutes": 0,
+                "routine_notes": routine_notes,
+            }
+
+        first = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload("journey-plan-key-1", "Study after dinner on weekdays"),
+        )
+        assert first.status_code == 200, first.text
+        first_plan = first.json()
+
+        # The client gave up at its timeout and the server had already committed;
+        # retrying with the SAME idempotency key but a tweaked routine must replay
+        # the committed plan rather than overwrite it with a fresh one.
+        replay = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload("journey-plan-key-1", "Switched to early mornings instead"),
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["id"] == first_plan["id"]
+
+        after_replay = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert after_replay["progress"]["plan_id"] == first_plan["id"]
+
+        # A genuinely new user action (fresh key) is allowed to regenerate.
+        regenerated = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload("journey-plan-key-2", "Switched to early mornings instead"),
+        )
+        assert regenerated.status_code == 200, regenerated.text
+        assert regenerated.json()["id"] != first_plan["id"]
+
+        after_regenerate = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert after_regenerate["progress"]["plan_id"] == regenerated.json()["id"]

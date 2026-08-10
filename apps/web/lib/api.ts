@@ -795,9 +795,17 @@ export class ApiClient {
     workspaceId: string,
     input: TargetedPlanInput,
   ): Promise<StudyPlan> {
+    // The endpoint is synchronous and commits even if this request times out, so
+    // every call must carry an idempotency key that a retry can reuse to replay
+    // the committed plan instead of forging a new one. Callers that manage their
+    // own stable key (e.g. across an abort/retry) keep it; others get a fresh one.
+    const body: TargetedPlanInput = {
+      ...input,
+      idempotency_key: input.idempotency_key ?? crypto.randomUUID().replaceAll("-", ""),
+    };
     return this.request<StudyPlan>(
       `/workspaces/${workspaceId}/learning/plan/targeted`,
-      { method: "POST", body: JSON.stringify(input) },
+      { method: "POST", body: JSON.stringify(body) },
       token,
       this.longRequestTimeouts.model,
     );

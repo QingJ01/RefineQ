@@ -534,6 +534,7 @@ export interface MaterialAnalysis {
 }
 
 export interface TargetedPlanInput {
+  idempotency_key?: string;
   material_id: string;
   focus_topics: string[];
   exam_at: string;

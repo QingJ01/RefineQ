@@ -481,6 +481,7 @@ def test_material_analysis_registry_targeted_plan_completes_mastery_journey(
             f"/workspaces/{workspace_id}/learning/plan/targeted",
             headers=headers,
             json={
+                "idempotency_key": "material-registry-plan-1",
                 "material_id": material["id"],
                 "focus_topics": ["Output with feedback control"],
                 "exam_at": (datetime.now(UTC) + timedelta(days=14)).isoformat(),

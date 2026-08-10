@@ -544,6 +544,7 @@ def test_targeted_plan_requires_a_linked_and_analyzed_material(tmp_path: Path) -
             },
         ).json()[0]
         payload = {
+            "idempotency_key": "targeted-plan-boundary-1",
             "material_id": material["id"],
             "focus_topics": ["Eigenvalues"],
             "exam_at": (datetime.now(UTC) + timedelta(days=14)).isoformat(),

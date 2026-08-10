@@ -24,6 +24,7 @@ from refineq.storage.material_analyses import MaterialAnalysisRepository
 class TargetedPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     material_id: str
     focus_topics: list[str] = Field(min_length=1, max_length=30)
     exam_at: datetime
@@ -123,18 +124,12 @@ class TargetedPlanService:
                 "focus_topics must be supported by the material analysis: " + ", ".join(unsupported)
             )
         learning_record = self.learning.get_or_create(owner_id, workspace_id)
-        request_key = stable_id(
-            "targeted-plan-request",
-            workspace_id,
-            payload.material_id,
-            payload.exam_at.isoformat(),
-            str(payload.daily_minutes),
-            ",".join(str(day) for day in payload.study_weekdays),
-            str(payload.preferred_hour),
-            str(payload.timezone_offset_minutes),
-            payload.routine_notes,
-            *payload.focus_topics,
-        )
+        # Dedup on the client-supplied idempotency key, not a hash of the request
+        # body. The endpoint is synchronous and commits even after the browser
+        # aborts at its timeout, so a retry that tweaks any field must still replay
+        # the committed plan (same key) instead of forging a new one that would
+        # overwrite the plan the learner never saw.
+        request_key = payload.idempotency_key
         current_progress = learning_record.data["progress"]
         current_plan_raw = current_progress.get("plan")
         request_plans = current_progress.get("targeted_plan_requests", {})

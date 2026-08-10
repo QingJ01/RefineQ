@@ -1185,8 +1185,31 @@ export function StudyWorkspace({
     targetedPlanBusyRef.current = true;
     setTargetedPlanBusy(true);
     setError("");
+    // One stable idempotency key for this whole user action. The endpoint is
+    // synchronous and commits even if the request times out, so a retry must
+    // reuse this exact key to replay the committed plan instead of forging a
+    // fresh-key plan that overwrites the one the learner never got to see.
+    const request: TargetedPlanInput = {
+      ...input,
+      idempotency_key: input.idempotency_key ?? crypto.randomUUID().replaceAll("-", ""),
+    };
     try {
-      const created = await api.createTargetedPlan(targetToken, targetWorkspaceId, input);
+      const created = await (async () => {
+        try {
+          return await api.createTargetedPlan(targetToken, targetWorkspaceId, request);
+        } catch (caught) {
+          // A client-side timeout (408) is not proof the server failed to commit.
+          // Retry once with the SAME key so the committed plan is reconciled back
+          // rather than surfaced as a terminal error that invites an overwrite.
+          if (
+            !(caught instanceof ApiError && caught.status === 408)
+            || targetedPlanGenerationRef.current !== generation
+            || workspaceRef.current?.id !== targetWorkspaceId
+            || authRef.current?.access_token !== targetToken
+          ) throw caught;
+          return api.createTargetedPlan(targetToken, targetWorkspaceId, request);
+        }
+      })();
       if (
         targetedPlanGenerationRef.current !== generation
         || workspaceRef.current?.id !== targetWorkspaceId

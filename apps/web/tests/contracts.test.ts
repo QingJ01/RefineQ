@@ -40,7 +40,7 @@ import {
     practiceStatus,
     projectIntegrationTestResult,
 } from "../lib/view-models";
-import type { StudyPlan } from "../lib/types";
+import type { StudyPlan, TargetedPlanInput } from "../lib/types";
 
 
 describe("workspace state boundaries", () => {
@@ -1081,6 +1081,58 @@ describe("recoverable client workflows", () => {
     clearSelectedFiles(input);
 
     expect(input.value).toBe("");
+  });
+});
+
+
+describe("targeted plan idempotency", () => {
+  const idempotencyPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+  function planInput(overrides: Partial<TargetedPlanInput> = {}): TargetedPlanInput {
+    return {
+      material_id: "material-1",
+      focus_topics: ["Eigenvalues"],
+      exam_at: "2026-09-01T12:00:00.000Z",
+      daily_minutes: 45,
+      study_weekdays: [0, 1, 2, 3, 4],
+      preferred_hour: 9,
+      timezone_offset_minutes: 0,
+      routine_notes: "",
+      ...overrides,
+    };
+  }
+
+  it("attaches a generated idempotency key when the caller omits one", async () => {
+    let requestedBody: Record<string, unknown> = {};
+    const client = new ApiClient("/api", async (_input, init) => {
+      requestedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "plan-1", goal: "", sessions: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.createTargetedPlan("token", "workspace-1", planInput());
+
+    expect(typeof requestedBody.idempotency_key).toBe("string");
+    expect(String(requestedBody.idempotency_key)).toMatch(idempotencyPattern);
+  });
+
+  it("preserves a caller-provided idempotency key so a retry replays", async () => {
+    const keys: Array<unknown> = [];
+    const client = new ApiClient("/api", async (_input, init) => {
+      keys.push(JSON.parse(String(init?.body)).idempotency_key);
+      return new Response(JSON.stringify({ id: "plan-1", goal: "", sessions: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const input = planInput({ idempotency_key: "stable-user-action-key" });
+    await client.createTargetedPlan("token", "workspace-1", input);
+    await client.createTargetedPlan("token", "workspace-1", input);
+
+    expect(keys).toEqual(["stable-user-action-key", "stable-user-action-key"]);
   });
 });
 
@@ -2162,5 +2214,27 @@ describe("targeted plan request isolation", () => {
     expect(workspaceSource).toContain("targetedPlanGenerationRef.current !== generation");
     expect(workspaceGuard).toBeGreaterThan(-1);
     expect(planCommit).toBeGreaterThan(workspaceGuard);
+  });
+
+  it("reuses one idempotency key across a client-timeout retry instead of overwriting", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const createFn = workspaceSource.slice(
+      workspaceSource.indexOf("async function createTargetedPlan"),
+      workspaceSource.indexOf("async function addCalendarSession"),
+    );
+
+    // One stable idempotency key per user action, derived once and reused.
+    expect(createFn).toMatch(
+      /idempotency_key:\s*input\.idempotency_key\s*\?\?\s*crypto\.randomUUID/,
+    );
+    // A client timeout (408) must not be terminal: the server may have committed,
+    // so retry with the SAME request/key to replay it rather than overwrite it.
+    expect(createFn).toContain("caught.status === 408");
+    const retryCalls =
+      createFn.split("api.createTargetedPlan(targetToken, targetWorkspaceId, request)").length - 1;
+    expect(retryCalls).toBe(2);
   });
 });
