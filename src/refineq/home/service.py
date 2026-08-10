@@ -927,7 +927,9 @@ class HomeDispatchService:
         *,
         now: datetime,
     ) -> HomeDispatchResult:
-        inferred = infer_intent_constraints(payload.text[:2_000], now=now)
+        user_timezone = timezone(timedelta(minutes=payload.timezone_offset_minutes))
+        local_now = now.astimezone(user_timezone)
+        inferred = infer_intent_constraints(payload.text[:2_000], now=local_now)
         exam_at = inferred.exam_at or now + timedelta(days=DEFAULT_CAPABILITY_HORIZON_DAYS)
         daily_minutes = inferred.daily_minutes or 45
         decision = preview.decision

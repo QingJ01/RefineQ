@@ -728,6 +728,78 @@ describe("focused learning components", () => {
     expect(html).not.toContain("证据账本");
   });
 
+  it("counts days to exam on local calendar days, not by rounding a raw instant", () => {
+    const now = new Date();
+    // A target 42 local calendar days out, at local end-of-day.
+    const examLocal = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 42,
+      23,
+      59,
+      59,
+    );
+    const html = renderToStaticMarkup(
+      <LearningSessionCanvas
+        locale="en"
+        t={t}
+        workspace={{
+          id: "product-thinking",
+          title: "产品思维",
+          subject: "product",
+          goal: "学会验证真实用户需求",
+          topics: ["用户需求验证"],
+          keywords: ["需求验证"],
+          routing_summary: "能力学习",
+          archived: false,
+          created_at: "2026-08-07T00:00:00Z",
+          last_active_at: "2026-08-07T00:00:00Z",
+        }}
+        plan={{
+          id: "plan-1",
+          goal: "完成产品考试",
+          exam_at: examLocal.toISOString(),
+          daily_minutes: 45,
+          sessions: [],
+        }}
+        progress={null}
+        materials={[{
+          id: "interview",
+          filename: "用户访谈原文.md",
+          content_type: "text/markdown",
+          size: 1200,
+          status: "indexed",
+          chunk_count: 3,
+          content_sha256: "abc",
+          indexed_at: "2026-08-07T00:00:00Z",
+        }]}
+        question={null}
+        answer=""
+        result={null}
+        busy={false}
+        learningMode="case"
+        savedQuestions={[]}
+        onLearningModeChange={() => undefined}
+        onAnswerChange={() => undefined}
+        onStartTask={() => undefined}
+        onSubmit={() => undefined}
+        onNextTask={() => undefined}
+        onToggleSaved={() => undefined}
+        onOpenLibrary={() => undefined}
+        onAskCoach={async () => ({
+          session_id: "session-1",
+          message: "证据优先。",
+          citations: [],
+          sources: [],
+        })}
+      />,
+    );
+
+    const countdown = html.match(/data-testid="exam-countdown"[^>]*>(.*?)<\/span>/)?.[1] ?? "";
+    expect(countdown).toContain("42 days to exam");
+    expect(countdown).not.toContain("43 days to exam");
+  });
+
   it("distinguishes material-grounded practice from general generation", () => {
     const source: SearchSource = {
       citation_id: "interview#0",
@@ -1186,7 +1258,7 @@ describe("focused learning components", () => {
         plan={{
           id: "plan-1",
           goal: "Pass calculus",
-          exam_at: "2026-08-20T23:59:59Z",
+          exam_at: "2026-08-20T15:59:59Z",
           daily_minutes: 45,
           sessions: [{
             id: "session-1",
@@ -1217,6 +1289,35 @@ describe("focused learning components", () => {
       expect(html).toContain("Historical input");
       expect(html).toContain("Pass calculus in 90 minutes every day");
       expect(html).toContain("does not control the current schedule");
+  });
+
+  it("reads and displays the exam date on the same local day the input writes", () => {
+    // 2026-09-19T20:00:00Z is 2026-09-20 in UTC+8, the tz the input writes in.
+    const html = renderToStaticMarkup(
+      <PlanSettings
+        locale="en"
+        plan={{
+          id: "plan-tz",
+          goal: "Pass calculus",
+          exam_at: "2026-09-19T20:00:00Z",
+          daily_minutes: 45,
+          sessions: [{
+            id: "session-1",
+            topic_id: "limits",
+            planned_at: "2026-09-10T08:00:00Z",
+            minutes: 45,
+          }],
+        }}
+        topics={{ limits: "Limits" }}
+        topicOrder={["limits"]}
+        originalGoal="Pass calculus"
+        onSave={() => undefined}
+      />,
+    );
+
+    const examInput = html.match(/<input[^>]*data-testid="plan-exam-date"[^>]*>/)?.[0] ?? "";
+    expect(examInput).toContain('value="2026-09-20"');
+    expect(html).toContain("Sep 20, 2026");
   });
 
   it("renders plan generation controls after a schedule has been cleared", () => {

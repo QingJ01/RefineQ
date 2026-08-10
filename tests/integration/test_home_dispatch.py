@@ -1,6 +1,6 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 from time import sleep
@@ -210,6 +210,28 @@ def test_genuine_dated_study_intent_still_opens_a_workspace(tmp_path: Path) -> N
     assert response.status_code == 200, response.json()
     assert response.json()["kind"] in {"open_workspace", "propose_workspace"}
     assert len(workspaces) == 1
+
+
+def test_proposal_exam_date_uses_the_local_calendar_day(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        proposed = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "propose-local-date",
+                "text": "我想系统复习，准备9月20日的考试",
+                "timezone_offset_minutes": 480,
+            },
+        )
+    assert proposed.status_code == 200, proposed.json()
+    assert proposed.json()["kind"] == "propose_workspace", proposed.json()
+    proposal = proposed.json()["workspace_proposal"]
+    exam_at = datetime.fromisoformat(proposal["exam_at"])
+    local = exam_at.astimezone(timezone(timedelta(minutes=480)))
+    assert local.date() == date(2026, 9, 20), proposal["exam_at"]
 
 
 def test_answer_timeout_is_retryable_and_records_only_an_error_code(tmp_path: Path) -> None:
