@@ -1505,6 +1505,7 @@ describe("implicit workspace API", () => {
       daily_minutes: 35,
       topic_order: ["limits"],
       regenerate: true,
+      timezone_offset_minutes: -new Date().getTimezoneOffset(),
     });
     expect(plan.id).toBe("plan-2");
   });

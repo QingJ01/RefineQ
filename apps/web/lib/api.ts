@@ -88,6 +88,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly detail?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -159,6 +160,7 @@ export class ApiClient {
           response.status,
           body?.error?.code ?? "request_error",
           body?.error?.message ?? `Request failed (${response.status})`,
+          body?.error?.detail,
         );
       }
       if (response.status === 204) return undefined as T;
@@ -614,7 +616,13 @@ export class ApiClient {
   ): Promise<StudySession> {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions/${sessionId}`,
-      { method: "PATCH", body: JSON.stringify(input) },
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...input,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+      },
       token,
     );
   }
@@ -626,7 +634,13 @@ export class ApiClient {
   ): Promise<StudySession> {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions`,
-      { method: "POST", body: JSON.stringify(input) },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...input,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+      },
       token,
     );
   }
@@ -646,7 +660,13 @@ export class ApiClient {
   ): Promise<StudyPlan> {
     return this.request<StudyPlan>(
       `/workspaces/${workspaceId}/learning/plan`,
-      { method: "PUT", body: JSON.stringify(input) },
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          ...input,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+      },
       token,
     );
   }

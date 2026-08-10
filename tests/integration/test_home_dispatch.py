@@ -1169,7 +1169,7 @@ def test_workspace_action_requires_preview_and_confirmation(tmp_path: Path) -> N
             headers=headers,
             json={
                 "request_id": "move-session",
-                "text": "把高数期末的复习移到周六",
+                "text": "把高数期末的复习调整为30分钟",
                 "timezone_offset_minutes": 480,
             },
         )

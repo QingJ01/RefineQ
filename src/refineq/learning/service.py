@@ -6,7 +6,7 @@ import logging
 from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -32,6 +32,7 @@ from refineq.learning.models import (
     StudyPlan,
     StudySession,
 )
+from refineq.learning.next_action import _local_date
 from refineq.learning.planning import build_study_plan
 from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import RecordNotFoundError, StoredRecord
@@ -159,6 +160,14 @@ class LearningNotSeededError(LearningServiceError):
 
 class LearningConflictError(LearningServiceError):
     code = "learning_conflict"
+
+
+class DailyCapacityExceededError(LearningConflictError):
+    code = "daily_capacity_exceeded"
+
+    def __init__(self, message: str, *, detail: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.detail = detail
 
 
 class MaterialGroundingRequiredError(LearningConflictError):
@@ -307,6 +316,7 @@ class PlanSessionUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=r"^(planned|completed)$")
     planned_at: datetime | None = None
     minutes: int | None = Field(default=None, ge=5, le=480)
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
 class PlanSessionCreate(BaseModel):
@@ -316,6 +326,7 @@ class PlanSessionCreate(BaseModel):
     planned_at: datetime
     minutes: int = Field(ge=5, le=480)
     activity: str = Field(default="practice", pattern=r"^(learn|practice|apply|review)$")
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
 class PlanUpdateRequest(BaseModel):
@@ -326,6 +337,7 @@ class PlanUpdateRequest(BaseModel):
     daily_minutes: int = Field(ge=5, le=480)
     topic_order: list[str] = Field(min_length=1, max_length=200)
     regenerate: bool = False
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
 class AttemptFeedbackRequest(BaseModel):
@@ -708,6 +720,60 @@ class LearningService:
             raise LearningServiceError("Plan generation failed")
         return generated
 
+    @staticmethod
+    def _assert_daily_capacity(
+        plan_sessions: list[dict[str, Any]],
+        *,
+        target_id: str | None,
+        new_planned_at: datetime,
+        new_minutes: int,
+        daily_minutes: int,
+        tz_offset_minutes: int,
+    ) -> None:
+        """Reject a placement that would push a local calendar day over its budget.
+
+        Every non-completed session is bucketed to its LOCAL date so the budget is
+        measured on the day the learner actually sees, not on the UTC instant. The
+        session identified by ``target_id`` is excluded because it is the one being
+        moved or created; its new minutes are what we are trying to fit.
+        """
+
+        target_date = _local_date(new_planned_at, tz_offset_minutes)
+        buckets: dict[date, int] = {}
+        for session in plan_sessions:
+            if session.get("status") == "completed":
+                continue
+            if target_id is not None and session.get("id") == target_id:
+                continue
+            planned_at = session["planned_at"]
+            if isinstance(planned_at, str):
+                planned_at = datetime.fromisoformat(planned_at)
+            bucket = _local_date(planned_at, tz_offset_minutes)
+            buckets[bucket] = buckets.get(bucket, 0) + int(session["minutes"])
+
+        used = buckets.get(target_date, 0)
+        if used + new_minutes <= daily_minutes:
+            return
+
+        next_free_date: str | None = None
+        if new_minutes <= daily_minutes:
+            candidate = target_date
+            for _ in range(366):
+                candidate += timedelta(days=1)
+                if buckets.get(candidate, 0) + new_minutes <= daily_minutes:
+                    next_free_date = candidate.isoformat()
+                    break
+        raise DailyCapacityExceededError(
+            "This day would exceed the daily study budget.",
+            detail={
+                "date": target_date.isoformat(),
+                "used": used,
+                "requested": new_minutes,
+                "daily_minutes": daily_minutes,
+                "next_free_date": next_free_date,
+            },
+        )
+
     def update_plan_session(
         self,
         owner_id: str,
@@ -729,12 +795,29 @@ class LearningService:
             for session in plan["sessions"]:
                 if session["id"] != session_id:
                     continue
+                if payload.planned_at is not None and (
+                    payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None
+                ):
+                    raise LearningConflictError("planned_at must be timezone-aware")
+                new_status = payload.status if payload.status is not None else session["status"]
+                if payload.planned_at is not None:
+                    new_planned_at = payload.planned_at.astimezone(UTC)
+                else:
+                    new_planned_at = datetime.fromisoformat(session["planned_at"])
+                new_minutes = payload.minutes if payload.minutes is not None else session["minutes"]
+                if new_status != "completed":
+                    self._assert_daily_capacity(
+                        plan["sessions"],
+                        target_id=session_id,
+                        new_planned_at=new_planned_at,
+                        new_minutes=new_minutes,
+                        daily_minutes=plan["daily_minutes"],
+                        tz_offset_minutes=payload.timezone_offset_minutes,
+                    )
                 if payload.status is not None:
                     session["status"] = payload.status
                 if payload.planned_at is not None:
-                    if payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None:
-                        raise LearningConflictError("planned_at must be timezone-aware")
-                    session["planned_at"] = payload.planned_at.astimezone(UTC).isoformat()
+                    session["planned_at"] = new_planned_at.isoformat()
                 if payload.minutes is not None:
                     session["minutes"] = payload.minutes
                 updated = deepcopy(session)
@@ -797,6 +880,14 @@ class LearningService:
                 planned_at=payload.planned_at,
                 minutes=payload.minutes,
                 activity=payload.activity,
+            )
+            self._assert_daily_capacity(
+                plan["sessions"],
+                target_id=None,
+                new_planned_at=payload.planned_at,
+                new_minutes=payload.minutes,
+                daily_minutes=plan["daily_minutes"],
+                tz_offset_minutes=payload.timezone_offset_minutes,
             )
             plan["sessions"].append(created.model_dump(mode="json"))
             return data
@@ -898,6 +989,27 @@ class LearningService:
                         "daily_minutes": payload.daily_minutes,
                     }
                 )
+                if payload.daily_minutes < existing.daily_minutes:
+                    # Preserved sessions were laid out for the old, higher budget;
+                    # a lower budget must not silently overload any local day.
+                    kept_sessions = generated.model_dump(mode="json")["sessions"]
+                    checked: set[date] = set()
+                    for session in kept_sessions:
+                        if session.get("status") == "completed":
+                            continue
+                        planned_at = datetime.fromisoformat(session["planned_at"])
+                        day = _local_date(planned_at, payload.timezone_offset_minutes)
+                        if day in checked:
+                            continue
+                        checked.add(day)
+                        self._assert_daily_capacity(
+                            kept_sessions,
+                            target_id=None,
+                            new_planned_at=planned_at,
+                            new_minutes=0,
+                            daily_minutes=payload.daily_minutes,
+                            tz_offset_minutes=payload.timezone_offset_minutes,
+                        )
 
             progress["goal"] = normalized_goal
             progress["exam_at"] = exam_at.isoformat()

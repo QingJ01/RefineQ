@@ -52,10 +52,11 @@ def _raise_api_error(error: LearningServiceError) -> None:
         status_code = status.HTTP_409_CONFLICT
     else:
         status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-    raise HTTPException(
-        status_code=status_code,
-        detail={"code": error.code, "message": str(error)},
-    ) from error
+    detail: dict[str, object] = {"code": error.code, "message": str(error)}
+    structured = getattr(error, "detail", None)
+    if isinstance(structured, dict):
+        detail.update(structured)
+    raise HTTPException(status_code=status_code, detail=detail) from error
 
 
 @router.post("/seed", response_model=ProgressResponse)

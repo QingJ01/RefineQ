@@ -725,7 +725,9 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             headers=alice_headers,
             json={
                 "topic_name": initial["progress"]["topics"][question["topic_id"]],
-                "planned_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                # Generated days are already full at the daily budget; add on a
+                # later empty day to stay within budget.
+                "planned_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
                 "minutes": 20,
                 "activity": "review",
             },
@@ -744,8 +746,10 @@ def test_workspace_insights_feedback_and_question_retry_are_owner_scoped(
             response = client.patch(
                 f"/workspaces/{workspace_id}/learning/plan/sessions/{review['id']}",
                 headers=alice_headers,
+                # Empty past days keep the review overdue without overloading the
+                # already-full generated days.
                 json={
-                    "planned_at": (datetime.now(UTC) - timedelta(hours=index + 1)).isoformat(),
+                    "planned_at": (datetime.now(UTC) - timedelta(days=index + 1)).isoformat(),
                 },
             )
             assert response.status_code == 200

@@ -201,7 +201,9 @@ export function ScheduleCalendar({
                     <button type="button" data-testid={`complete-calendar-session-${session.id}`} disabled={busySessionId === session.id} onClick={() => void onUpdateSession(session, { status: session.status === "completed" ? "planned" : "completed" })}>{session.status === "completed" ? (zh ? "重新打开" : "Reopen") : (zh ? "完成" : "Complete")}</button>
                     <button type="button" data-testid={`defer-calendar-session-${session.id}`} disabled={busySessionId === session.id} onClick={() => {
                       const deferredAt = new Date(session.planned_at);
-                      deferredAt.setUTCDate(deferredAt.getUTCDate() + 1);
+                      // Advance by one LOCAL calendar day so the session lands on
+                      // the day the learner sees, matching the server's local buckets.
+                      deferredAt.setDate(deferredAt.getDate() + 1);
                       void onUpdateSession(session, { planned_at: deferredAt.toISOString() });
                     }}>{zh ? "顺延一天" : "Defer one day"}</button>
                     <button type="button" data-testid={`edit-calendar-session-${session.id}`} disabled={busySessionId === session.id} onClick={() => beginEdit(session)}>{zh ? "编辑" : "Edit"}</button>

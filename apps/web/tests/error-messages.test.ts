@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/api";
-import { localizeApiError } from "../lib/error-messages";
+import { describePlanCapacityError, localizeApiError } from "../lib/error-messages";
 
 
 describe("localized API errors", () => {
@@ -47,6 +47,25 @@ describe("localized API errors", () => {
       new ApiError(422, "material_extraction_failed", "Could not extract"),
       "zh",
     )).toBe("无法读取这份资料的内容，请检查文件后重试。");
+  });
+
+  it("explains a daily-budget conflict and suggests the next open day", () => {
+    expect(localizeApiError(new ApiError(409, "daily_capacity_exceeded", "raw"), "en"))
+      .toBe("That day is already full for its daily study minutes. Pick another day or shorten the session.");
+    const enriched = describePlanCapacityError(
+      new ApiError(409, "daily_capacity_exceeded", "raw", { next_free_date: "2026-09-22" }),
+      "en",
+    );
+    expect(enriched).toContain("That day is already full");
+    expect(enriched).toContain("2026-09-22");
+    const zh = describePlanCapacityError(
+      new ApiError(409, "daily_capacity_exceeded", "raw", { next_free_date: "2026-09-22" }),
+      "zh",
+    );
+    expect(zh).toContain("2026-09-22");
+    // A non-capacity error is described exactly like the localized message.
+    expect(describePlanCapacityError(new ApiError(409, "learning_conflict", "raw"), "en"))
+      .toBe("Learning state changed. Resync and try again.");
   });
 
   it("uses a safe localized fallback for unknown failures", () => {

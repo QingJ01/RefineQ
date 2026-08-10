@@ -39,7 +39,7 @@ import {
   pendingCoachTurn,
   type PendingCoachTurn,
 } from "@/lib/coach-actions";
-import { localizeApiError } from "@/lib/error-messages";
+import { describePlanCapacityError, localizeApiError } from "@/lib/error-messages";
 import {
   browserHistoryNavigation,
   browserHistoryTraversalTarget,
@@ -1473,7 +1473,9 @@ export function StudyWorkspace({
       await refreshNextAction(auth.access_token, workspace.id);
       return true;
     } catch (caught) {
-      reportError(caught);
+      // A daily-budget conflict gets a specific message (with the next open day)
+      // instead of the generic error banner.
+      setError(describePlanCapacityError(caught, locale));
       return false;
     } finally {
       setBusySessionId(null);

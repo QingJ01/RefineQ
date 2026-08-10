@@ -578,7 +578,9 @@ def test_explicit_topic_actions_reauthorize_existing_topics_without_a_subject(
             workspace_id,
             PlanSessionCreate(
                 topic_name=plan_topic_name,
-                planned_at=datetime.now(UTC) + timedelta(days=1),
+                # The generated plan fills each day to the daily budget; use a
+                # later empty day so the added session stays within budget.
+                planned_at=datetime.now(UTC) + timedelta(days=30),
                 minutes=20,
                 activity="practice",
             ),

@@ -1026,16 +1026,18 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         assert completed.status_code == 200
         assert completed.json()["status"] == "completed"
 
-        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        # The generated plan fills each day to the full budget, so move onto a
+        # later empty day to stay within the daily-minute budget.
+        open_day = datetime.now(UTC) + timedelta(days=20)
         rescheduled = client.patch(
             f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
             headers=headers,
-            json={"status": "planned", "planned_at": tomorrow.isoformat(), "minutes": 30},
+            json={"status": "planned", "planned_at": open_day.isoformat(), "minutes": 30},
         )
         assert rescheduled.status_code == 200
         assert rescheduled.json()["status"] == "planned"
         assert rescheduled.json()["minutes"] == 30
-        assert datetime.fromisoformat(rescheduled.json()["planned_at"]) >= tomorrow - timedelta(
+        assert datetime.fromisoformat(rescheduled.json()["planned_at"]) >= open_day - timedelta(
             seconds=1
         )
 
@@ -1045,19 +1047,19 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         ).json()["plan"]["sessions"][0]
         assert restored == rescheduled.json()
 
-        manual_time = datetime.now(UTC) + timedelta(days=2)
+        manual_time = datetime.now(UTC) + timedelta(days=21)
         added = client.post(
             f"/workspaces/{workspace_id}/learning/plan/sessions",
             headers=headers,
             json={
                 "topic_name": "定积分复习",
                 "planned_at": manual_time.isoformat(),
-                "minutes": 50,
+                "minutes": 40,
                 "activity": "review",
             },
         )
         assert added.status_code == 200
-        assert added.json()["minutes"] == 50
+        assert added.json()["minutes"] == 40
         assert added.json()["activity"] == "review"
 
         refreshed_sessions = client.get(
@@ -1077,6 +1079,80 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         ).json()
         assert cleared_snapshot["plan"] is None
         assert cleared_snapshot["progress"]["topics"]
+
+
+def test_postpone_cannot_exceed_the_daily_minute_budget(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "准备微积分考试"},
+        ).json()["workspace"]["id"]
+        plan = _generate_workspace_plan(client, headers, workspace_id)
+        assert plan["daily_minutes"] == 45
+
+        base = datetime.now(UTC).replace(hour=9, minute=0, second=0, microsecond=0)
+        day_d = base + timedelta(days=30)
+        day_e = base + timedelta(days=31)
+        day_f = base + timedelta(days=32)
+
+        # A full 45-minute task fills day D.
+        full = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=headers,
+            json={
+                "topic_name": "占满配额的任务",
+                "planned_at": day_d.isoformat(),
+                "minutes": 45,
+                "activity": "practice",
+            },
+        )
+        assert full.status_code == 200, full.json()
+
+        # Park a 30-minute session on an otherwise-empty day E.
+        movable = plan["sessions"][0]
+        parked = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{movable['id']}",
+            headers=headers,
+            json={"planned_at": day_e.isoformat(), "minutes": 30},
+        )
+        assert parked.status_code == 200, parked.json()
+
+        # Postponing the 30-minute session onto the already-full day D must 409.
+        conflict = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{movable['id']}",
+            headers=headers,
+            json={"planned_at": day_d.isoformat()},
+        )
+        assert conflict.status_code == 409, conflict.json()
+        error = conflict.json()["error"]
+        assert error["code"] == "daily_capacity_exceeded"
+        detail = error["detail"]
+        assert detail["date"] == day_d.date().isoformat()
+        assert detail["used"] == 45
+        assert detail["requested"] == 30
+        assert detail["daily_minutes"] == 45
+        assert "next_free_date" in detail
+
+        # The rejected postpone left the session where it was.
+        snapshot_sessions = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["plan"]["sessions"]
+        still_parked = next(item for item in snapshot_sessions if item["id"] == movable["id"])
+        assert datetime.fromisoformat(still_parked["planned_at"]).date() == day_e.date()
+
+        # A non-overloading postpone onto empty day F still succeeds.
+        ok = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{movable['id']}",
+            headers=headers,
+            json={"planned_at": day_f.isoformat()},
+        )
+        assert ok.status_code == 200, ok.json()
 
 
 def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_request(
@@ -1114,13 +1190,15 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         )
         assert completed.status_code == 200
 
+        # Saving without regeneration keeps the 45-minute sessions, so the daily
+        # budget can only be raised (not lowered below the scheduled load) here.
         saved = client.put(
             f"/workspaces/{workspace_id}/learning/plan",
             headers=headers,
             json={
                 "goal": "Pass the calculus final with confident problem solving",
                 "exam_at": exam_at.isoformat(),
-                "daily_minutes": 35,
+                "daily_minutes": 60,
                 "topic_order": topic_order,
                 "regenerate": False,
             },
@@ -1132,7 +1210,23 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         ]
         assert saved.json()["sessions"][0]["status"] == "completed"
         assert saved.json()["goal"] == "Pass the calculus final with confident problem solving"
-        assert saved.json()["daily_minutes"] == 35
+        assert saved.json()["daily_minutes"] == 60
+
+        # Lowering the budget below the existing per-day load without regenerating
+        # would overload those days and must be rejected.
+        overloaded = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": "Pass the calculus final with confident problem solving",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 20,
+                "topic_order": topic_order,
+                "regenerate": False,
+            },
+        )
+        assert overloaded.status_code == 409, overloaded.json()
+        assert overloaded.json()["error"]["code"] == "daily_capacity_exceeded"
 
         regenerated = client.put(
             f"/workspaces/{workspace_id}/learning/plan",
