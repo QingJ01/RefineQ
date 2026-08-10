@@ -63,7 +63,7 @@ export function LearningReport({
       </div>
       <div className="learning-report-grid">
         <div><CalendarCheck2 size={18} /><strong>{summary.activeDays}</strong><span>{zh ? "活跃天数" : "active days"}</span></div>
-        <div><Activity size={18} /><strong>{attemptLabel}</strong><span>{zh ? "完成练习" : "completed"}</span></div>
+        <div><Activity size={18} /><strong>{attemptLabel}</strong><span>{zh ? "练习次数" : "attempts"}</span></div>
         <div><TrendingUp size={18} /><strong>{masteryLabel}</strong><span>{zh ? "平均掌握度变化" : "average mastery change"}</span></div>
         <div><strong>{summary.averageScore ?? "—"}</strong><span>{zh ? "平均得分" : "average score"}</span></div>
       </div>

@@ -591,6 +591,10 @@ describe("focused learning components", () => {
     expect(html).toContain("1 attempt");
     expect(html).toContain("+30%");
     expect(html).not.toContain("8 attempts");
+    // The tile counts every graded attempt in the window, including failed
+    // ones, so it must not claim they were "completed".
+    expect(html).toContain("attempts");
+    expect(html).not.toContain("completed");
   });
 
   it.each([
@@ -1213,6 +1217,10 @@ describe("focused learning components", () => {
     expect(html).toContain("高等数学");
     expect(html).toContain("42%");
     expect(html).not.toContain('href="/"');
+    // The figure is average prior-mastery, not course completion, so it is
+    // labelled as mastery rather than "学习进度".
+    expect(html).toContain("掌握度");
+    expect(html).not.toContain("学习进度");
   });
 
   it("renders plan sessions as a numbered study path", () => {
