@@ -1417,6 +1417,72 @@ def test_workspace_delete_waits_for_plan_update_and_leaves_no_orphan(
             app.state.workspaces.get(user.id, workspace.id)
 
 
+def test_answer_fails_closed_on_a_stale_question_state_version(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]
+        workspace_id = workspace["id"]
+        topic_text = f"{workspace['topics'][0]} is explained by this source.".encode()
+        client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("limits.txt", topic_text, "text/plain")},
+        )
+
+        q1 = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "stale-first"},
+        ).json()
+        assert "state_version" in q1
+        first_version = q1["state_version"]
+
+        # Regenerating a question advances the learning state version.
+        q2 = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "stale-second", "replace": True},
+        ).json()
+        assert q2["state_version"] != first_version
+
+        answer_body = (
+            "A limit is the value a function approaches near an input; "
+            "for example sin(x)/x approaches 1 as x approaches 0."
+        )
+        # Submit against the current pending question but with the stale version → fail closed.
+        stale = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "attempt-stale",
+                "question_id": q2["id"],
+                "answer": answer_body,
+                "expected_state_version": first_version,
+            },
+        )
+        assert stale.status_code == 409
+
+        # Submitting with the current version succeeds and is graded.
+        fresh = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "attempt-fresh",
+                "question_id": q2["id"],
+                "answer": answer_body,
+                "expected_state_version": q2["state_version"],
+            },
+        )
+        assert fresh.status_code == 200
+
+
 def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 

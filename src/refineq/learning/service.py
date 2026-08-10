@@ -218,6 +218,8 @@ class QuestionResponse(BaseModel):
     learning_mode: LearningMode = LearningMode.CONCEPT
     mode: str = "fallback"
     saved: bool = False
+    state_version: int = 0
+    prompt_hash: str = ""
 
 
 class SavedQuestionResponse(QuestionResponse):
@@ -263,6 +265,8 @@ class AnswerRequest(BaseModel):
     attempt_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     question_id: str = Field(min_length=1)
     answer: str = Field(min_length=1, max_length=10_000)
+    expected_state_version: int | None = Field(default=None, ge=0)
+    prompt_hash: str | None = Field(default=None, max_length=128)
 
 
 class AnswerResponse(BaseModel):
@@ -973,6 +977,7 @@ class LearningService:
         question: dict[str, Any],
         *,
         saved_at: str | datetime | None = None,
+        state_version: int = 0,
     ) -> QuestionResponse:
         return QuestionResponse(
             id=question["id"],
@@ -988,6 +993,8 @@ class LearningService:
             learning_mode=question.get("learning_mode", LearningMode.CONCEPT),
             mode=question.get("mode", "fallback"),
             saved=saved_at is not None,
+            state_version=state_version,
+            prompt_hash=stable_id("question-prompt", question["id"], question["prompt"]),
         )
 
     def next_question(
@@ -1013,7 +1020,14 @@ class LearningService:
             self.quarantine_ungrounded_pending(owner_id, project_id)
 
         def public_question(question: dict[str, Any], saved_at: str | None) -> QuestionResponse:
-            response = self._public_question(question, saved_at=saved_at)
+            # The state version at the moment the question is handed to the client
+            # becomes the token the answer must echo, so a later regeneration that
+            # advances the version fails the answer closed instead of grading a
+            # different question than the learner saw.
+            state_version = self._learning.get(owner_id, project_id).version
+            response = self._public_question(
+                question, saved_at=saved_at, state_version=state_version
+            )
             if require_material_grounding and (
                 response.grounding != Grounding.MATERIAL or not response.sources
             ):
@@ -1597,6 +1611,23 @@ class LearningService:
         with self._learning.plan_transaction(owner_id, project_id):
             if scope_guard is not None:
                 scope_guard()
+            if payload.expected_state_version is not None or payload.prompt_hash is not None:
+                current = self._learning.get(owner_id, project_id)
+                is_replay = payload.attempt_id in current.data.get("attempts", {})
+                if not is_replay:
+                    pending = self._progress(current.data).get("pending_question")
+                    if (
+                        payload.expected_state_version is not None
+                        and current.version != payload.expected_state_version
+                    ) or (
+                        payload.prompt_hash is not None
+                        and pending is not None
+                        and stable_id("question-prompt", pending["id"], pending["prompt"])
+                        != payload.prompt_hash
+                    ):
+                        raise LearningConflictError(
+                            "Question state changed before grading; reload the current question"
+                        )
             self._learning.mutate(owner_id, project_id, grade_once)
         if result is None:
             raise LearningServiceError("Answer grading failed")
