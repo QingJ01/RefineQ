@@ -95,10 +95,22 @@ _EXPLICIT_QUOTED_EXPLANATION = re.compile(
     re.IGNORECASE,
 )
 _NEGATED_CREATION_OR_ONE_SHOT = re.compile(
-    r"do\s+not\s+create|don'?t\s+create|without\s+creating|"
+    # The negation has to point at creating a space/plan, and the one-shot forms
+    # have to scope the whole reply. A bare "一次性" ("all at once") or an
+    # incidental "I don't create study plans myself" is not a veto on the
+    # learner's stated long-term goal.
+    # "I don't create study plans myself" describes the learner's own habit; only
+    # an instruction to the assistant is a veto, so exclude a first-person subject.
+    r"(?<!i\s)(?<!we\s)(?:do\s+not|don'?t|never)\s+(?:create|make|set\s+up|start)\s+"
+    r"(?:a\s+|an\s+|any\s+|the\s+)?(?:new\s+)?"
+    r"(?:learning\s+|study\s+)?(?:workspace|space|plan|schedule)|"
+    r"without\s+creating\s+(?:a\s+|an\s+|any\s+)?(?:new\s+)?"
+    r"(?:learning\s+|study\s+)?(?:workspace|space|plan|schedule)|"
     r"explain\s+it\s+only|only\s+explain|just\s+answer|answer\s+(?:it\s+)?only|"
-    r"不要创建|不用创建|别创建|不要建|不用建|别建|"
-    r"一次性|仅解释|只解释|仅回答|只回答|只需回答",
+    r"answer\s+this\s+as\s+a\s+one[- ]off|as\s+a\s+one[- ]off\s+question|"
+    r"(?:不要|不用|别|无需|不必)(?:创建|新建|建立|建)(?:一个)?(?:新的)?"
+    r"(?:学习)?(?:空间|计划|课表)|"
+    r"仅解释|只解释一下|仅回答(?:这)?(?:一次|个问题)?|只回答(?:这)?(?:一次|个问题)?|只需回答",
     re.IGNORECASE,
 )
 _ONE_SHOT_STUDY_PLAN = re.compile(

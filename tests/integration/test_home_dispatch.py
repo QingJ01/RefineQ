@@ -1037,6 +1037,37 @@ def test_explain_it_cannot_bypass_the_high_risk_boundary() -> None:
     assert quoted.kind.value == "direct_answer"
 
 
+def test_incidental_phrases_do_not_veto_a_dated_study_goal() -> None:
+    """A one-shot guard must scope the reply, not fire on an incidental phrase.
+
+    Each of these carries an explicit exam date and a daily budget, so routing
+    them to a one-off answer would silently disable the core product flow.
+    """
+
+    from refineq.home.policy import HomeRoutingPolicy
+
+    policy = HomeRoutingPolicy()
+    long_term_kinds = {"strong_long_term", "ambiguous_long_term", "semantic"}
+
+    genuine_goals = [
+        "I don't create study plans myself. Help me learn calculus for my "
+        "exam on October 25, 45 minutes a day.",
+        "帮我一次性把线性代数复习计划做出来，10月25日考试，每天练习45分钟",
+        "Help me learn Rust without creating a new project. Exam on October 25, 45 minutes a day.",
+        "我要备考，你只解释不要直接给答案，10月25日考试，每天练习45分钟",
+    ]
+    for text in genuine_goals:
+        assert policy.decide(text, workspaces=[]).kind.value in long_term_kinds, text
+
+    # A real veto or one-off request still short-circuits.
+    genuine_one_shots = [
+        "Explain least squares. Do not create a learning workspace.",
+        "Explain gradient descent. Answer this as a one-off question.",
+    ]
+    for text in genuine_one_shots:
+        assert policy.decide(text, workspaces=[]).kind.value == "direct_answer", text
+
+
 def test_unconfigured_model_keeps_a_recoverable_learner_path(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
     with TestClient(app) as client:
