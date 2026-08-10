@@ -39,6 +39,7 @@ const messages: Record<Locale, Record<string, string>> = {
     service_unavailable: "服务暂时不可用，请稍后重试。",
     conflict: "当前状态已发生变化，请刷新后重试。",
     learning_conflict: "学习状态已变化，请重新同步后再试。",
+    daily_capacity_exceeded: "这一天的学习时长已排满，请改到其他日期或缩短这次时长。",
     learning_error: "学习服务暂时无法完成操作，请稍后重试。",
     learning_not_seeded: "这个学习空间尚未准备完成。",
     invalid_learning_constraints: "学习目标、日期或时长设置不完整。",
@@ -91,6 +92,7 @@ const messages: Record<Locale, Record<string, string>> = {
     service_unavailable: "The service is temporarily unavailable. Try again later.",
     conflict: "The item changed. Refresh and try again.",
     learning_conflict: "Learning state changed. Resync and try again.",
+    daily_capacity_exceeded: "That day is already full for its daily study minutes. Pick another day or shorten the session.",
     learning_error: "The learning service could not finish this action. Try again shortly.",
     learning_not_seeded: "This learning space is not ready yet.",
     invalid_learning_constraints: "The learning goal, date, or time constraints are incomplete.",
@@ -124,4 +126,21 @@ export function localizeApiError(caught: unknown, locale: Locale): string {
     return messages[locale][caught.code] ?? fallbacks[locale];
   }
   return fallbacks[locale];
+}
+
+/**
+ * Describe a plan mutation failure, enriching a daily-budget conflict with the
+ * server-suggested next open day so the learner knows where the session fits.
+ */
+export function describePlanCapacityError(caught: unknown, locale: Locale): string {
+  const base = localizeApiError(caught, locale);
+  if (caught instanceof ApiError && caught.code === "daily_capacity_exceeded") {
+    const nextFree = caught.detail?.next_free_date;
+    if (typeof nextFree === "string") {
+      return locale === "zh"
+        ? `${base}最早可安排到 ${nextFree}。`
+        : `${base} The next open day is ${nextFree}.`;
+    }
+  }
+  return base;
 }

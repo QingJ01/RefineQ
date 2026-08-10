@@ -554,7 +554,7 @@ export function MaterialDropzone({
           {results.map((source) => (
             <li key={`${source.material_id}-${source.chunk_index}`}>
               <button type="button" onClick={() => setSelectedSources([source])}>
-                <span><strong>{source.filename}</strong><em>{Math.round(source.score * 100)}%</em></span>
+                <span><strong>{source.filename}</strong><em>{Math.round(source.score * 100)}% {t("sourceMatch")}</em></span>
                 <p>{source.text}</p>
               </button>
             </li>

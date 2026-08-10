@@ -163,8 +163,13 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     const movableTopic = page.locator('[data-testid^="plan-topic-down-"]:not(:disabled)').first();
     if (await movableTopic.count()) await movableTopic.click();
     await page.getByTestId("plan-settings-save").click();
+    await expect(page.locator(".error-banner")).toBeVisible();
+    await expect(page.locator(".minute-badge")).toContainText("90");
+
+    await page.getByTestId("plan-daily-minutes").fill("95");
+    await page.getByTestId("plan-settings-save").click();
     await expect(page.getByTestId("plan-settings-notice")).toBeVisible();
-    await expect(page.locator(".minute-badge")).toContainText("35");
+    await expect(page.locator(".minute-badge")).toContainText("95");
 
     await page.getByTestId("plan-settings-regenerate").click();
     await expect(page.getByTestId("confirm-dialog")).toBeVisible();

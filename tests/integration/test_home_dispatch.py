@@ -1,6 +1,6 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 from time import sleep
@@ -128,6 +128,134 @@ def test_direct_answer_does_not_mutate_learning_domains(tmp_path: Path) -> None:
         call for call in transport.calls if call["response_model"].__name__ == "HomeAnswerDraft"
     )
     assert "workspaces" not in str(answer_call["messages"])
+
+
+def test_quoted_explanation_with_negation_creates_no_workspace_or_calendar_session(
+    tmp_path: Path,
+) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        owner = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        before = {
+            collection: app.state.store.list(owner, collection)
+            for collection in ("workspaces", "learning", "sessions", "journey_events")
+        }
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "quoted-negation",
+                "text": (
+                    'What does this quoted sentence mean: "I have a math exam on '
+                    'October 25 and study 90 minutes daily"? '
+                    "Explain it only; do not create a workspace."
+                ),
+                "timezone_offset_minutes": 480,
+            },
+        )
+        after = {collection: app.state.store.list(owner, collection) for collection in before}
+        workspaces = client.get("/workspaces", headers=headers).json()
+        calendar = client.get(
+            "/calendar",
+            headers=headers,
+            params={
+                "starts_at": "2026-08-01T00:00:00Z",
+                "ends_at": "2026-12-31T00:00:00Z",
+            },
+        )
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] in {"direct_answer", "clarify"}
+    assert workspaces == []
+    assert before == after
+    assert calendar.status_code == 200, calendar.json()
+    assert calendar.json()["tasks"] == []
+
+
+def test_negated_learning_workspace_request_is_answered_directly(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "negated-creation",
+                "text": "Explain least squares. Do not create a learning workspace.",
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] == "direct_answer"
+    assert workspaces == []
+
+
+def test_genuine_dated_study_intent_still_opens_a_workspace(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "genuine-strong",
+                "text": "我要准备9月20日的高数期中，每天90分钟",
+                "timezone_offset_minutes": 480,
+            },
+        )
+        workspaces = client.get("/workspaces", headers=headers).json()
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] in {"open_workspace", "propose_workspace"}
+    assert len(workspaces) == 1
+
+
+def test_strong_workspace_exam_date_uses_the_local_calendar_day(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-local-date",
+                "text": (
+                    "Computer Architecture midterm on October 25, "
+                    "90 minutes a day, starting with pipelines and caches"
+                ),
+                "timezone_offset_minutes": 480,
+            },
+        )
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] == "open_workspace", response.json()
+    exam_at = datetime.fromisoformat(response.json()["workspace_target"]["exam_at"])
+    local = exam_at.astimezone(timezone(timedelta(minutes=480)))
+    assert (local.month, local.day) == (10, 25), exam_at.isoformat()
+
+
+def test_proposal_exam_date_uses_the_local_calendar_day(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        proposed = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "propose-local-date",
+                "text": "我想系统复习，准备9月20日的考试",
+                "timezone_offset_minutes": 480,
+            },
+        )
+    assert proposed.status_code == 200, proposed.json()
+    assert proposed.json()["kind"] == "propose_workspace", proposed.json()
+    proposal = proposed.json()["workspace_proposal"]
+    exam_at = datetime.fromisoformat(proposal["exam_at"])
+    local = exam_at.astimezone(timezone(timedelta(minutes=480)))
+    assert local.date() == date(2026, 9, 20), proposal["exam_at"]
 
 
 def test_answer_timeout_is_retryable_and_records_only_an_error_code(tmp_path: Path) -> None:
@@ -903,6 +1031,70 @@ def test_cancelling_a_proposal_records_outcome_without_creating_state(tmp_path: 
     assert cancelled.status_code == 204
     assert workspaces == []
     assert app.state.home_events.list(owner)[0].proposal_confirmed is False
+
+
+def test_explain_it_cannot_bypass_the_high_risk_boundary() -> None:
+    """Appending an explanation phrase must not defeat the safety gates.
+
+    The safety gates have to run before the quoted-explanation rule: while that
+    rule matched first, an appended "explain it" — or merely a stray quote
+    anywhere before it — routed a destructive or high-risk request to a direct
+    answer.
+    """
+
+    from refineq.home.policy import HomeRoutingPolicy
+
+    policy = HomeRoutingPolicy()
+
+    blocked = [
+        "Give me medical advice about my chest pain and explain it.",
+        "Delete all my learning workspaces and explain it.",
+        'Delete all my learning workspaces. He said "hello". Explain it.',
+        'Give me medical advice about my chest pain. She wrote "ouch". Explain it.',
+        'Delete all my learning workspaces" explain it',
+        "Delete all my plan. He said “hello”. Explain it.",
+    ]
+    for text in blocked:
+        assert policy.decide(text, workspaces=[]).kind.value == "out_of_scope", text
+
+    # A genuine quoted-explanation request still short-circuits to a direct answer.
+    quoted = policy.decide(
+        'What does this quoted sentence mean: "I have a math exam on October 25 '
+        'and study 90 minutes daily"? Explain it only; do not create a workspace.',
+        workspaces=[],
+    )
+    assert quoted.kind.value == "direct_answer"
+
+
+def test_incidental_phrases_do_not_veto_a_dated_study_goal() -> None:
+    """A one-shot guard must scope the reply, not fire on an incidental phrase.
+
+    Each of these carries an explicit exam date and a daily budget, so routing
+    them to a one-off answer would silently disable the core product flow.
+    """
+
+    from refineq.home.policy import HomeRoutingPolicy
+
+    policy = HomeRoutingPolicy()
+    long_term_kinds = {"strong_long_term", "ambiguous_long_term", "semantic"}
+
+    genuine_goals = [
+        "I don't create study plans myself. Help me learn calculus for my "
+        "exam on October 25, 45 minutes a day.",
+        "帮我一次性把线性代数复习计划做出来，10月25日考试，每天练习45分钟",
+        "Help me learn Rust without creating a new project. Exam on October 25, 45 minutes a day.",
+        "我要备考，你只解释不要直接给答案，10月25日考试，每天练习45分钟",
+    ]
+    for text in genuine_goals:
+        assert policy.decide(text, workspaces=[]).kind.value in long_term_kinds, text
+
+    # A real veto or one-off request still short-circuits.
+    genuine_one_shots = [
+        "Explain least squares. Do not create a learning workspace.",
+        "Explain gradient descent. Answer this as a one-off question.",
+    ]
+    for text in genuine_one_shots:
+        assert policy.decide(text, workspaces=[]).kind.value == "direct_answer", text
 
 
 def test_unconfigured_model_keeps_a_recoverable_learner_path(tmp_path: Path) -> None:

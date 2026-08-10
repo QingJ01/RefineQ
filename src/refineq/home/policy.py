@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from refineq.workspaces.constraints import infer_intent_constraints
+from refineq.workspaces.constraints import _strip_quoted_spans, infer_intent_constraints
 from refineq.workspaces.models import LearningWorkspace
 
 MAX_DISPATCH_CANDIDATES = 8
@@ -85,7 +85,32 @@ _EXPLICIT_QUOTED_EXPLANATION = re.compile(
     r"(?:[“\"「『].{1,500}[”\"」』]\s*(?:是什么意思|表示什么|如何理解)|"
     r"(?:解释|说明|解读).{0,6}(?:这句(?:话)?|这段(?:话|文字|内容)?|以下|下面).{0,8}[：:]|"
     r"what\s+does\s+[\"“].{1,500}[\"”]\s+mean|"
-    r"explain\s+(?:this|the\s+following)\s+(?:sentence|text|passage))",
+    r"what\s+does\s+(?:this|the)\s+(?:quoted\s+|following\s+|above\s+)?"
+    r"(?:sentence|text|passage|phrase|line|quote|quotation)\s+mean|"
+    r"explain\s+(?:this|the\s+following)\s+(?:sentence|text|passage)|"
+    # "explain it" only counts as a quoted-explanation request when a quoted span
+    # is actually present. Unanchored, it sits ahead of the destructive and
+    # high-risk gates and lets "…and explain it." defeat them.
+    r"(?<=[\"”」』])[\s\S]{0,40}?explain\s+it\b)",
+    re.IGNORECASE,
+)
+_NEGATED_CREATION_OR_ONE_SHOT = re.compile(
+    # The negation has to point at creating a space/plan, and the one-shot forms
+    # have to scope the whole reply. A bare "一次性" ("all at once") or an
+    # incidental "I don't create study plans myself" is not a veto on the
+    # learner's stated long-term goal.
+    # "I don't create study plans myself" describes the learner's own habit; only
+    # an instruction to the assistant is a veto, so exclude a first-person subject.
+    r"(?<!i\s)(?<!we\s)(?:do\s+not|don'?t|never)\s+(?:create|make|set\s+up|start)\s+"
+    r"(?:a\s+|an\s+|any\s+|the\s+)?(?:new\s+)?"
+    r"(?:learning\s+|study\s+)?(?:workspace|space|plan|schedule)|"
+    r"without\s+creating\s+(?:a\s+|an\s+|any\s+)?(?:new\s+)?"
+    r"(?:learning\s+|study\s+)?(?:workspace|space|plan|schedule)|"
+    r"explain\s+it\s+only|only\s+explain|just\s+answer|answer\s+(?:it\s+)?only|"
+    r"answer\s+this\s+as\s+a\s+one[- ]off|as\s+a\s+one[- ]off\s+question|"
+    r"(?:不要|不用|别|无需|不必)(?:创建|新建|建立|建)(?:一个)?(?:新的)?"
+    r"(?:学习)?(?:空间|计划|课表)|"
+    r"仅解释|只解释一下|仅回答(?:这)?(?:一次|个问题)?|只回答(?:这)?(?:一次|个问题)?|只需回答",
     re.IGNORECASE,
 )
 _ONE_SHOT_STUDY_PLAN = re.compile(
@@ -186,18 +211,29 @@ class HomeRoutingPolicy:
         normalized = _normalized(text)
         named = _named_workspaces(text, workspaces)
 
+        # Safety gates run before the quoted-explanation rule, or an appended
+        # "explain it" (or any stray quote before one) would route a destructive
+        # or high-risk request to a direct answer. They are evaluated on the text
+        # OUTSIDE quoted spans, so an injection pasted *as* material stays inert
+        # data rather than becoming a command the learner never issued.
+        instruction_text = _strip_quoted_spans(normalized)
+        pasted_marker = _EXPLICIT_TEXT_TRANSFORM.search(instruction_text)
+        if pasted_marker:
+            # Everything after an explicit "summarize this text:" marker is the
+            # pasted body, i.e. untrusted data, not the learner's instruction.
+            instruction_text = instruction_text[: pasted_marker.end()]
+        if _DESTRUCTIVE.search(instruction_text) or _HIGH_RISK_OR_REALTIME.search(instruction_text):
+            return PolicyDecision(
+                PolicyKind.OUT_OF_SCOPE,
+                "该请求需要实时或高风险判断，或涉及主页禁止的破坏性操作。",
+            )
+
         if _EXPLICIT_TEXT_TRANSFORM.search(normalized) or _EXPLICIT_QUOTED_EXPLANATION.search(
             normalized
         ):
             return PolicyDecision(
                 PolicyKind.DIRECT_ANSWER,
                 "这是对本次明确标记文本的一次性转换；正文只作为不可信数据处理。",
-            )
-
-        if _DESTRUCTIVE.search(normalized) or _HIGH_RISK_OR_REALTIME.search(normalized):
-            return PolicyDecision(
-                PolicyKind.OUT_OF_SCOPE,
-                "该请求需要实时或高风险判断，或涉及主页禁止的破坏性操作。",
             )
 
         if _OPEN_COMMAND.search(normalized) and named:
@@ -246,10 +282,21 @@ class HomeRoutingPolicy:
                 "这是不依赖既有长期状态的一次性学习时间建议。",
             )
 
-        has_learning_verb = bool(_LEARNING_VERB.search(normalized))
-        has_exam_context = bool(_EXAM_CONTEXT.search(normalized))
-        has_learning_object = bool(_KNOWN_LEARNING_OBJECT.search(normalized)) or (
-            bool(_LATIN_LEARNING_OBJECT.search(normalized))
+        # Long-term learning signals must come from the learner's OWN words, not
+        # from quoted material to be explained nor from a negated-creation clause.
+        # Strip quoted spans first, then honour an explicit request to only answer
+        # this once ("do not create a workspace", "explain it only", "只回答"...).
+        unquoted_normalized = _normalized(_strip_quoted_spans(text))
+        if _NEGATED_CREATION_OR_ONE_SHOT.search(unquoted_normalized):
+            return PolicyDecision(
+                PolicyKind.DIRECT_ANSWER,
+                "用户明确要求只做一次性解答，不建立长期学习空间。",
+            )
+
+        has_learning_verb = bool(_LEARNING_VERB.search(unquoted_normalized))
+        has_exam_context = bool(_EXAM_CONTEXT.search(unquoted_normalized))
+        has_learning_object = bool(_KNOWN_LEARNING_OBJECT.search(unquoted_normalized)) or (
+            bool(_LATIN_LEARNING_OBJECT.search(unquoted_normalized))
             and (has_learning_verb or has_exam_context)
         )
         constraints = infer_intent_constraints(text, now=now or datetime.now(UTC))

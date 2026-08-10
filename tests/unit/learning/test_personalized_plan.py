@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -170,8 +171,17 @@ class BlockingTargetedTransport(CountingTransport):
         return super().complete(**kwargs)
 
 
-def request(material_id: str, topic: str) -> TargetedPlanRequest:
+def request(
+    material_id: str,
+    topic: str,
+    *,
+    idempotency_key: str | None = None,
+) -> TargetedPlanRequest:
+    # Derive a stable, ASCII-safe key per logical request so identical requests
+    # replay and distinct ones regenerate, mirroring the client idempotency key.
+    key = idempotency_key or "req" + sha256(f"{material_id}|{topic}".encode()).hexdigest()[:24]
     return TargetedPlanRequest(
+        idempotency_key=key,
         material_id=material_id,
         focus_topics=[topic],
         exam_at=EXAM_AT,

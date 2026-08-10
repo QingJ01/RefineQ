@@ -18,11 +18,13 @@ export function usePracticeState() {
   const [learningMode, setLearningMode] = useState<LearningMode>("concept");
   const [practiceBusy, setPracticeBusy] = useState(false);
   const practiceGenerationRef = useRef(0);
+  const questionLoadSeqRef = useRef(0);
   const questionRequestIdRef = useRef<string | null>(null);
   const attemptIdRef = useRef<string | null>(null);
 
   const hydratePractice = useCallback((snapshot: WorkspaceSnapshot) => {
     practiceGenerationRef.current += 1;
+    questionLoadSeqRef.current += 1;
     const activeQuestion = snapshot.active_question ?? null;
     setLearningMode(
       activeQuestion?.learning_mode
@@ -45,6 +47,7 @@ export function usePracticeState() {
 
   const clearPracticeState = useCallback(() => {
     practiceGenerationRef.current += 1;
+    questionLoadSeqRef.current += 1;
     setQuestion(null);
     setAnswer("");
     setResult(null);
@@ -64,13 +67,25 @@ export function usePracticeState() {
     [],
   );
 
+  const beginQuestionLoad = useCallback(() => {
+    questionLoadSeqRef.current += 1;
+    return questionLoadSeqRef.current;
+  }, []);
+
+  const isQuestionLoadCurrent = useCallback(
+    (seq: number) => questionLoadSeqRef.current === seq,
+    [],
+  );
+
   return {
     answer,
     attemptIdRef,
+    beginQuestionLoad,
     capturePracticeGeneration,
     clearPracticeState,
     hydratePractice,
     isPracticeGenerationCurrent,
+    isQuestionLoadCurrent,
     learningMode,
     practiceBusy,
     question,

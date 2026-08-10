@@ -27,15 +27,20 @@ async def http_exception_handler(
     """Return one predictable envelope for framework and application errors."""
 
     detail: Any = exception.detail
+    extra: dict[str, Any] = {}
     if isinstance(detail, dict):
         message = str(detail.get("message", "Request failed"))
         code = str(detail.get("code", "request_error"))
+        extra = {key: value for key, value in detail.items() if key not in {"message", "code"}}
     else:
         message = detail if isinstance(detail, str) else "Request failed"
         code = _ERROR_CODES.get(exception.status_code, "request_error")
+    error_body: dict[str, Any] = {"code": code, "message": message}
+    if extra:
+        error_body["detail"] = extra
     return JSONResponse(
         status_code=exception.status_code,
-        content={"error": {"code": code, "message": message}},
+        content={"error": error_body},
         headers=exception.headers,
     )
 

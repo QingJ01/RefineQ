@@ -39,7 +39,7 @@ import {
   pendingCoachTurn,
   type PendingCoachTurn,
 } from "@/lib/coach-actions";
-import { localizeApiError } from "@/lib/error-messages";
+import { describePlanCapacityError, localizeApiError } from "@/lib/error-messages";
 import {
   browserHistoryNavigation,
   browserHistoryTraversalTarget,
@@ -163,10 +163,12 @@ export function StudyWorkspace({
   const {
     answer,
     attemptIdRef,
+    beginQuestionLoad,
     capturePracticeGeneration,
     clearPracticeState,
     hydratePractice,
     isPracticeGenerationCurrent,
+    isQuestionLoadCurrent,
     learningMode,
     practiceBusy,
     question,
@@ -802,6 +804,7 @@ export function StudyWorkspace({
   async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
     if (!auth || !workspace) return false;
     const generation = capturePracticeGeneration();
+    const loadSeq = beginQuestionLoad();
     setPracticeBusy(true);
     setError("");
     const requestId = request.requestId
@@ -829,8 +832,9 @@ export function StudyWorkspace({
           questionRequestIdRef.current = null;
           attemptIdRef.current = null;
         },
+        () => isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq),
       );
-      return isPracticeGenerationCurrent(generation);
+      return isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq);
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
       return false;
@@ -876,6 +880,7 @@ export function StudyWorkspace({
           question.id,
           answer,
           attemptId,
+          { promptHash: question.prompt_hash },
         );
       if (!isPracticeGenerationCurrent(generation)) return;
       setResult(graded);
@@ -1177,8 +1182,31 @@ export function StudyWorkspace({
     targetedPlanBusyRef.current = true;
     setTargetedPlanBusy(true);
     setError("");
+    // One stable idempotency key for this whole user action. The endpoint is
+    // synchronous and commits even if the request times out, so a retry must
+    // reuse this exact key to replay the committed plan instead of forging a
+    // fresh-key plan that overwrites the one the learner never got to see.
+    const request: TargetedPlanInput = {
+      ...input,
+      idempotency_key: input.idempotency_key ?? crypto.randomUUID().replaceAll("-", ""),
+    };
     try {
-      const created = await api.createTargetedPlan(targetToken, targetWorkspaceId, input);
+      const created = await (async () => {
+        try {
+          return await api.createTargetedPlan(targetToken, targetWorkspaceId, request);
+        } catch (caught) {
+          // A client-side timeout (408) is not proof the server failed to commit.
+          // Retry once with the SAME key so the committed plan is reconciled back
+          // rather than surfaced as a terminal error that invites an overwrite.
+          if (
+            !(caught instanceof ApiError && caught.status === 408)
+            || targetedPlanGenerationRef.current !== generation
+            || workspaceRef.current?.id !== targetWorkspaceId
+            || authRef.current?.access_token !== targetToken
+          ) throw caught;
+          return api.createTargetedPlan(targetToken, targetWorkspaceId, request);
+        }
+      })();
       if (
         targetedPlanGenerationRef.current !== generation
         || workspaceRef.current?.id !== targetWorkspaceId
@@ -1212,7 +1240,14 @@ export function StudyWorkspace({
 
   async function addCalendarSession(input: { topic_name: string; planned_at: string; minutes: number; activity: string }) {
     if (!auth || !workspace) return false;
-    await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    try {
+      await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    } catch (caught) {
+      // Adding onto a full day is a capacity conflict; show the day and the
+      // next open one instead of a generic banner.
+      setError(describePlanCapacityError(caught, locale));
+      return false;
+    }
     await refreshWorkspaceSnapshot();
     return true;
   }
@@ -1465,7 +1500,9 @@ export function StudyWorkspace({
       await refreshNextAction(auth.access_token, workspace.id);
       return true;
     } catch (caught) {
-      reportError(caught);
+      // A daily-budget conflict gets a specific message (with the next open day)
+      // instead of the generic error banner.
+      setError(describePlanCapacityError(caught, locale));
       return false;
     } finally {
       setBusySessionId(null);
@@ -1496,7 +1533,9 @@ export function StudyWorkspace({
       if (input.regenerate) setPlanView("calendar");
       await refreshNextAction(auth.access_token, workspace.id);
     } catch (caught) {
-      reportError(caught);
+      // Lowering the daily budget below existing sessions is a capacity
+      // conflict; it carries the day and usage detail worth showing.
+      setError(describePlanCapacityError(caught, locale));
       throw caught;
     } finally {
       setPlanSettingsBusy(false);

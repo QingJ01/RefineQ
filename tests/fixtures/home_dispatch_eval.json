@@ -18,5 +18,7 @@
   {"text": "Give me medical advice", "expected": "out_of_scope"},
   {"text": "删除所有学习计划", "expected": "out_of_scope"},
   {"text": "帮我发一封销售邮件", "expected": "out_of_scope"},
-  {"text": "继续", "expected": "clarify"}
+  {"text": "继续", "expected": "clarify"},
+  {"text": "What does this quoted sentence mean: \"I have a math exam on October 25 and study 90 minutes daily\"? Explain it only; do not create a workspace.", "expected": "direct_answer"},
+  {"text": "Explain least squares. Do not create a learning workspace.", "expected": "direct_answer"}
 ]

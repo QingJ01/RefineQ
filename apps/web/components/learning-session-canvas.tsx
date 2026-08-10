@@ -45,6 +45,10 @@ const modeCopy: Record<Locale, Record<LearningMode, string>> = {
 };
 const SESSION_RENDERED_AT = Date.now();
 
+function localMidnight(value: Date): number {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+}
+
 const interfaceCopy = {
   zh: {
     today: "今日学习",
@@ -240,7 +244,7 @@ export function LearningSessionCanvas({
     ? Boolean(question.saved || savedQuestions.some((saved) => saved.id === question.id))
     : false;
   const daysUntilExam = plan?.exam_at
-    ? Math.max(0, Math.ceil((new Date(plan.exam_at).getTime() - SESSION_RENDERED_AT) / 86_400_000))
+    ? Math.max(0, Math.round((localMidnight(new Date(plan.exam_at)) - localMidnight(new Date(SESSION_RENDERED_AT))) / 86_400_000))
     : null;
 
   function openFullCoach() {

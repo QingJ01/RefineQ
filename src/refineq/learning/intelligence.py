@@ -128,6 +128,15 @@ class GeneratedQuestion(BaseModel):
     mode: Literal["ai", "fallback"]
 
 
+GradingReasonCode = Literal[
+    "ok",
+    "insufficient_answer_evidence",
+    "grader_unavailable",
+    "retrieval_empty",
+    "untrusted_answer_key",
+]
+
+
 class GradingResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -140,6 +149,7 @@ class GradingResult(BaseModel):
     citations: list[str]
     mode: Literal["ai", "fallback"]
     mastery_evidence: bool = False
+    reason_code: GradingReasonCode = "ok"
 
 
 def _source_block(sources: list[SearchResult]) -> str:
@@ -375,7 +385,9 @@ def _is_prompt_echo(prompt: str, answer: str) -> bool:
     return copied_tokens / len(prompt_tokens) >= 0.75
 
 
-def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
+def fallback_grade(
+    question: GeneratedQuestion, answer: str, *, grader_available: bool = True
+) -> GradingResult:
     normalized_answer = answer.strip().casefold()
     english_words = re.findall(r"[a-z0-9+#.-]{3,}", normalized_answer)
     non_ascii_letters = [
@@ -422,11 +434,44 @@ def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
         else "还需要补充一个具体例子或应用。"
     )
     gaps = [] if example_present else [application_gap]
+    has_material = bool(question.citations or question.sources)
+    # Missing material is the more actionable problem, so it outranks an
+    # unreachable grader: telling a learner only "the grader is down" would drop
+    # the one step they can actually take.
+    if not has_material and not question.answer_key_trusted:
+        reason_code: GradingReasonCode = "retrieval_empty"
+    elif not grader_available:
+        reason_code = "grader_unavailable"
+    elif question.mode == "ai" and not question.answer_key_trusted:
+        # The question kept its citations but no verifiable answer key, so this is
+        # an untrusted-key degradation, not the question-identity conflict that
+        # the answer fence reports.
+        reason_code = "untrusted_answer_key"
+    elif not substantive:
+        reason_code = "insufficient_answer_evidence"
+    else:
+        reason_code = "ok"
     if not expected_terms:
-        gaps.insert(
-            0,
-            "未找到可核对的学习资料，本次降级反馈不计入掌握度；请上传资料或配置模型后再试。",
-        )
+        if reason_code == "retrieval_empty":
+            gaps.insert(
+                0,
+                "未找到可核对的学习资料，本次降级反馈不计入掌握度；请上传资料或配置模型后再试。",
+            )
+        elif reason_code == "untrusted_answer_key":
+            gaps.insert(
+                0,
+                "题目状态已更新，本次未能对齐可核对的标准答案；请重做当前题后再作答。",
+            )
+        elif reason_code == "grader_unavailable":
+            gaps.insert(
+                0,
+                "判分模型暂不可用，已按规则给出降级反馈，本次不计入掌握度。",
+            )
+        else:
+            gaps.insert(
+                0,
+                "本次为规则降级判分，反馈不计入掌握度；配置模型后可获得可核对的判分。",
+            )
     elif not concept_present:
         gaps.insert(0, f"需要解释“{question.topic_name}”的关键含义，不能只复述题目。")
     if prompt_echo:
@@ -445,6 +490,7 @@ def fallback_grade(question: GeneratedQuestion, answer: str) -> GradingResult:
         # A model-produced free-text key is useful coaching context, but it is
         # not server truth. Degraded grading therefore never changes mastery.
         mastery_evidence=False,
+        reason_code=reason_code,
     )
 
 
@@ -694,7 +740,7 @@ class LearningIntelligenceService:
                 mode="fallback",
                 started_at=started_at,
             )
-            return fallback_grade(question, answer)
+            return fallback_grade(question, answer, grader_available=False)
         messages = [
             {
                 "role": "system",
@@ -737,7 +783,7 @@ class LearningIntelligenceService:
                 started_at=started_at,
                 level=logging.WARNING,
             )
-            return fallback_grade(question, answer)
+            return fallback_grade(question, answer, grader_available=False)
         server_evidence = _server_verified_answer_evidence(
             question,
             answer,

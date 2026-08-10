@@ -11,5 +11,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.{ts,tsx}"],
+    // Deadline handling is local-calendar-day semantics, so the suite must run in
+    // a fixed non-UTC zone. Without this the timezone regressions only fail on a
+    // developer machine that happens to share the author's offset, and CI (UTC)
+    // and local runs disagree.
+    env: { TZ: "Asia/Shanghai" },
   },
 });
