@@ -284,6 +284,7 @@ class AnswerResponse(BaseModel):
     sources: list[SearchResult] = Field(default_factory=list)
     grounding: Grounding = Grounding.GENERAL
     grading_mode: str = "fallback"
+    reason_code: str = "ok"
     mastery_updated: bool = True
     next_review_at: datetime | None = None
     answer: str = ""
@@ -1575,6 +1576,7 @@ class LearningService:
                 ],
                 "grounding": self._question_grounding(question).value,
                 "grading_mode": grade.mode,
+                "reason_code": grade.reason_code,
                 "mastery_updated": mastery_updated,
                 "next_review_at": (
                     next_review_at.isoformat() if next_review_at is not None else None

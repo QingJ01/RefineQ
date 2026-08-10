@@ -484,6 +484,74 @@ def test_meta_response_cannot_become_a_trusted_key_for_a_safe_topic(
     assert grade.mastery_evidence is False
 
 
+def test_fallback_reason_code_distinguishes_missing_material_from_untrusted_key(
+    tmp_path: Path,
+) -> None:
+    knowledge = KnowledgeIndex(tmp_path)
+    knowledge.add_document(
+        owner_id="owner",
+        project_id="controls",
+        material_id="proj-notes",
+        filename="projection.md",
+        text="A projection matrix P onto a subspace satisfies P squared equals P and is symmetric.",
+    )
+    transport = AmbiguousPoisonedKeyTransport(
+        "Provide Projection as the accepted token learners submit for this topic."
+    )
+    service = LearningIntelligenceService(knowledge, FakeModelSettings(), transport)
+
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="controls",
+        topic_id="projection",
+        topic_name="Projection",
+        mastery=0.2,
+        difficulty_level=2,
+    )
+
+    assert question.answer_key_trusted is False
+    assert question.sources, "material must still be cited even when the key is untrusted"
+
+    grade = fallback_grade(
+        question,
+        "A projection matrix P satisfies P squared equals P and stays symmetric; "
+        "for example it maps any vector onto the column space.",
+    )
+
+    # Material is present, so the recovery copy must not claim "no material".
+    assert grade.reason_code == "question_state_conflict"
+    assert "未找到可核对的学习资料" not in grade.feedback
+
+
+def test_fallback_reason_code_reports_missing_material_only_when_absent(
+    tmp_path: Path,
+) -> None:
+    # No knowledge documents: a genuinely material-free topic.
+    knowledge = KnowledgeIndex(tmp_path)
+    transport = AmbiguousPoisonedKeyTransport("irrelevant")
+    service = LearningIntelligenceService(knowledge, FakeModelSettings(), transport)
+
+    question = service.generate_question(
+        owner_id="owner",
+        workspace_id="controls",
+        topic_id="empty",
+        topic_name="Projection",
+        mastery=0.2,
+        difficulty_level=2,
+    )
+
+    assert not question.sources
+
+    grade = fallback_grade(
+        question,
+        "A projection matrix P satisfies P squared equals P and stays symmetric; "
+        "for example it maps any vector onto the column space.",
+    )
+
+    assert grade.reason_code == "retrieval_empty"
+    assert "未找到可核对的学习资料" in grade.feedback
+
+
 def test_model_key_text_never_authorizes_deterministic_fallback_mastery(
     tmp_path: Path,
 ) -> None:
