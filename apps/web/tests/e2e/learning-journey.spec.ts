@@ -26,6 +26,15 @@ async function completeInitialDiagnostic(page: Page) {
   await expect(diagnostic).toBeHidden();
 }
 
+async function advanceSessionToPractice(page: Page) {
+  if (await page.getByTestId("session-review-stage").isVisible()) {
+    await page.getByTestId("session-finish-review").click();
+  }
+  await expect(page.getByTestId("session-learning-stage")).toBeVisible();
+  await page.getByTestId("session-start-task").click();
+  await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+}
+
 test.beforeAll(() => {
   execFileSync(
     python,
@@ -72,8 +81,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     .fill("Computer Architecture midterm on October 25, 90 minutes a day, starting with pipelines and caches");
   await page.getByTestId("start-learning").click();
 
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
@@ -85,7 +93,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       "I want to practice conversational Spanish for my trip on November 15, 30 minutes daily",
     );
     await page.getByTestId("start-learning").click();
-    await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
     await expect(page.locator(".workspace-switcher > strong")).not.toHaveText(workspaceTitle);
     const secondWorkspaceUrl = page.url();
     const secondWorkspaceId = new URL(secondWorkspaceUrl).pathname.split("/")[2];
@@ -345,10 +353,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   });
 
   await test.step("complete two exam-learning tasks", async () => {
-    await page.getByTestId("learning-mode-exam").click();
-    await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("session-practice-stage")).toBeVisible();
-    await expect(page.getByTestId("practice-answer")).toBeEnabled();
+    await advanceSessionToPractice(page);
     await page.screenshot({ path: testInfo.outputPath("exam-learning-practice.png") });
     const firstQuestionId = await page.getByTestId("session-practice-stage").getAttribute("data-question-id");
     expect(firstQuestionId).toBeTruthy();
@@ -356,7 +361,9 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await page.getByTestId("practice-sources").click();
     await expect(page.getByRole("dialog")).toContainText("computer-architecture-notes.txt");
     await page.keyboard.press("Escape");
-    const savedPrompt = await page.getByTestId("session-practice-stage").locator("h2").innerText();
+    const savedPrompt = await page.getByTestId("session-practice-stage")
+      .locator(".session-question-prompt")
+      .innerText();
     await page.getByTestId("save-question").click();
     await expect(page.getByTestId("save-question")).toHaveAttribute("aria-pressed", "true");
     await page.setViewportSize({ width: 390, height: 844 });
@@ -382,7 +389,8 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       "data-question-id",
       firstQuestionId!,
     );
-    await expect(page.getByTestId("session-practice-stage").locator("h2")).toHaveText(savedPrompt);
+    await expect(page.getByTestId("session-practice-stage").locator(".session-question-prompt"))
+      .toHaveText(savedPrompt);
     await page.getByTestId("skip-question").click();
     await expect(page.getByTestId("session-practice-stage")).not.toHaveAttribute(
       "data-question-id",
@@ -393,7 +401,8 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       "流水线通过让多条指令的取指、译码、执行、访存和写回阶段重叠来提高吞吐量。遇到 RAW 数据冒险时可用转发把结果送到后续指令，无法转发时插入停顿；分支预测错误则清空错误路径。易错点是吞吐量提高不等于单条指令延迟一定下降。",
     );
     await page.getByTestId("submit-answer").click();
-    await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
+    await expect(page.getByTestId("session-task-feedback")).toBeVisible();
+    await expect(page.getByTestId("session-decision")).toBeVisible();
     await expect(page.locator(".feedback-score")).toContainText("/100");
 
     await page.getByTestId("next-question").click();
@@ -401,7 +410,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       "缓存依靠时间局部性和空间局部性减少访问主存的次数。平均访存时间等于命中时间加缺失率乘缺失代价；计算时必须把百分比换成小数，并区分直接映射中的冲突缺失与容量缺失。",
     );
     await page.getByTestId("submit-answer").click();
-    await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
+    await expect(page.getByTestId("session-task-feedback")).toBeVisible();
 
     await page.getByTestId("nav-progress").click();
     await expect(page).toHaveURL(/\/progress$/);
@@ -425,6 +434,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     const retryPrompt = await rubric.locator('[data-testid^="attempt-question-"]').innerText();
     await rubric.locator('[data-testid^="retry-attempt-"]').click();
     await expect(page).toHaveURL(/\/today$/);
+    await advanceSessionToPractice(page);
     await expect(page.getByTestId("session-practice-stage")).toContainText(retryPrompt);
   });
 
@@ -439,6 +449,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       ),
     ).toBeVisible();
     await page.getByTestId("nav-today").click();
+    await expect(page.getByTestId("session-coach-disclosure")).toHaveAttribute("open", "");
     await expect(page.locator(".coach-capability-notice")).toBeVisible();
     await expect(page.getByTestId("session-coach-input")).toBeDisabled();
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
@@ -520,7 +531,7 @@ test("ambiguous home intent creates a space only after confirmation", async ({ p
   await expect(page.getByTestId("home-result-propose_workspace")).toBeVisible();
   await expect(page.locator(".recent-card")).toHaveCount(0);
   await page.getByRole("button", { name: "确认并执行" }).click();
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
 });
 
@@ -577,7 +588,7 @@ test("edited workspace goals are rerouted and reviewed before execution", async 
   await expect(page.locator(".home-proposal-semantics")).toContainText("language");
 
   await page.getByRole("button", { name: "确认并执行" }).click();
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
 });
 
 
@@ -737,7 +748,7 @@ test("strong home creation can be truly undone while unchanged", async ({ page }
   );
   await page.getByTestId("start-learning").click();
 
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   const notice = page.getByTestId("workspace-route-notice");
   await expect(notice).toBeVisible();
   await notice.getByRole("button", { name: "撤销" }).click();
@@ -762,7 +773,7 @@ test("a late workspace snapshot cannot reopen content after logout", async ({ pa
     "I need to pass the computer architecture final on December 20, study 45 minutes daily",
   );
   await page.getByTestId("start-learning").click();
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   const workspaceId = new URL(page.url()).pathname.split("/")[2];
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   await page.getByTestId("app-nav-home").click();
@@ -939,8 +950,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   );
   await page.getByTestId("start-learning").click();
 
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   const routeNotice = page.getByTestId("workspace-route-notice");
   if (await routeNotice.isVisible()) await routeNotice.getByRole("button").last().click();
 
@@ -969,12 +979,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   await expect(page.locator(".session-sources")).toContainText(
     "mobile-computer-architecture.txt",
   );
-  await page.getByTestId("learning-mode-exam").click();
-  await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+  await advanceSessionToPractice(page);
   await page.getByTestId("practice-sources").click();
   await expect(page.getByRole("dialog")).toContainText(
     "mobile-computer-architecture.txt",
@@ -984,7 +989,8 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
     "流水线让多条指令的不同阶段重叠执行，从而提高吞吐量。遇到 RAW 数据冒险时，优先通过转发把结果送到后续指令，无法转发时插入停顿；分支预测错误要清空错误路径。易错点是把吞吐量提升误认为单条指令延迟一定降低。",
   );
   await page.getByTestId("submit-answer").click();
-  await expect(page.getByTestId("session-reflect-stage")).toBeVisible();
+  await expect(page.getByTestId("session-task-feedback")).toBeVisible();
+  await expect(page.getByTestId("session-decision")).toBeVisible();
   await expect(page.locator(".feedback-score")).toContainText("/100");
 
   await page.getByTestId("mobile-shortcut-progress").click();

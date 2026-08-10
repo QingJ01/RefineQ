@@ -34,6 +34,10 @@ from refineq.learning.models import (
 )
 from refineq.learning.next_action import _local_date
 from refineq.learning.planning import build_study_plan
+from refineq.learning.session_adaptation import (
+    decide_next_session_action,
+    summary_reserve_minutes,
+)
 from refineq.storage.journey_events import JourneyEventRepository
 from refineq.storage.json_store import RecordNotFoundError, StoredRecord
 from refineq.storage.learning import LearningRepository
@@ -227,6 +231,8 @@ class QuestionResponse(BaseModel):
     learning_mode: LearningMode = LearningMode.CONCEPT
     mode: str = "fallback"
     saved: bool = False
+    review_session_id: str | None = None
+    plan_session_id: str | None = None
     state_version: int = 0
     prompt_hash: str = ""
 
@@ -274,7 +280,21 @@ class AnswerRequest(BaseModel):
     attempt_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     question_id: str = Field(min_length=1)
     answer: str = Field(min_length=1, max_length=10_000)
+    remaining_minutes: int | None = Field(default=None, ge=0, le=480)
+    summary_reserve_minutes: int | None = Field(default=None, ge=1, le=30)
     prompt_hash: str | None = Field(default=None, max_length=128)
+
+
+class SessionDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    action: Literal["continue_topic", "next_topic", "summary"]
+    reason: Literal["time_low", "mastery_low", "mastery_reached", "no_next_topic"]
+    topic_id: str | None = None
+    estimated_minutes: int = Field(ge=1, le=60)
+    remaining_minutes: int | None = Field(default=None, ge=0, le=480)
+    summary_reserve_minutes: int = Field(ge=1, le=30)
+    target_mastery: float = Field(ge=0.0, le=1.0)
 
 
 class AnswerResponse(BaseModel):
@@ -305,6 +325,7 @@ class AnswerResponse(BaseModel):
     appealed: bool = False
     completed_review_session_id: str | None = None
     completed_plan_session_id: str | None = None
+    session_decision: SessionDecision | None = None
     question_snapshot: dict[str, Any] | None = Field(default=None, exclude=True)
     replayed: bool = False
 
@@ -315,6 +336,10 @@ class PlanSessionUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=r"^(planned|completed)$")
     planned_at: datetime | None = None
     minutes: int | None = Field(default=None, ge=5, le=480)
+    topic_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+    )
     timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
@@ -943,6 +968,22 @@ class LearningService:
                     session["planned_at"] = new_planned_at.isoformat()
                 if payload.minutes is not None:
                     session["minutes"] = payload.minutes
+                if payload.topic_id is not None:
+                    if payload.topic_id not in progress["topics"]:
+                        raise LearningConflictError("Unknown plan session topic")
+                    session["topic_id"] = payload.topic_id
+                    pending = progress.get("pending_question")
+                    if (
+                        pending
+                        and pending.get("plan_session_id") == session_id
+                        and pending.get("topic_id") != payload.topic_id
+                    ):
+                        progress["pending_question"] = None
+                        pending_id = pending.get("id")
+                        requests = progress.setdefault("question_requests", {})
+                        for request_id, question_id in list(requests.items()):
+                            if question_id == pending_id:
+                                requests.pop(request_id, None)
                 updated = deepcopy(session)
                 return data
             raise LearningConflictError("Study session not found")
@@ -1228,6 +1269,8 @@ class LearningService:
             learning_mode=question.get("learning_mode", LearningMode.CONCEPT),
             mode=question.get("mode", "fallback"),
             saved=saved_at is not None,
+            review_session_id=question.get("review_session_id"),
+            plan_session_id=question.get("plan_session_id"),
             state_version=state_version,
             prompt_hash=stable_id("question-prompt", question["id"], question["prompt"]),
         )
@@ -1351,6 +1394,12 @@ class LearningService:
                 )
             )
             topic = progress["topics"][selected_topic_id]
+            recent_question_prompts = [
+                str(question.get("prompt") or "")
+                for question in history.values()
+                if question.get("topic_id") == selected_topic_id
+            ][-5:]
+            question_variation_index = int(progress.get("question_sequence", len(history)))
             mastery = BKTState.model_validate(progress["bkt_states"][selected_topic_id]).p_mastery
             selected_difficulty = (
                 difficulty_level
@@ -1369,6 +1418,8 @@ class LearningService:
                     difficulty_level=selected_difficulty,
                     learning_mode=learning_mode,
                     prior_feedback=_recent_learning_needs(progress, selected_topic_id),
+                    recent_question_prompts=recent_question_prompts,
+                    variation_index=question_variation_index,
                 )
             else:
                 generated = fallback_question(
@@ -1377,6 +1428,7 @@ class LearningService:
                     difficulty_level=selected_difficulty,
                     sources=[],
                     learning_mode=learning_mode,
+                    variation_index=question_variation_index,
                 )
             if require_material_grounding and (
                 generated.grounding != Grounding.MATERIAL or not generated.sources
@@ -1834,6 +1886,25 @@ class LearningService:
                 "observed_at": observed_at.isoformat(),
                 "completed_review_session_id": completed_review_session_id,
                 "completed_plan_session_id": completed_plan_session_id,
+                "session_decision": decide_next_session_action(
+                    current_topic_id=topic_id,
+                    current_mastery=bkt_state.p_mastery,
+                    difficulty_level=difficulty.level,
+                    topic_order=list(progress.get("topic_order") or progress["topics"].keys()),
+                    mastery_by_topic={
+                        candidate_id: (
+                            bkt_state.p_mastery
+                            if candidate_id == topic_id
+                            else BKTState.model_validate(candidate_state).p_mastery
+                        )
+                        for candidate_id, candidate_state in progress["bkt_states"].items()
+                    },
+                    remaining_minutes=payload.remaining_minutes,
+                    reserve_minutes=(
+                        payload.summary_reserve_minutes
+                        or summary_reserve_minutes(int(progress["daily_minutes"]))
+                    ),
+                ).__dict__,
                 "question_snapshot": deepcopy(question),
             }
             data["attempts"][payload.attempt_id] = deepcopy(result)

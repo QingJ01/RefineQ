@@ -30,8 +30,10 @@ from refineq.learning.service import (
     SeedRequest,
     TopicSeed,
 )
+from refineq.materials.models import MaterialAnalysis
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.storage.learning import LearningRepository
+from refineq.storage.material_analyses import MaterialAnalysisRepository
 from refineq.storage.sessions import SessionRepository
 from refineq.storage.workspaces import WorkspaceRepository
 from refineq.workspaces.constraints import infer_intent_constraints
@@ -161,13 +163,27 @@ def _topic_id(name: str) -> str:
 def _material_topic_suggestions(
     workspace: LearningWorkspace,
     materials: list[MaterialRecord],
+    analyses: list[MaterialAnalysis] | None = None,
 ) -> list[TopicSuggestion]:
-    """Derive bounded candidates from user-visible metadata, never material content."""
+    """Derive bounded candidates from analyzed content, then visible metadata."""
 
     if len(workspace.topics) >= 200:
         return []
     existing = {name.casefold() for name in workspace.topics}
     candidates: dict[str, tuple[str, list[str]]] = {}
+    for analysis in analyses or []:
+        for raw_name in analysis.topics:
+            name = " ".join(raw_name.split()).strip()
+            key = name.casefold()
+            if not name or len(name) > 200 or key in existing:
+                continue
+            if key not in candidates:
+                if len(candidates) >= MAX_TOPIC_SUGGESTIONS:
+                    continue
+                candidates[key] = (name, [])
+            sources = candidates[key][1]
+            if analysis.material_id not in sources:
+                sources.append(analysis.material_id)
     bounded_materials = sorted(
         materials,
         key=lambda item: (item.indexed_at, item.id),
@@ -208,6 +224,7 @@ class WorkspaceService:
         knowledge: KnowledgeIndex,
         material_deletions: MaterialDeletionCoordinator,
         sessions: SessionRepository,
+        analyses: MaterialAnalysisRepository | None = None,
         routing: WorkspaceRoutingIntelligence | None = None,
         max_workspaces: int = 100,
     ) -> None:
@@ -217,6 +234,7 @@ class WorkspaceService:
         self._knowledge = knowledge
         self._material_deletions = material_deletions
         self._sessions = sessions
+        self._analyses = analyses
         self._routing = routing
         self._max_workspaces = max_workspaces
 
@@ -463,7 +481,14 @@ class WorkspaceService:
             owner_id=owner_id,
             project_id=workspace_id,
         )
-        return _material_topic_suggestions(workspace, materials)
+        analyses: list[MaterialAnalysis] = []
+        if self._analyses is not None:
+            for material in materials:
+                try:
+                    analyses.append(self._analyses.get(owner_id, workspace_id, material.id))
+                except RecordNotFoundError:
+                    continue
+        return _material_topic_suggestions(workspace, materials, analyses)
 
     def accept_topic_suggestion(
         self,

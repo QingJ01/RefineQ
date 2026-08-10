@@ -124,6 +124,7 @@ export function MaterialDropzone({
   topicSuggestions = [],
   acceptingTopicSuggestionId = null,
   onAcceptTopicSuggestion,
+  onAcceptAllTopicSuggestions,
   onUploadActivityChange,
   libraryMaterials = [],
   linkingLibraryMaterialId = null,
@@ -145,6 +146,7 @@ export function MaterialDropzone({
   topicSuggestions?: TopicSuggestion[];
   acceptingTopicSuggestionId?: string | null;
   onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
+  onAcceptAllTopicSuggestions?: () => void | Promise<void>;
   onUploadActivityChange?: (active: boolean) => void;
   libraryMaterials?: MaterialRecord[];
   linkingLibraryMaterialId?: string | null;
@@ -511,8 +513,8 @@ export function MaterialDropzone({
             <div>
               <strong>{locale === "zh" ? "资料重点" : "Material priorities"}</strong>
               <p>{locale === "zh"
-                ? "先根据文件名和标签给出建议；点击下方“分析资料”后，会补充正文中的知识点。"
-                : "Initial suggestions come from names and tags. Analyze a file to add topics from its contents."}</p>
+                ? "这些知识点来自资料分析结果和可见元数据。确认后会加入学习路径；如需时间安排，可继续在计划页设置。"
+                : "These topics come from material analysis and visible metadata. Confirm them to add to your learning path; set timing on Plan if needed."}</p>
             </div>
           </div>
           <ul>
@@ -532,6 +534,17 @@ export function MaterialDropzone({
               </li>
             ))}
           </ul>
+          <button
+            type="button"
+            className="primary-action material-topic-confirm"
+            data-testid="accept-all-topics"
+            disabled={acceptingTopicSuggestionId !== null}
+            onClick={() => void onAcceptAllTopicSuggestions?.()}
+          >
+            {acceptingTopicSuggestionId === "all"
+              ? (locale === "zh" ? "正在加入…" : "Adding topics…")
+              : (locale === "zh" ? "全部加入知识点" : "Add all topics")}
+          </button>
         </aside>
       )}
 

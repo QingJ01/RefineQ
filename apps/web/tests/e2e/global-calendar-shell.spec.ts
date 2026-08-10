@@ -17,8 +17,7 @@ test("shared shell connects global calendar, workspace task, and account", async
   );
   await page.getByTestId("start-learning").click();
 
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   await expect(page.getByTestId("app-sidebar")).toBeVisible();
   await page.getByTestId("app-nav-calendar").click();
   await expect(page).toHaveURL(/\/calendar$/);

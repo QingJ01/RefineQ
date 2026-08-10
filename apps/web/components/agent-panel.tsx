@@ -20,6 +20,7 @@ import { CoachActionCard, type CoachActionCardState } from "@/components/session
 import { api, ApiError } from "@/lib/api";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
 import { localizeApiError } from "@/lib/error-messages";
+import { RichText } from "@/components/rich-text";
 import type { Translator } from "@/lib/i18n";
 import { resolveModelCapability } from "@/lib/model-capability";
 import type {
@@ -399,7 +400,7 @@ export function AgentPanel({
         {messages.map((item, index) => (
           <article key={`${item.role}-${index}`} className={`chat-message ${item.role}`}>
             <span>{item.role === "user" ? "YOU" : "REFINEQ"}</span>
-            <p>{item.content}</p>
+            <RichText>{item.content}</RichText>
             <div className="chat-message-actions">
               <button type="button" aria-label={t("copyMessage")} onClick={() => void copyMessage(item.content, index)}><Copy size={12} /> {copiedIndex === index ? t("copied") : t("copy")}</button>
               {item.sources && item.sources.length > 0 && (

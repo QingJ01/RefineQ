@@ -15,6 +15,7 @@ from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
 from refineq.learning.service import AnswerRequest, PlanUpdateRequest
+from refineq.materials.models import MaterialAnalysis, MaterialType
 from refineq.operations.admin import ensure_admin
 from refineq.storage.json_store import RecordNotFoundError
 from refineq.workspaces.service import WorkspaceQuotaError, WorkspaceResolveRequest
@@ -589,6 +590,47 @@ def test_material_topic_suggestions_require_owner_confirmation_and_ignore_body(
     assert replayed.json()["workspace"]["topics"].count("epsilon-delta") == 1
 
 
+def test_material_topic_suggestions_include_analyzed_topics(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, owner_id = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "学习高等数学"},
+        ).json()["workspace"]["id"]
+        uploaded = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files=[("files", ("calculus.md", b"limits and derivatives", "text/markdown"))],
+        ).json()[0]
+        app.state.material_analyses.save(
+            owner_id,
+            workspace_id,
+            MaterialAnalysis(
+                material_id=uploaded["id"],
+                filename=uploaded["filename"],
+                material_type=MaterialType.TEXTBOOK,
+                title="高等数学",
+                summary="极限与导数基础内容。",
+                topics=["极限", "导数"],
+                confidence=0.95,
+                mode="ai",
+                analyzed_at=datetime.now(UTC),
+            ),
+        )
+
+        response = client.get(
+            f"/workspaces/{workspace_id}/topic-suggestions",
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert {"极限", "导数"} <= {item["name"] for item in response.json()}
+
+
 def test_material_topic_acceptance_rolls_back_both_records_on_failure(
     tmp_path: Path,
     monkeypatch,
@@ -1062,11 +1104,23 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         assert added.json()["minutes"] == 40
         assert added.json()["activity"] == "review"
 
+        retargeted = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"topic_id": added.json()["topic_id"]},
+        )
+        assert retargeted.status_code == 200
+        assert retargeted.json()["topic_id"] == added.json()["topic_id"]
+
         refreshed_sessions = client.get(
             f"/workspaces/{workspace_id}/snapshot",
             headers=headers,
         ).json()["plan"]["sessions"]
         assert added.json() in refreshed_sessions
+        assert (
+            next(item for item in refreshed_sessions if item["id"] == session["id"])["topic_id"]
+            == added.json()["topic_id"]
+        )
 
         cleared = client.delete(
             f"/workspaces/{workspace_id}/learning/plan",
