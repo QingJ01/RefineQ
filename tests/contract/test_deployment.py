@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from refineq.config import Settings
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INFRASTRUCTURE_FILES = {
     "requirements-build.in",
@@ -73,6 +75,18 @@ def test_custom_deployment_environment_is_namespaced() -> None:
     assert interpolated
     assert declared
     assert all(name.startswith("REFINEQ_") for name in interpolated + declared)
+
+
+def test_every_backend_setting_is_exposed_by_the_deployment_contract() -> None:
+    example = _read(".env.example")
+    compose = _read("infra/compose.yml")
+    api_environment = compose.split("\n  api:", maxsplit=1)[1].split("\n  web:", maxsplit=1)[0]
+    backend_settings = {f"REFINEQ_{field_name.upper()}" for field_name in Settings.model_fields}
+
+    assert backend_settings
+    for name in backend_settings:
+        assert f"{name}=" in example
+        assert f"{name}:" in api_environment
 
 
 def test_ci_runs_python_web_browser_and_container_contracts() -> None:

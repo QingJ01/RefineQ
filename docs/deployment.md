@@ -59,6 +59,7 @@ sender configured. Set these values in `.env` when recovery is required:
 
 ```dotenv
 REFINEQ_PUBLIC_SITE_URL=https://learn.example.com
+REFINEQ_PASSWORD_RESET_TTL_MINUTES=20
 REFINEQ_SMTP_HOST=smtp.example.com
 REFINEQ_SMTP_PORT=587
 REFINEQ_SMTP_FROM_EMAIL=RefineQ <no-reply@example.com>
@@ -163,3 +164,21 @@ docker compose --env-file .env -f infra/compose.yml ps
 
 Keep the previous images and verified backups until the smoke test completes. Backup and migration
 commands are documented in [operations.md](operations.md).
+
+## Build a clean source bundle
+
+Create submission archives from a committed revision so local `.env` files, runtime data, caches,
+and untracked files cannot leak into the bundle. From the repository root:
+
+```powershell
+$commit = git rev-parse HEAD
+git archive --format=zip --prefix="RefineQ-$commit/" `
+  --output="RefineQ-$commit-source.zip" $commit
+Get-FileHash "RefineQ-$commit-source.zip" -Algorithm SHA256
+```
+
+The archive contains `.env.example`, `infra/`, `scripts/`, deployment and operations documents,
+locked dependencies, tests, backend source, and the web application. It intentionally excludes
+the Git history and every untracked or ignored runtime artifact. Never add a populated `.env`,
+database dump, upload volume, model key, MCP bearer secret, or administrator password to a source
+bundle.
