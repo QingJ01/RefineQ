@@ -212,6 +212,30 @@ def test_genuine_dated_study_intent_still_opens_a_workspace(tmp_path: Path) -> N
     assert len(workspaces) == 1
 
 
+def test_strong_workspace_exam_date_uses_the_local_calendar_day(tmp_path: Path) -> None:
+    app, _ = app_with_model(tmp_path)
+    with TestClient(app) as client:
+        auth = register(client)
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        response = client.post(
+            "/home/dispatch",
+            headers=headers,
+            json={
+                "request_id": "strong-local-date",
+                "text": (
+                    "Computer Architecture midterm on October 25, "
+                    "90 minutes a day, starting with pipelines and caches"
+                ),
+                "timezone_offset_minutes": 480,
+            },
+        )
+    assert response.status_code == 200, response.json()
+    assert response.json()["kind"] == "open_workspace", response.json()
+    exam_at = datetime.fromisoformat(response.json()["workspace_target"]["exam_at"])
+    local = exam_at.astimezone(timezone(timedelta(minutes=480)))
+    assert (local.month, local.day) == (10, 25), exam_at.isoformat()
+
+
 def test_proposal_exam_date_uses_the_local_calendar_day(tmp_path: Path) -> None:
     app, _ = app_with_model(tmp_path)
     with TestClient(app) as client:

@@ -881,7 +881,10 @@ class HomeDispatchService:
         intent = payload.text[:500]
         preview = self._workspace_service.preview_resolution(
             owner_id,
-            WorkspaceResolveRequest(intent=intent),
+            WorkspaceResolveRequest(
+                intent=intent,
+                timezone_offset_minutes=payload.timezone_offset_minutes,
+            ),
             now=now,
             use_model=False,
         )
