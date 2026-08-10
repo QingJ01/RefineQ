@@ -51,6 +51,12 @@ def test_containers_are_unprivileged_and_runtime_state_is_mounted() -> None:
     assert compose.count("read_only: true") >= 2
 
 
+def test_web_runtime_binds_to_all_container_interfaces() -> None:
+    web_image = _read("infra/Dockerfile.web")
+
+    assert "HOSTNAME=0.0.0.0" in web_image
+
+
 def test_custom_deployment_environment_is_namespaced() -> None:
     deployment_text = "\n".join(
         _read(path) for path in ["infra/compose.yml", "infra/Caddyfile", ".env.example"]
