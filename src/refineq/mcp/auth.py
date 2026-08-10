@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from asyncio import timeout
+from collections import deque
 from typing import Any
 
 from starlette.datastructures import URLPath
@@ -87,9 +88,13 @@ class AccountBoundMcpGateway:
         chunks: list[bytes] = []
         size = 0
         too_large = False
+        received_request = False
+        body_complete = False
+        trailing_message: dict[str, Any] | None = None
         while True:
             message = await receive()
             if message.get("type") == "http.request":
+                received_request = True
                 chunk = message.get("body", b"")
                 size += len(chunk)
                 if size <= max_bytes:
@@ -97,18 +102,28 @@ class AccountBoundMcpGateway:
                 else:
                     too_large = True
                 if not message.get("more_body", False):
+                    body_complete = True
                     break
             elif message.get("type") == "http.disconnect":
+                trailing_message = message
                 break
         body = b"".join(chunks)
-        replayed = False
+        cached_messages: deque[dict[str, Any]] = deque()
+        if received_request:
+            cached_messages.append(
+                {
+                    "type": "http.request",
+                    "body": body,
+                    "more_body": not body_complete,
+                }
+            )
+        if trailing_message is not None:
+            cached_messages.append(trailing_message)
 
         async def replay() -> dict[str, Any]:
-            nonlocal replayed
-            if replayed:
-                return {"type": "http.request", "body": b"", "more_body": False}
-            replayed = True
-            return {"type": "http.request", "body": body, "more_body": False}
+            if cached_messages:
+                return cached_messages.popleft()
+            return await receive()
 
         return body, replay, too_large
 

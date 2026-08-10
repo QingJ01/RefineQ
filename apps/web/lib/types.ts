@@ -327,6 +327,7 @@ export interface PracticeRequest {
   learningMode?: LearningMode;
   difficulty?: number;
   replace?: boolean;
+  expectedStateVersion?: number;
   reviewSessionId?: string;
   planSessionId?: string;
 }
@@ -454,6 +455,7 @@ export interface AdjustPracticeProposal {
   difficulty: number;
   learning_mode: LearningMode;
   destructive: boolean;
+  expected_state_version: number;
 }
 
 export interface UpdatePlanSessionProposal {

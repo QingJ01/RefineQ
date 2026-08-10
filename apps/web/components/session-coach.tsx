@@ -107,6 +107,7 @@ function rejectedSummary(
     invalid_timezone: "无法识别浏览器时区，请刷新后重试。",
     invalid_plan: "当前学习计划包含无效场次。",
     invalid_exam_date: "当前考试日期无效，暂时不能改期。",
+    stale_action_proposal: "这条旧建议已经过期，请重新向 Agent 提问。",
   };
   return summaries[proposal.reason_code] ?? proposal.summary;
 }

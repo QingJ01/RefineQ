@@ -172,6 +172,7 @@ def create_question(
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
             plan_session_id=payload.plan_session_id,
+            expected_state_version=payload.expected_state_version,
         )
     except LearningServiceError as error:
         _raise_api_error(error)
@@ -199,6 +200,7 @@ def create_workspace_question(
             request_id=payload.request_id,
             review_session_id=payload.review_session_id,
             plan_session_id=payload.plan_session_id,
+            expected_state_version=payload.expected_state_version,
             require_material_grounding=True,
         )
     except WorkspaceMaterialRequiredError as error:

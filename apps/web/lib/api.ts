@@ -537,6 +537,7 @@ export class ApiClient {
           difficulty: options.difficulty,
           mode: options.learningMode ?? "concept",
           replace: options.replace ?? false,
+          expected_state_version: options.expectedStateVersion,
           review_session_id: options.reviewSessionId,
           plan_session_id: options.planSessionId,
         }),

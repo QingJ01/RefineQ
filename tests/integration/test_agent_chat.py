@@ -707,6 +707,124 @@ def test_agent_action_intent_isolated_from_learning_context_and_persisted(
     assert stored.data["turns"]["turn-1"]["action_proposal"] == proposal
 
 
+def test_adjust_practice_rejects_a_stale_agent_proposal(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=FakeModelTransport(text="We can switch to an easier question."),
+        agent_intent_transport=FakeIntentTransport(
+            {
+                "type": "adjust_practice",
+                "topic": "Limits",
+                "difficulty": "easier",
+            }
+        ),
+    )
+    with TestClient(app) as client:
+        user = _register(client, "stale-coach-action@example.com")
+        headers = _headers(user["token"])
+        project_id = _seed_project(client, headers)
+        _configure_model(app)
+
+        chat = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json={
+                "session_id": "stale-action-session",
+                "turn_id": "stale-action-turn",
+                "message": "Please give me an easier Limits question.",
+                "session_context": {
+                    "learning_mode": "concept",
+                    "stage": "practice",
+                    "timezone": "Asia/Shanghai",
+                },
+            },
+        )
+        assert chat.status_code == 200
+        proposal = chat.json()["action_proposal"]
+        assert isinstance(proposal["expected_state_version"], int)
+
+        concurrent = client.post(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "other-tab-question",
+                "topic_id": "limits",
+                "difficulty": 5,
+                "mode": "concept",
+                "replace": False,
+            },
+        )
+        assert concurrent.status_code == 200
+
+        applied = client.post(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": proposal["action_id"],
+                "topic_id": proposal["topic_id"],
+                "difficulty": proposal["difficulty"],
+                "mode": proposal["learning_mode"],
+                "replace": proposal["destructive"],
+                "expected_state_version": proposal["expected_state_version"],
+            },
+        )
+
+        assert applied.status_code == 409
+        assert applied.json()["error"]["code"] == "learning_state_changed"
+        pending = client.get(
+            f"/projects/{project_id}/learning/question",
+            headers=headers,
+        )
+        assert pending.status_code == 200
+        assert pending.json()["id"] == concurrent.json()["id"]
+        assert pending.json()["difficulty_level"] == 5
+
+
+def test_legacy_adjust_practice_replay_expires_without_a_state_version(tmp_path: Path) -> None:
+    reply_transport = FakeModelTransport(text="We can switch to an easier question.")
+    intent_transport = FakeIntentTransport(
+        {"type": "adjust_practice", "topic": "Limits", "difficulty": "easier"}
+    )
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        model_transport=reply_transport,
+        agent_intent_transport=intent_transport,
+    )
+    with TestClient(app) as client:
+        user = _register(client, "legacy-coach-action@example.com")
+        headers = _headers(user["token"])
+        project_id = _seed_project(client, headers)
+        _configure_model(app)
+        payload = {
+            "session_id": "legacy-action-session",
+            "turn_id": "legacy-action-turn",
+            "message": "Please give me an easier Limits question.",
+        }
+        created = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json=payload,
+        )
+        assert created.status_code == 200
+
+        def remove_version(data: dict) -> dict:
+            del data["turns"]["legacy-action-turn"]["action_proposal"]["expected_state_version"]
+            return data
+
+        app.state.sessions.mutate(user["user_id"], "legacy-action-session", remove_version)
+        replayed = client.post(
+            f"/projects/{project_id}/agent/chat",
+            headers=headers,
+            json=payload,
+        )
+
+        assert replayed.status_code == 200
+        assert replayed.json()["action_proposal"]["type"] == "rejected"
+        assert replayed.json()["action_proposal"]["reason_code"] == "stale_action_proposal"
+        assert len(reply_transport.calls) == 1
+        assert len(intent_transport.calls) == 1
+
+
 def test_agent_action_proposal_replays_without_reinvoking_models(tmp_path: Path) -> None:
     reply_transport = FakeModelTransport(text="We can save it.")
     intent_transport = FakeIntentTransport({"type": "save_question", "saved": True})

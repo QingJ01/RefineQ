@@ -19,6 +19,7 @@ const adjustProposal: AdjustPracticeProposal = {
   difficulty: 2,
   learning_mode: "concept",
   destructive: true,
+  expected_state_version: 12,
 };
 
 describe("coach action execution", () => {

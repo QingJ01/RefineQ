@@ -1054,6 +1054,7 @@ describe("authentication and API errors", () => {
       difficulty: 2,
       learning_mode: "concept" as const,
       destructive: true,
+      expected_state_version: 12,
     };
     const client = new ApiClient("/api", async () => new Response(JSON.stringify({
       session_id: "coach-1",
@@ -1220,6 +1221,7 @@ describe("targeted and saved practice API", () => {
       learningMode: "case",
       difficulty: 4,
       replace: true,
+      expectedStateVersion: 12,
       planSessionId: "plan-session-1",
     });
 
@@ -1231,6 +1233,7 @@ describe("targeted and saved practice API", () => {
       difficulty: 4,
       mode: "case",
       replace: true,
+      expected_state_version: 12,
       plan_session_id: "plan-session-1",
     });
   });
