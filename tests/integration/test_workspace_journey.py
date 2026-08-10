@@ -1081,6 +1081,62 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         assert cleared_snapshot["progress"]["topics"]
 
 
+def test_displacing_a_move_keeps_every_day_within_budget() -> None:
+    """Reflowing must actually fit the day, not push one session and give up.
+
+    A destination day can be full of several small sessions, so displacing the
+    latest one may still leave it over budget. The reflow has to keep going.
+    """
+
+    from refineq.learning.service import LearningService
+
+    budget = 45
+    day = datetime(2026, 9, 19, 10, tzinfo=UTC)
+    plan = {
+        "daily_minutes": budget,
+        "sessions": [
+            {
+                "id": f"filler-{index}",
+                "planned_at": (day + timedelta(minutes=index)).isoformat(),
+                "minutes": 15,
+                "status": "planned",
+            }
+            for index in range(3)
+        ]
+        + [
+            {
+                "id": "mover",
+                "planned_at": datetime(2026, 9, 10, 10, tzinfo=UTC).isoformat(),
+                "minutes": budget,
+                "status": "planned",
+            }
+        ],
+    }
+
+    LearningService._displace_for_move(
+        plan,
+        target_id="mover",
+        new_planned_at=day,
+        new_minutes=budget,
+        tz_offset_minutes=0,
+    )
+
+    loads: dict[str, int] = {}
+    for session in plan["sessions"]:
+        if session["id"] == "mover":
+            continue
+        bucket = datetime.fromisoformat(session["planned_at"]).date().isoformat()
+        loads[bucket] = loads.get(bucket, 0) + session["minutes"]
+    # The incoming session lands on the destination day.
+    destination = day.date().isoformat()
+    loads[destination] = loads.get(destination, 0) + budget
+
+    assert not [item for item in loads.items() if item[1] > budget], loads
+    # Nothing may be dropped or duplicated.
+    assert len(plan["sessions"]) == 4
+    assert len({session["id"] for session in plan["sessions"]}) == 4
+
+
 def test_reopening_a_completed_session_is_always_allowed(tmp_path: Path) -> None:
     """Undoing a mis-clicked "complete" must never be blocked by the budget.
 
@@ -1688,7 +1744,6 @@ def test_answer_survives_a_reload_and_unrelated_learning_writes(tmp_path: Path) 
                     "A limit is the value a function approaches near an input; "
                     "for example sin(x)/x approaches 1 as x approaches 0."
                 ),
-                "expected_state_version": snapshot_question["state_version"],
                 "prompt_hash": snapshot_question["prompt_hash"],
             },
         )

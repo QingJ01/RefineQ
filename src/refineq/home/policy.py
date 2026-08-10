@@ -211,18 +211,29 @@ class HomeRoutingPolicy:
         normalized = _normalized(text)
         named = _named_workspaces(text, workspaces)
 
+        # Safety gates run before the quoted-explanation rule, or an appended
+        # "explain it" (or any stray quote before one) would route a destructive
+        # or high-risk request to a direct answer. They are evaluated on the text
+        # OUTSIDE quoted spans, so an injection pasted *as* material stays inert
+        # data rather than becoming a command the learner never issued.
+        instruction_text = _strip_quoted_spans(normalized)
+        pasted_marker = _EXPLICIT_TEXT_TRANSFORM.search(instruction_text)
+        if pasted_marker:
+            # Everything after an explicit "summarize this text:" marker is the
+            # pasted body, i.e. untrusted data, not the learner's instruction.
+            instruction_text = instruction_text[: pasted_marker.end()]
+        if _DESTRUCTIVE.search(instruction_text) or _HIGH_RISK_OR_REALTIME.search(instruction_text):
+            return PolicyDecision(
+                PolicyKind.OUT_OF_SCOPE,
+                "该请求需要实时或高风险判断，或涉及主页禁止的破坏性操作。",
+            )
+
         if _EXPLICIT_TEXT_TRANSFORM.search(normalized) or _EXPLICIT_QUOTED_EXPLANATION.search(
             normalized
         ):
             return PolicyDecision(
                 PolicyKind.DIRECT_ANSWER,
                 "这是对本次明确标记文本的一次性转换；正文只作为不可信数据处理。",
-            )
-
-        if _DESTRUCTIVE.search(normalized) or _HIGH_RISK_OR_REALTIME.search(normalized):
-            return PolicyDecision(
-                PolicyKind.OUT_OF_SCOPE,
-                "该请求需要实时或高风险判断，或涉及主页禁止的破坏性操作。",
             )
 
         if _OPEN_COMMAND.search(normalized) and named:

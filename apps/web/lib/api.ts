@@ -574,7 +574,7 @@ export class ApiClient {
     questionId: string,
     answer: string,
     attemptId?: string,
-    options?: { expectedStateVersion?: number; promptHash?: string; signal?: AbortSignal },
+    options?: { promptHash?: string; signal?: AbortSignal },
   ): Promise<AnswerResult> {
     return this.request(
       `/workspaces/${workspaceId}/learning/answer`,
@@ -585,9 +585,6 @@ export class ApiClient {
           attempt_id: attemptId ?? crypto.randomUUID().replaceAll("-", ""),
           question_id: questionId,
           answer,
-          ...(options?.expectedStateVersion !== undefined
-            ? { expected_state_version: options.expectedStateVersion }
-            : {}),
           ...(options?.promptHash ? { prompt_hash: options.promptHash } : {}),
         }),
       },

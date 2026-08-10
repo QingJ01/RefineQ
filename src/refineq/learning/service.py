@@ -274,7 +274,6 @@ class AnswerRequest(BaseModel):
     attempt_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     question_id: str = Field(min_length=1)
     answer: str = Field(min_length=1, max_length=10_000)
-    expected_state_version: int | None = Field(default=None, ge=0)
     prompt_hash: str | None = Field(default=None, max_length=128)
 
 
@@ -317,9 +316,6 @@ class PlanSessionUpdate(BaseModel):
     planned_at: datetime | None = None
     minutes: int | None = Field(default=None, ge=5, le=480)
     timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
-    # Moving a session to another day reflows that day's pending work instead of
-    # failing, because a generated plan already fills every day to its budget.
-    displace_on_conflict: bool = False
 
 
 class PlanSessionCreate(BaseModel):
@@ -798,6 +794,14 @@ class LearningService:
 
         daily_minutes = int(plan["daily_minutes"])
         target_date = _local_date(new_planned_at, tz_offset_minutes)
+        # Reflowing must not push study work past the exam it is preparing for.
+        raw_exam_at = plan.get("exam_at")
+        exam_date: date | None = None
+        if raw_exam_at:
+            parsed_exam_at = (
+                datetime.fromisoformat(raw_exam_at) if isinstance(raw_exam_at, str) else raw_exam_at
+            )
+            exam_date = _local_date(parsed_exam_at, tz_offset_minutes)
 
         def bucket_of(session: dict[str, Any]) -> date:
             planned_at = session["planned_at"]
@@ -814,24 +818,53 @@ class LearningService:
                 and bucket_of(item) == day
             ]
 
-        day = target_date
-        carried = new_minutes
-        for _ in range(366):
+        # Work a day at a time, and keep pushing that day's latest session out
+        # until it genuinely fits. Displacing only once leaves a day made of
+        # several small sessions still over budget, which silently breaks the
+        # very invariant this reflow exists to preserve.
+        pending_days: list[tuple[date, int]] = [(target_date, new_minutes)]
+        for _ in range(2_000):
+            if not pending_days:
+                return
+            day, incoming = pending_days.pop(0)
             occupants = pending_on(day)
             used = sum(int(item["minutes"]) for item in occupants)
-            if used + carried <= daily_minutes:
-                return
-            # Push the day's latest session forward and re-check the next day.
+            if used + incoming <= daily_minutes:
+                continue
             occupants.sort(key=lambda item: str(item["planned_at"]))
             displaced = occupants[-1]
             planned_at = displaced["planned_at"]
             if isinstance(planned_at, str):
                 planned_at = datetime.fromisoformat(planned_at)
-            displaced["planned_at"] = (planned_at + timedelta(days=1)).isoformat()
-            # Only the destination day must also fit the incoming session; the
-            # cascade days just need to fit their own displaced work.
-            day = bucket_of(displaced)
-            carried = 0
+            moved_to = planned_at + timedelta(days=1)
+            if exam_date is not None and _local_date(moved_to, tz_offset_minutes) > exam_date:
+                raise DailyCapacityExceededError(
+                    "Reflowing this move would push study work past the exam date.",
+                    detail={
+                        "date": target_date.isoformat(),
+                        "used": sum(int(item["minutes"]) for item in pending_on(target_date)),
+                        "requested": new_minutes,
+                        "daily_minutes": daily_minutes,
+                        "next_free_date": None,
+                    },
+                )
+            displaced["planned_at"] = moved_to.isoformat()
+            # Re-check this day (it may still be over), then the day that just
+            # received the displaced session.
+            pending_days.insert(0, (day, incoming))
+            next_day = bucket_of(displaced)
+            if not any(entry[0] == next_day for entry in pending_days):
+                pending_days.append((next_day, 0))
+        raise DailyCapacityExceededError(
+            "The plan cannot absorb this move.",
+            detail={
+                "date": target_date.isoformat(),
+                "used": sum(int(item["minutes"]) for item in pending_on(target_date)),
+                "requested": new_minutes,
+                "daily_minutes": daily_minutes,
+                "next_free_date": None,
+            },
+        )
 
     def update_plan_session(
         self,
@@ -841,6 +874,7 @@ class LearningService:
         payload: PlanSessionUpdate,
         *,
         expected_version: int | None = None,
+        displace_on_conflict: bool = False,
     ):
         self._require_project(owner_id, project_id)
         updated = None
@@ -880,7 +914,7 @@ class LearningService:
                     and payload.minutes is None
                 )
                 if new_status != "completed" and not reopening_in_place:
-                    if moving_day and payload.displace_on_conflict:
+                    if moving_day and displace_on_conflict:
                         # Moving a session onto a day is a *move*, not an addition:
                         # a generated plan already fills every day to the budget, so
                         # requiring free space would make "move it to Saturday"

@@ -69,7 +69,11 @@ _QUOTED_SPAN = re.compile(
     r"|«[^»]*»"  # guillemets
     r"|「[^」]*」"  # CJK corner brackets
     r"|『[^』]*』"  # CJK white corner brackets
-    r"|[\"“‘«「『][^\"”’»」』]*$",  # unterminated opener
+    # An unterminated opener only counts when the text reads as a quotation —
+    # i.e. an explicit "what does this mean:" style lead-in. A stray measurement
+    # mark (5'6"), a typographic apostrophe, or an unbalanced quote in an
+    # ordinary sentence must never swallow the rest of a real goal.
+    r"|(?<=[:：]\s)[\"“«「『][^\"”»」』\n]{0,200}$",
 )
 
 

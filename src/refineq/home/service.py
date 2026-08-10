@@ -1019,7 +1019,14 @@ class HomeDispatchService:
         )
         if planned_at is not None:
             action_type = "reschedule_session"
-            after = {**before, "planned_at": planned_at.isoformat()}
+            # planned_at is normalized to UTC, so the learner's offset cannot be
+            # recovered from it at confirm time. Carry it in the signed proposal
+            # so the reflow buckets days by the learner's local calendar.
+            after = {
+                **before,
+                "planned_at": planned_at.isoformat(),
+                "timezone_offset_minutes": payload.timezone_offset_minutes,
+            }
         elif duration is not None:
             action_type = "adjust_session_minutes"
             after = {**before, "minutes": duration}
@@ -1064,7 +1071,11 @@ class HomeDispatchService:
             decided_by="hybrid",
             expires_at=expires_at,
             action_proposal=proposal,
-            limitations=["仅修改所列会话，不会重排整个计划"],
+            limitations=[
+                "只改动所列会话；若目标日已排满，当天较晚的任务会顺延，其余计划不变"
+                if action_type == "reschedule_session"
+                else "仅修改所列会话，不会重排整个计划"
+            ],
         )
 
     @staticmethod
@@ -1555,22 +1566,10 @@ class HomeDispatchService:
                 if proposal.action_type == "adjust_session_minutes"
                 else None
             ),
-            # The preview already resolved the target instant in the learner's
-            # timezone, so derive the offset from it rather than widening the
-            # confirm contract.
-            timezone_offset_minutes=(
-                int(
-                    datetime.fromisoformat(str(proposal.after["planned_at"]))
-                    .utcoffset()
-                    .total_seconds()
-                    // 60
-                )
-                if is_reschedule and proposal.after.get("planned_at")
-                else 0
-            ),
-            # "Move it to Saturday" must reflow that day rather than dead-end on a
-            # plan whose days are already filled to the budget.
-            displace_on_conflict=is_reschedule,
+            # planned_at is normalized to UTC, so the offset has to come from the
+            # signed proposal; deriving it from the instant would always yield 0
+            # and bucket the reflow by UTC instead of the learner's calendar.
+            timezone_offset_minutes=int(proposal.after.get("timezone_offset_minutes") or 0),
         )
         try:
             self._learning_service.update_plan_session(
@@ -1579,6 +1578,11 @@ class HomeDispatchService:
                 session_id,
                 update,
                 expected_version=before_record.version,
+                # "Move it to Saturday" must reflow that day rather than dead-end
+                # on a plan whose days are already filled to the budget. This is a
+                # server-side decision for a previewed-and-confirmed action, not a
+                # flag any REST caller can set to opt out of the budget.
+                displace_on_conflict=is_reschedule,
             )
         except DailyCapacityExceededError:
             # Budget conflicts carry actionable detail (the full day, the next open

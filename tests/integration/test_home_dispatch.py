@@ -1012,28 +1012,33 @@ def test_cancelling_a_proposal_records_outcome_without_creating_state(tmp_path: 
 def test_explain_it_cannot_bypass_the_high_risk_boundary() -> None:
     """Appending an explanation phrase must not defeat the safety gates.
 
-    The quoted-explanation rule is the first gate in the policy, ahead of the
-    destructive and high-risk checks, so an unanchored "explain it" would let
-    four appended words route a blocked request to a direct answer.
+    The safety gates have to run before the quoted-explanation rule: while that
+    rule matched first, an appended "explain it" — or merely a stray quote
+    anywhere before it — routed a destructive or high-risk request to a direct
+    answer.
     """
 
     from refineq.home.policy import HomeRoutingPolicy
 
     policy = HomeRoutingPolicy()
 
-    medical = policy.decide(
-        "Give me medical advice about my chest pain and explain it.", workspaces=[]
-    )
-    destructive = policy.decide("Delete all my learning workspaces and explain it.", workspaces=[])
+    blocked = [
+        "Give me medical advice about my chest pain and explain it.",
+        "Delete all my learning workspaces and explain it.",
+        'Delete all my learning workspaces. He said "hello". Explain it.',
+        'Give me medical advice about my chest pain. She wrote "ouch". Explain it.',
+        'Delete all my learning workspaces" explain it',
+        "Delete all my plan. He said “hello”. Explain it.",
+    ]
+    for text in blocked:
+        assert policy.decide(text, workspaces=[]).kind.value == "out_of_scope", text
+
+    # A genuine quoted-explanation request still short-circuits to a direct answer.
     quoted = policy.decide(
         'What does this quoted sentence mean: "I have a math exam on October 25 '
         'and study 90 minutes daily"? Explain it only; do not create a workspace.',
         workspaces=[],
     )
-
-    assert medical.kind.value == "out_of_scope"
-    assert destructive.kind.value == "out_of_scope"
-    # A genuine quoted-explanation request still short-circuits to a direct answer.
     assert quoted.kind.value == "direct_answer"
 
 

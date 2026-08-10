@@ -162,3 +162,21 @@ def test_apostrophes_do_not_swallow_a_real_goal() -> None:
 
     assert constraints.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC)
     assert constraints.daily_minutes == 90
+
+
+def test_stray_quote_characters_do_not_swallow_a_real_goal() -> None:
+    """Only a quotation-style lead-in opens an unterminated span.
+
+    A measurement mark, a typographic apostrophe, or an unbalanced quote in an
+    ordinary sentence must leave the learner's own constraints intact.
+    """
+
+    for text in (
+        'My exam is on October 25" and I study 90 minutes daily',
+        "5'6\" tall; my exam is on October 25 and I study 90 minutes daily",
+        "The professor‘s note: my exam is on October 25 and I study 90 minutes daily",
+        'He asked: "what now\nMy exam is on October 25 and I study 90 minutes daily',
+    ):
+        constraints = infer_intent_constraints(text, now=NOW)
+        assert constraints.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC), text
+        assert constraints.daily_minutes == 90, text
