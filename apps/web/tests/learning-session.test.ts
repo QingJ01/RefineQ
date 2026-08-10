@@ -74,8 +74,11 @@ describe("universal capability learning session", () => {
 });
 
 it("scales the fixed session flow to the available time", () => {
+  expect(buildSessionSteps("concept", "zh", 5).map((step) => step.minutes)).toEqual([1, 1, 1, 2]);
+  expect(buildSessionSteps("concept", "zh", 10).map((step) => step.minutes)).toEqual([1, 2, 3, 4]);
   expect(buildSessionSteps("concept", "zh", 20).map((step) => step.minutes)).toEqual([2, 4, 10, 4]);
   expect(buildSessionSteps("concept", "zh", 120).map((step) => step.minutes)).toEqual([5, 20, 85, 10]);
+  expect(summaryReserveMinutes(5)).toBe(2);
   expect(summaryReserveMinutes(45)).toBe(6);
   expect(remainingSessionMinutes(0, 45, 10 * 60_000)).toBe(35);
   expect(buildSessionSteps("concept", "zh", 20, false).map((step) => step.minutes)).toEqual([0, 6, 10, 4]);

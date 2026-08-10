@@ -21,4 +21,23 @@ describe("rich learning text", () => {
     expect(html).toContain("class=\"katex\"");
     expect(html).toContain("aria-hidden=\"true\"");
   });
+
+  it("does not auto-load remote images from untrusted learning content", () => {
+    const html = renderToStaticMarkup(
+      <RichText>{"![tracking pixel](https://attacker.example/pixel.png)"}</RichText>,
+    );
+
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("attacker.example");
+    expect(html).toContain("tracking pixel");
+  });
+
+  it("opens external links without replacing the active learning session", () => {
+    const html = renderToStaticMarkup(
+      <RichText>{"[reference](https://example.com/source)"}</RichText>,
+    );
+
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
 });

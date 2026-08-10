@@ -1394,6 +1394,12 @@ class LearningService:
                 )
             )
             topic = progress["topics"][selected_topic_id]
+            recent_question_prompts = [
+                str(question.get("prompt") or "")
+                for question in history.values()
+                if question.get("topic_id") == selected_topic_id
+            ][-5:]
+            question_variation_index = int(progress.get("question_sequence", len(history)))
             mastery = BKTState.model_validate(progress["bkt_states"][selected_topic_id]).p_mastery
             selected_difficulty = (
                 difficulty_level
@@ -1412,6 +1418,8 @@ class LearningService:
                     difficulty_level=selected_difficulty,
                     learning_mode=learning_mode,
                     prior_feedback=_recent_learning_needs(progress, selected_topic_id),
+                    recent_question_prompts=recent_question_prompts,
+                    variation_index=question_variation_index,
                 )
             else:
                 generated = fallback_question(
@@ -1420,6 +1428,7 @@ class LearningService:
                     difficulty_level=selected_difficulty,
                     sources=[],
                     learning_mode=learning_mode,
+                    variation_index=question_variation_index,
                 )
             if require_material_grounding and (
                 generated.grounding != Grounding.MATERIAL or not generated.sources

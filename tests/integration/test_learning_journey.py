@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -101,6 +102,32 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
                 "replace": False,
             },
         )
+        consecutive_prompts = [created.json()["prompt"], continued.json()["prompt"]]
+        current_question = continued.json()
+        for index in range(2, 7):
+            repeated_grade = client.post(
+                f"/workspaces/{workspace_id}/learning/answer",
+                headers=headers,
+                json={
+                    "attempt_id": f"material-gate-attempt-{index}",
+                    "question_id": current_question["id"],
+                    "answer": "I explain the concept and give a concrete application example.",
+                },
+            )
+            assert repeated_grade.status_code == 200
+            repeated_question = client.post(
+                f"/workspaces/{workspace_id}/learning/question",
+                headers=headers,
+                json={
+                    "request_id": f"question-after-graded-answer-{index}",
+                    "topic_id": created.json()["topic_id"],
+                    "mode": "concept",
+                    "replace": False,
+                },
+            )
+            assert repeated_question.status_code == 200
+            current_question = repeated_question.json()
+            consecutive_prompts.append(current_question["prompt"])
         shown = client.post(
             f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
             headers=headers,
@@ -118,6 +145,8 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
     assert graded.status_code == 200
     assert continued.status_code == 200, continued.json()
     assert continued.json()["id"] != created.json()["id"]
+    assert continued.json()["prompt"] != created.json()["prompt"]
+    assert all(current != previous for previous, current in pairwise(consecutive_prompts))
     assert continued.json()["topic_id"] == created.json()["topic_id"]
     assert continued.json()["grounding"] == "material"
     assert shown.status_code == 200

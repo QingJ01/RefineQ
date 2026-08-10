@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { loadNextQuestion } from "../lib/practice-flow";
+import { ApiError } from "../lib/api";
+import { loadNextQuestion, shouldRetainQuestionRequestId } from "../lib/practice-flow";
 import type { PracticeQuestion } from "../lib/types";
 
 function makeQuestion(id: string): PracticeQuestion {
@@ -40,5 +41,15 @@ describe("loadNextQuestion staleness guard", () => {
     await loadNextQuestion(async () => makeQuestion("C"), apply);
 
     expect(apply).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("question request id recovery", () => {
+  it("retains uncertain timeout failures but releases deterministic client conflicts", () => {
+    expect(shouldRetainQuestionRequestId(new ApiError(408, "timeout", "timed out"))).toBe(true);
+    expect(shouldRetainQuestionRequestId(new ApiError(503, "unavailable", "retry"))).toBe(true);
+    expect(shouldRetainQuestionRequestId(new ApiError(409, "state_conflict", "changed")))
+      .toBe(false);
+    expect(shouldRetainQuestionRequestId(new ApiError(422, "invalid", "invalid"))).toBe(false);
   });
 });

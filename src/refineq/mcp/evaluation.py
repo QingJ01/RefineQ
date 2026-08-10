@@ -71,6 +71,8 @@ class EvaluationLearningIntelligence:
         difficulty_level: int,
         learning_mode: LearningMode = LearningMode.CONCEPT,
         prior_feedback=None,
+        recent_question_prompts: list[str] | None = None,
+        variation_index: int | None = None,
     ) -> GeneratedQuestion:
         if self._primary is not None and self._model_configured(owner_id):
             candidate = self._primary.generate_question(
@@ -83,6 +85,8 @@ class EvaluationLearningIntelligence:
                 difficulty_level=difficulty_level,
                 learning_mode=learning_mode,
                 prior_feedback=prior_feedback,
+                recent_question_prompts=recent_question_prompts,
+                variation_index=variation_index,
             )
             if (
                 candidate.mode == "ai"
@@ -102,7 +106,7 @@ class EvaluationLearningIntelligence:
                         ],
                     }
                 )
-        del mastery, prior_feedback
+        del mastery, prior_feedback, recent_question_prompts, variation_index
         sources = self._knowledge.search(
             owner_id=owner_id,
             project_id=workspace_id,

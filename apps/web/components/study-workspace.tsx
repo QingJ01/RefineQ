@@ -52,7 +52,7 @@ import {
   summaryReserveMinutes,
 } from "@/lib/learning-session";
 import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
-import { loadNextQuestion } from "@/lib/practice-flow";
+import { loadNextQuestion, shouldRetainQuestionRequestId } from "@/lib/practice-flow";
 import {
   guardPracticeNavigation,
   hasUnsavedPracticeDraft,
@@ -854,7 +854,15 @@ export function StudyWorkspace({
       );
       return isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq);
     } catch (caught) {
-      if (isPracticeGenerationCurrent(generation)) reportError(caught);
+      if (isPracticeGenerationCurrent(generation)) {
+        if (
+          questionRequestIdRef.current === requestId
+          && !shouldRetainQuestionRequestId(caught)
+        ) {
+          questionRequestIdRef.current = null;
+        }
+        reportError(caught);
+      }
       return false;
     } finally {
       if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
@@ -959,6 +967,7 @@ export function StudyWorkspace({
   function practiceTopic(topicId: string, difficulty?: number) {
     runGuardedPracticeAction(async () => {
       if (!workspace) return;
+      setSessionStartedAt(Date.now());
       router.push(learningPath(workspace.id, "today"));
       await getQuestion({
         topicId,
@@ -978,6 +987,7 @@ export function StudyWorkspace({
   function startReviewSession(topicId: string, sessionId: string) {
     runGuardedPracticeAction(async () => {
       if (!workspace) return;
+      setSessionStartedAt(Date.now());
       router.push(learningPath(workspace.id, "today"));
       await getQuestion({
         topicId,

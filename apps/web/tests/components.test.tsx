@@ -1736,6 +1736,9 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="material-metadata-material-1"');
     expect(html).toContain('data-testid="material-topic-suggestions"');
     expect(html).toContain('data-testid="accept-topic-topic_epsilon_delta"');
+    expect(html).toContain("material analysis and visible metadata");
+    expect(html).toContain("Add all topics");
+    expect(html).not.toContain("The Agent found these topics");
     expect(html).toContain("Add topic");
     expect(html).toContain("12 B");
     expect(html).toContain("text/plain");

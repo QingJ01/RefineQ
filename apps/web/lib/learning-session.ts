@@ -85,10 +85,8 @@ const steps: Record<LearningMode, Record<Locale, LearningSessionStep[]>> = {
 };
 
 export function summaryReserveMinutes(totalMinutes: number): number {
-  if (totalMinutes <= 25) return 4;
-  if (totalMinutes <= 60) return 6;
-  if (totalMinutes <= 90) return 8;
-  return 10;
+  const desired = totalMinutes <= 25 ? 4 : totalMinutes <= 60 ? 6 : totalMinutes <= 90 ? 8 : 10;
+  return Math.min(desired, Math.max(1, Math.floor(totalMinutes) - 3));
 }
 
 export function buildSessionSteps(
@@ -99,11 +97,12 @@ export function buildSessionSteps(
 ): LearningSessionStep[] {
   const labels = steps[mode][locale];
   const summary = summaryReserveMinutes(totalMinutes);
-  const reviewAllocation = Math.max(2, Math.min(5, Math.round(totalMinutes * 0.1)));
+  const reviewAllocation = Math.max(1, Math.min(5, Math.round(totalMinutes * 0.1)));
   const review = includeReview ? reviewAllocation : 0;
-  const learn = Math.max(4, Math.min(20, Math.round(totalMinutes * 0.2)))
+  const requestedLearn = Math.max(1, Math.min(20, Math.round(totalMinutes * 0.2)))
     + (includeReview ? 0 : reviewAllocation);
-  const practice = Math.max(1, totalMinutes - review - learn - summary);
+  const learn = Math.min(requestedLearn, Math.max(1, totalMinutes - review - summary - 1));
+  const practice = totalMinutes - review - learn - summary;
   const minutes = [review, learn, practice, summary];
   return labels.map((step, index) => ({ ...step, minutes: minutes[index] }));
 }

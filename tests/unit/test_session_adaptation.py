@@ -52,4 +52,5 @@ def test_mastered_topic_advances_to_next_unmastered_topic() -> None:
 
 def test_duration_and_reserve_tables_are_bounded() -> None:
     assert [estimated_task_minutes(level) for level in range(1, 6)] == [3, 4, 6, 9, 12]
+    assert summary_reserve_minutes(5) == 2
     assert [summary_reserve_minutes(minutes) for minutes in (20, 45, 75, 120)] == [4, 6, 8, 10]

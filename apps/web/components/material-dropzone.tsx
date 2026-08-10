@@ -513,8 +513,8 @@ export function MaterialDropzone({
             <div>
               <strong>{locale === "zh" ? "资料重点" : "Material priorities"}</strong>
               <p>{locale === "zh"
-                ? "AI 已从资料中整理出知识点。确认后会把它们分配到未来的学习日程。"
-                : "The Agent found these topics in your material. Confirm them to distribute them across future sessions."}</p>
+                ? "这些知识点来自资料分析结果和可见元数据。确认后会加入学习路径；如需时间安排，可继续在计划页设置。"
+                : "These topics come from material analysis and visible metadata. Confirm them to add to your learning path; set timing on Plan if needed."}</p>
             </div>
           </div>
           <ul>
@@ -542,8 +542,8 @@ export function MaterialDropzone({
             onClick={() => void onAcceptAllTopicSuggestions?.()}
           >
             {acceptingTopicSuggestionId === "all"
-              ? (locale === "zh" ? "正在生成计划…" : "Building plan…")
-              : (locale === "zh" ? "全部加入并生成计划" : "Add all and build plan")}
+              ? (locale === "zh" ? "正在加入…" : "Adding topics…")
+              : (locale === "zh" ? "全部加入知识点" : "Add all topics")}
           </button>
         </aside>
       )}

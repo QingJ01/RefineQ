@@ -2351,3 +2351,30 @@ describe("targeted plan request isolation", () => {
     expect(retryCalls).toBe(2);
   });
 });
+
+describe("adaptive learning session timing", () => {
+  it("starts a fresh timer for every user-visible session entry point", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const practiceTopicSource = workspaceSource.slice(
+      workspaceSource.indexOf("function practiceTopic"),
+      workspaceSource.indexOf("function startReviewSession"),
+    );
+    const reviewSessionSource = workspaceSource.slice(
+      workspaceSource.indexOf("function startReviewSession"),
+      workspaceSource.indexOf("function startPlanSession"),
+    );
+    const planSessionSource = workspaceSource.slice(
+      workspaceSource.indexOf("function startPlanSession"),
+      workspaceSource.indexOf("async function startAlternativeTopicForToday"),
+    );
+
+    for (const entryPoint of [practiceTopicSource, reviewSessionSource, planSessionSource]) {
+      expect(entryPoint.indexOf("setSessionStartedAt(Date.now())")).toBeGreaterThanOrEqual(0);
+      expect(entryPoint.indexOf("setSessionStartedAt(Date.now())"))
+        .toBeLessThan(entryPoint.indexOf("getQuestion("));
+    }
+  });
+});

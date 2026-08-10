@@ -271,6 +271,52 @@ def test_assessment_materials_are_prioritized_for_question_generation() -> None:
     assert _prioritize_assessment_sources([notes, exam]) == [exam, notes]
 
 
+def test_assessment_priority_does_not_match_test_inside_an_unrelated_word() -> None:
+    notes = SearchResult(
+        citation_id="notes#0",
+        material_id="notes",
+        filename="lecture-notes.pdf",
+        chunk_index=0,
+        text="Relevant lecture notes",
+        score=0.95,
+    )
+    latest = SearchResult(
+        citation_id="latest#0",
+        material_id="latest",
+        filename="latest-summary.pdf",
+        chunk_index=0,
+        text="A lower-ranked summary",
+        score=0.5,
+    )
+
+    assert _prioritize_assessment_sources([notes, latest]) == [notes, latest]
+
+
+def test_repeated_model_question_falls_back_to_a_different_task(tmp_path: Path) -> None:
+    service, transport = _service(tmp_path)
+    previous_prompt = "解释函数极限，并说明趋近与等于的区别。"
+
+    question = _trusted_generate(
+        service,
+        owner_id="owner",
+        workspace_id="calculus",
+        topic_id="limits",
+        topic_name="函数极限",
+        mastery=0.2,
+        difficulty_level=2,
+        recent_question_prompts=[previous_prompt],
+    )
+
+    assert question.mode == "fallback"
+    assert question.prompt != previous_prompt
+    question_messages = next(
+        batch
+        for batch in transport.message_batches
+        if "capability-building learning task" in batch[0]["content"]
+    )
+    assert previous_prompt in question_messages[-1]["content"]
+
+
 def _service(tmp_path: Path, *, configured: bool = True, transport=None):
     knowledge = KnowledgeIndex(tmp_path)
     knowledge.add_document(

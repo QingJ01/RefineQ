@@ -16,12 +16,14 @@ MASTERY_TARGET = 0.75
 
 def summary_reserve_minutes(total_minutes: int) -> int:
     if total_minutes <= 25:
-        return 4
-    if total_minutes <= 60:
-        return 6
-    if total_minutes <= 90:
-        return 8
-    return 10
+        desired = 4
+    elif total_minutes <= 60:
+        desired = 6
+    elif total_minutes <= 90:
+        desired = 8
+    else:
+        desired = 10
+    return min(desired, max(1, total_minutes - 3))
 
 
 def estimated_task_minutes(difficulty_level: int) -> int:

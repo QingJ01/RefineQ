@@ -1,85 +1,45 @@
-# RefineQ 当前开发交接文档
+# RefineQ 资料驱动学习与自适应 Session 交接
 
-## 1. 工作区信息
+本文记录资料分析、学习计划、每日 Session 和连续出题链路的当前实现边界。路径均相对于仓库根目录，不依赖开发者机器或临时分支。
 
-- 项目路径：`/Users/chengyuanwen/Desktop/refineQ/RefineQ`
-- 当前开发分支：`codex/material-analysis`
-- 当前代码保存在本地，尚未统一 commit 或 push。
-- 工作区包含大量历史修改，不要执行 `git reset --hard` 或 `git checkout --`。
-- 不要删除未跟踪目录 `output/` 和 `tmp/`。
-
-## 2. 项目定位与架构
-
-RefineQ 是面向考试和系统学习场景的个人学习 Agent。
-
-主要目录：
-
-- `src/refineq/`：Python 领域逻辑、FastAPI、Agent、RAG、计划、掌握度和存储。
-- `apps/web/`：Next.js 前端。
-- `tests/`：单元、集成、契约和部署测试。
-- `infra/`：容器、Compose 和反向代理配置。
-- `docs/`：架构、设计和运维文档。
-
-当前目标学习闭环：
+## 1. 产品闭环
 
 ```text
 用户目标
+→ 创建或进入学习空间
 → 上传资料
-→ 分析章节和知识点
-→ 生成学习计划和日历
+→ 分析资料并建议知识点
+→ 用户确认知识点
+→ 生成或调整学习计划
 → 每日学习 Session
-→ 出题与评分
-→ 保存学习证据
-→ 更新掌握度
-→ 调整后续题目和计划
+→ 出题、评分与学习证据
+→ 更新掌握度、难度和后续行动
 ```
 
-## 3. 已完成的主要功能
+新创建的学习空间会优先进入资料页。没有资料时，Today 的下一行动也是上传资料，避免把通用模板题包装成资料驱动学习。
 
-### 3.1 总资料库与学习空间资料
+## 2. 资料分析与知识点确认
 
-- 总资料库可以保存不同学习空间的资料。
-- 学习空间可以上传新资料，也可以从总资料库选择已有资料。
-- 同一资料库中禁止出现同名文件。
-- 重名时返回明确提示。
-- 资料列表布局和操作入口已经调整。
-- 上传后可以分析资料类型、章节和知识点。
-- 支持教材、讲义、试卷、作业和练习题等资料类型。
+- 资料可以直接上传到学习空间，也可以从个人总资料库关联。
+- 资料正文始终是不可信数据，不能作为模型指令。
+- 知识点建议优先使用已有资料分析结果，并以文件名、标题和标签等可见元数据补充。
+- 分析结果不会静默写入学习主题；用户必须明确确认。
+- “全部加入知识点”逐项使用同一 owner-scoped 接口，完成后进入计划页。
+- 没有考试时间或每日时长等约束时，系统不会伪造一份默认计划；用户可在计划页补齐时间约束。
 
-### 3.2 资料分析与学习计划
+主要实现：
 
-- 上传资料后可以分析知识点。
-- 用户确认知识点后生成学习计划。
-- 知识点可以分配到每天的日程。
-- 日历和计划列表保持同步。
-- 用户可以编辑日程日期、时间、时长和知识点。
-- 日历中修改知识点后，“今日学习”同步更新。
-- 今日更换知识点后，计划和日历同步。
-- 新学习空间不再自动生成无意义的七天计划。
-- 用户未明确提供时间约束时，计划和日程保持空白。
-- 用户输入考试日期、每日时长和开始时间后才生成对应计划。
-- 新学习空间默认掌握度已从 20% 改为 0%。
+```text
+src/refineq/workspaces/service.py
+src/refineq/materials/
+src/refineq/storage/material_analyses.py
+apps/web/components/material-dropzone.tsx
+apps/web/components/study-workspace.tsx
+```
 
-### 3.3 日历
+## 3. 统一学习 Session
 
-- 独立日历页面。
-- 月视图和当天 24 小时时间线。
-- 用户可以添加和编辑日程。
-- AI 生成的日程会直接进入日历。
-- 支持一键清空计划。
-- 支持从日历开始学习任务。
-- 支持编辑日程知识点，并同步到 Today 页面。
-
-### 3.4 学习空间管理
-
-- 学习空间右侧三点菜单。
-- 支持删除学习空间。
-- 删除前显示确认弹窗。
-- 侧边栏、最近学习空间和日程入口已经调整。
-
-### 3.5 Session 页面简化
-
-旧页面同时展示概念学习、案例拆解、项目实战和模拟考试，信息密度过高。现在前端统一为四步：
+Session 使用四个连续阶段：
 
 ```text
 1. 快速回顾
@@ -88,413 +48,111 @@ RefineQ 是面向考试和系统学习场景的个人学习 Agent。
 4. 总结复盘
 ```
 
-核心原则：
+核心原则是：Daily Plan 决定今天学什么，Agent 决定怎么教。
 
-> Daily Plan 决定今天学什么，Agent 决定怎么教。
+### 3.1 快速回顾
 
-### 3.6 快速回顾
+- 只读取浏览器本地日期中的“昨天”学习证据。
+- 支持答题、复习和自我解释证据，不把上传资料误当成学习记录。
+- 优先呈现昨天记录的薄弱点和错误。
+- 昨天没有学习记录时跳过回顾，并把时间让给后续阶段。
 
-- 只读取昨天本地日期内产生的学习证据。
-- 支持昨天的答题、复习和自我解释记录。
-- 显示昨天真正学习过的知识点。
-- 优先回顾昨天记录的薄弱点和错误。
-- 如果昨天没有学习记录：
-  - “快速回顾”显示“今天跳过”。
-  - 自动进入“今天学习”。
-  - 回顾时间重新分配给后续阶段。
-- 上传资料本身不会被误认为学习记录。
+### 3.2 今天学习
 
-主要代码：
+- 以当前计划任务或用户选择的知识点为准。
+- 从当前题目的资料来源中整理短要点，并允许展开原文。
+- Markdown 和 KaTeX 公式由统一的 `RichText` 组件渲染。
+- 不可信 Markdown 不会执行原始 HTML，也不会自动加载远程图片；外链在隔离的新标签页打开。
 
-```text
-apps/web/lib/learning-session.ts
-apps/web/components/learning-session-canvas.tsx
-```
+### 3.3 练一练
 
-### 3.7 今天学习
+- 检索结果中，明确命名为 Past Exam、Assignment、Quiz、Test、Practice Questions、试卷、真题、作业或练习题的资料会优先用于出题。
+- 英文识别使用单词边界，不会把 `latest`、`contest` 等普通文件名误判成试题。
+- 模型会收到最近五道同主题题面作为不可信历史，并被要求切换考查角度。
+- 模型返回相同题面时自动切换到确定性题型；模型未配置或调用失败时，确定性题型按题目序号轮换，避免连续重复。
+- 题目 ID、请求幂等键、题面哈希和学习状态版本继续作为展示题与判分题的一致性边界。
 
-- 从 Daily Plan 获取今日知识点。
-- 从上传资料中检索相关内容。
-- 将资料片段整理成更容易阅读的要点列表。
-- 支持展开查看资料原文。
-- 保留资料引用。
-- 支持 Markdown 和 KaTeX 数学公式。
+### 3.4 总结与后续行动
 
-新增前端依赖：
+提交答案后，后端根据以下输入返回下一步：
 
-```text
-react-markdown
-remark-gfm
-remark-math
-rehype-katex
-katex
-```
+- 当前知识点与掌握度；
+- 当前难度；
+- 主题顺序与各主题掌握度；
+- Session 剩余时间；
+- 总结预留时间。
 
-主要文件：
-
-```text
-apps/web/components/rich-text.tsx
-apps/web/components/learning-session-canvas.tsx
-```
-
-### 3.8 练一练
-
-后端支持：
-
-- 根据当前知识点出题。
-- 优先检索 Past Exam、Assignment 和 Practice Questions 等资料。
-- 没有合适原题时由模型生成。
-- 模型失败时使用确定性备用题。
-- 评分并记录 strengths、gaps 和 misconceptions。
-- 更新 BKT 掌握度。
-- 更新难度状态。
-- 保存学习证据。
-
-难度规则：
-
-```text
-初始难度：2/5
-两道独立题连续答对：升一级
-两道独立题连续答错：降一级
-```
-
-页面现在显示：
-
-- 当前题难度。
-- 下一题预计难度。
-- 下一题预计耗时。
-
-### 3.9 Agent
-
-- Session 右侧 Agent 默认展开。
-- 不再要求用户先点击“完整对话历史”才能发现 Agent。
-- 支持“给我一点提示”“换种方式解释”“回看相关内容”和“为什么问这道题”。
-- Agent 输出数学公式支持 KaTeX。
-- 保留完整对话、历史和资料引用。
-- Agent 配置不可用时显示管理员入口或状态说明。
-
-### 3.10 时间感知自适应 Session
-
-实现参考文档：
-
-```text
-/Users/chengyuanwen/Downloads/RefineQ_Time_Aware_Adaptive_Session_Codex.md
-```
-
-已经完成第一版：
-
-- 根据 Session 总时长动态分配四个阶段。
-- 不再固定为 `5/10/20/10` 分钟。
-- 页面显示剩余约多少分钟。
-- 提交答案时向后端发送：
-  - `remaining_minutes`
-  - `summary_reserve_minutes`
-- 后端结合当前掌握度、题目难度、知识点顺序和剩余时间返回下一步决策。
-
-决策类型：
+返回动作：
 
 ```text
 continue_topic  继续当前知识点
-next_topic      进入下一个知识点
-summary         进入总结复盘
+next_topic      进入下一个未达标知识点
+summary         结束练习并总结
 ```
 
-当前掌握度目标暂定为 75%。
+当前掌握度目标是 75%。当剩余时间不足以完成下一题并保留总结时间时，系统进入总结。
 
-时间不足条件：
+## 4. 时间一致性
 
-```text
-剩余时间 < 下一题预计时间 + 总结预留时间
-→ 不开始新题
-→ 进入总结复盘
-```
+- 前端和后端使用同一组总结预留规则。
+- 5 分钟的最短任务会分配为 `1/1/1/2` 分钟；阶段合计始终等于任务总时长。
+- 计划任务、到期复习和自由练习都会在用户进入时重置 Session 计时。
+- 连续练习同一 Session 时不重置计时，防止通过反复点“继续巩固”绕过时间预算。
 
-主要文件：
+主要实现：
 
 ```text
 src/refineq/learning/session_adaptation.py
 src/refineq/learning/service.py
 apps/web/lib/learning-session.ts
-apps/web/lib/types.ts
-apps/web/lib/api.ts
 apps/web/components/learning-session-canvas.tsx
 apps/web/components/study-workspace.tsx
 ```
 
-## 4. 当前最高优先级未解决问题
+## 5. 请求恢复与幂等
 
-用户完成第一道题后点击“继续巩固”，下一题仍可能生成失败，而且可能出现重复题。
+- 出题请求在超时或 5xx 后，会用同一 request ID 轮询已提交的 pending question。
+- 恢复时校验知识点、计划任务和复习任务来源，不能把另一场学习的 pending question 当成本次结果。
+- 408、网络不确定性和 5xx 会保留 request ID，以便安全重放。
+- 确定性的 4xx/409 会释放 request ID；下一次明确点击会创建新请求，避免永久重放失败。
+- 前端 generation guard 会丢弃切换空间、登出或更新请求后迟到的响应。
 
-当前表现：
+## 6. Agent 边界
 
-- 页面顶部显示“操作没有完成，请稍后重试”。
-- 当前题评分和反馈正常。
-- 点击“继续巩固”不能稳定进入下一题。
-- 即使请求成功，题目文本也可能与上一题相同或高度相似。
+- Session 内 Agent 默认展开，提供提示、换种解释、相关内容和出题原因。
+- 提示采用逐级披露；除非学习者已经尝试或明确要求完整解答，否则不直接泄露答案。
+- 提示、解释和“为什么问这道题”属于辅导请求，不会被误识别成计划或题目修改动作。
+- Agent 输出与题目、解析共用安全的富文本渲染边界。
 
-### 4.1 已经尝试的修复
+## 7. 验证
 
-前端原来对“继续巩固”发送：
+合并前从仓库根目录运行：
 
-```ts
-replace: true
-```
+```powershell
+python -m ruff format --check src tests
+python -m ruff check src tests
+python -m pytest -q
 
-现已改成：
-
-```ts
-replace: result ? false : true
-```
-
-设计意图：
-
-- 已评分后的“继续巩固”创建一道新题，不替换 pending question。
-- 用户明确点击“换一个任务”时才使用 `replace=true`。
-
-用户实际测试后问题仍然存在，因此不能认为已经解决。
-
-### 4.2 当前调查结论
-
-后端本身支持连续出题：
-
-```python
-selected_difficulty = DifficultyState(...).level
-generate_question(...)
-```
-
-模型请求失败时还会调用：
-
-```python
-fallback_question(...)
-```
-
-所以问题不是简单的“模型不能生成下一题”。
-
-可能原因包括：
-
-1. 下一题生成期间发生学习状态版本冲突。
-2. `questionRequestIdRef` 在失败后没有清理，重试复用旧请求 ID。
-3. API 请求成功，但恢复轮询读取到上一道题。
-4. 题目成功返回后，被前端 practice generation 版本判断拒绝应用。
-5. 模型没有收到最近题目列表，因此生成重复题。
-6. `fallback_question()` 每种模式只有一个固定模板，模型降级时必然重复。
-7. 未知 API 错误被前端统一隐藏成“操作没有完成”。
-
-## 5. 下一步建议
-
-### 5.1 显示真实错误
-
-下一题失败时应展示或记录：
-
-- HTTP status。
-- API error code。
-- 后端返回的安全错误信息。
-
-当前文件：
-
-```text
-apps/web/lib/error-messages.ts
-```
-
-目前未知错误只返回：
-
-```text
-操作没有完成，请稍后重试。
-```
-
-### 5.2 修复 request ID 生命周期
-
-重点检查：
-
-```text
-apps/web/components/study-workspace.tsx
-questionRequestIdRef.current
-```
-
-当前主要在生成成功后清理。失败后可能保留旧 request ID，导致重试返回旧题或重复题。
-
-建议：
-
-- 为每次明确的“继续巩固”创建新 request ID。
-- 非可恢复失败后清除旧 request ID。
-- 只有网络超时恢复期间才保留同一个 request ID。
-
-### 5.3 后端增加题目去重
-
-当前模型 prompt 只收到：
-
-```text
-topic
-mastery
-difficulty
-prior_feedback
-materials
-```
-
-应该增加最近题面：
-
-```text
-recent_question_prompts
-```
-
-并明确要求：
-
-```text
-Do not repeat or paraphrase any previous question.
-Test a different aspect, example, representation, or application.
-```
-
-生成后还应进行归一化相似度检查。过度相似时：
-
-- 重试一次模型；或
-- 改用不同的 fallback 模板。
-
-相关文件：
-
-```text
-src/refineq/learning/intelligence.py
-src/refineq/learning/service.py
-```
-
-### 5.4 扩展 fallback 题目模板
-
-当前 `fallback_question()` 每种学习模式基本只有一个固定模板，模型失败时会重复。
-
-建议增加：
-
-```text
-definition
-principle
-worked example
-error diagnosis
-application
-transfer
-comparison
-```
-
-可以使用：
-
-```text
-question_sequence % template_count
-```
-
-选择不同模板。
-
-### 5.5 增加真实连续题测试
-
-后端已有基础测试：
-
-```text
-生成第一题
-→ 提交答案
-→ 请求第二题
-→ 第二题 ID 不同
-→ 第二题仍有材料依据
-```
-
-该测试通过，但还未覆盖：
-
-- 模型超时后的恢复。
-- request ID 重用。
-- 重复题面检测。
-- 前端点击“继续巩固”的完整链路。
-
-下一步应增加 Playwright 或组件集成测试。
-
-## 6. 最近测试状态
-
-最近稳定状态：
-
-```text
-前端测试：203 passed
-ESLint：passed
-Next.js production build：passed
-```
-
-后端针对性测试：
-
-```text
-Session adaptation：passed
-Workspace journey：passed
-连续生成第二题基础测试：passed
-```
-
-注意：自动测试虽然通过，但用户实际浏览器中的“继续巩固”仍然失败，应以真实浏览器结果为准。
-
-## 7. 本地运行
-
-### 7.1 后端
-
-```bash
-cd /Users/chengyuanwen/Desktop/refineQ/RefineQ
-source .venv/bin/activate
-uvicorn refineq.api.app:create_app --factory --reload --host 127.0.0.1 --port 8000
-```
-
-### 7.2 前端
-
-```bash
-cd /Users/chengyuanwen/Desktop/refineQ/RefineQ/apps/web
-npm run dev
-```
-
-默认访问：
-
-```text
-http://127.0.0.1:3000
-```
-
-## 8. 测试命令
-
-### 8.1 后端
-
-```bash
-cd /Users/chengyuanwen/Desktop/refineQ/RefineQ
-source .venv/bin/activate
-ruff check src tests
-pytest -q
-```
-
-### 8.2 前端
-
-```bash
-cd /Users/chengyuanwen/Desktop/refineQ/RefineQ/apps/web
+cd apps/web
+npm ci
 npm test
 npm run lint
 npm run build
+npm run test:e2e
 ```
 
-运行 `npm run build` 后，Next.js 可能修改：
+浏览器门至少覆盖：
 
-```text
-apps/web/next-env.d.ts
-```
+- 新空间进入资料页；
+- 上传、分析、确认知识点和计划；
+- 第一题、继续巩固、不同的下一题和再次作答；
+- 保存题、重做题、资料引用和学习证据；
+- Agent 不可用时的安全降级；
+- 撤销创建、登出迟到响应隔离；
+- 390px 移动端完整学习闭环。
 
-本地期望内容为：
+## 8. 非阻断边界
 
-```ts
-import "./.next/dev/types/routes.d.ts";
-import "./.next/dev/types/root-params.d.ts";
-```
-
-## 9. Git 注意事项
-
-- 当前存在大量未提交修改。
-- 不要执行破坏性 reset。
-- 不要覆盖队友或用户已有修改。
-- 不要删除 `output/` 和 `tmp/`。
-- 暂时不要直接合并或 push。
-- 先解决“继续巩固生成下一题”和重复题问题，再进行真实浏览器验证。
-- 稳定后再 commit、push，并发起 PR 合并到 main。
-
-## 10. 新窗口建议提示词
-
-```text
-请继续处理 /Users/chengyuanwen/Desktop/refineQ/RefineQ 当前
-codex/material-analysis 分支。先阅读仓库中的 AGENTS.md 和
-docs/RefineQ_Current_Development_Handoff.md。
-
-当前最高优先级 Bug 是：用户完成题目后点击“继续巩固”，下一题生成失败且可能重复。
-不要 reset 或覆盖现有未提交修改，不要删除 output/ 和 tmp/。
-请先查出真实 API 错误，再修复 request ID 恢复、模型/备用题去重，并使用真实连续题流程测试验证。
-```
+- 确定性降级题型是有限集合，目标是避免连续重复并保持可恢复，不替代健康模型的长期题目多样性。
+- “全部加入知识点”当前是可重试的逐项确认，不是单个批量事务；任一请求失败时，已确认主题会保留，用户可再次执行完成剩余项。
+- 资料自动分析失败不会撤销已经成功的上传；用户可以在资料卡上手动重试分析。

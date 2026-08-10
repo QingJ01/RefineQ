@@ -1,3 +1,4 @@
+import { ApiError } from "./api";
 import type { PracticeQuestion } from "./types";
 
 
@@ -12,4 +13,8 @@ export async function loadNextQuestion(
   // question the learner is now looking at.
   if (isCurrent && !isCurrent()) return;
   apply(question);
+}
+
+export function shouldRetainQuestionRequestId(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status === 408 || error.status >= 500;
 }

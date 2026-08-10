@@ -24,6 +24,12 @@ export function RichText({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
+        components={{
+          a: ({ children: linkText, href }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer">{linkText}</a>
+          ),
+          img: ({ alt }) => <span className="rich-text-image-label">{alt || "Image"}</span>,
+        }}
       >
         {normalizeMathDelimiters(children)}
       </ReactMarkdown>

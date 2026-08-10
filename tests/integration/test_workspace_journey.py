@@ -1117,9 +1117,10 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
             headers=headers,
         ).json()["plan"]["sessions"]
         assert added.json() in refreshed_sessions
-        assert next(item for item in refreshed_sessions if item["id"] == session["id"])[
-            "topic_id"
-        ] == added.json()["topic_id"]
+        assert (
+            next(item for item in refreshed_sessions if item["id"] == session["id"])["topic_id"]
+            == added.json()["topic_id"]
+        )
 
         cleared = client.delete(
             f"/workspaces/{workspace_id}/learning/plan",
