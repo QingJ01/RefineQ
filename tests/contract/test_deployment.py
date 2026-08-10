@@ -199,6 +199,7 @@ def test_compose_trusts_only_the_pinned_reverse_proxy_address() -> None:
     assert "REFINEQ_FORWARDED_ALLOW_IPS=172.30.0.2" in example
     assert "ipv4_address: 172.30.0.2" in compose
     assert "subnet: 172.30.0.0/24" in compose
+    assert "ip_range: 172.30.0.128/25" in compose
     assert "REFINEQ_FORWARDED_ALLOW_IPS=*" not in example
 
 
