@@ -17,8 +17,7 @@ from sqlalchemy import case, delete, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from refineq.database.engine import Database
-from refineq.database.schema import mcp_evaluation_idempotency, mcp_evaluation_runs, users
-from refineq.identity.service import AccountExistsError, IdentityService
+from refineq.database.schema import mcp_evaluation_idempotency, mcp_evaluation_runs
 from refineq.knowledge.index import KnowledgeIndex, MaterialNotFoundError
 from refineq.learning.service import LearningConflictError, LearningService, SeedRequest, TopicSeed
 from refineq.storage.journey_events import JourneyEventRepository
@@ -679,8 +678,6 @@ class McpSandboxRepository:
                 )
 
 
-EVALUATION_EMAIL = "evaluation-sandbox@refineq.invalid"
-EVALUATION_OWNER_ID = f"user_{sha256(EVALUATION_EMAIL.encode()).hexdigest()[:20]}"
 EVALUATION_WORKSPACE_ID = "mcp_evaluation_workspace"
 EVALUATION_MATERIAL_ID = "mcp_evaluation_limits"
 EVALUATION_TOPIC_ID = "function_limits"
@@ -708,13 +705,13 @@ class EvaluationSandboxState:
 
 
 class EvaluationSandboxService:
-    """Reset the dedicated owner to one curated, non-user-accessible baseline."""
+    """Reset one dedicated workspace under the configured account to a curated baseline."""
 
     def __init__(
         self,
         *,
-        database: Database,
-        identity: IdentityService,
+        owner_id: str,
+        account_email: str,
         workspaces: WorkspaceRepository,
         learning: LearningRepository,
         learning_service: LearningService,
@@ -722,8 +719,8 @@ class EvaluationSandboxService:
         sessions: SessionRepository,
         knowledge: KnowledgeIndex,
     ) -> None:
-        self._database = database
-        self._identity = identity
+        self._owner_id_value = owner_id
+        self.account_email = account_email
         self._workspaces = workspaces
         self._learning = learning
         self._learning_service = learning_service
@@ -731,36 +728,21 @@ class EvaluationSandboxService:
         self._sessions = sessions
         self._knowledge = knowledge
 
-    def _owner_id(self) -> str:
-        with self._database.session() as session:
-            owner_id = session.scalar(select(users.c.id).where(users.c.email == EVALUATION_EMAIL))
-        if owner_id is not None:
-            return str(owner_id)
-        try:
-            user = self._identity.register(
-                email=EVALUATION_EMAIL,
-                password=secrets.token_urlsafe(36),
-                display_name="RefineQ Evaluation Sandbox",
-            )
-            return user.id
-        except AccountExistsError:
-            with self._database.session() as session:
-                owner_id = session.scalar(
-                    select(users.c.id).where(users.c.email == EVALUATION_EMAIL)
-                )
-            if owner_id is None:
-                raise
-            return str(owner_id)
+    @property
+    def owner_id(self) -> str:
+        """Return the server-bound owner without exposing account lookup to callers."""
+
+        return self._owner_id_value
 
     def state(self, *, expected_run_fence: str | None = None) -> EvaluationSandboxState:
-        record = self._learning.get(EVALUATION_OWNER_ID, EVALUATION_WORKSPACE_ID)
+        record = self._learning.get(self._owner_id_value, EVALUATION_WORKSPACE_ID)
         if (
             expected_run_fence is not None
             and record.data.get("progress", {}).get(_RUN_FENCE_KEY) != expected_run_fence
         ):
             raise LearningConflictError("The evaluation sandbox belongs to a different run")
         return EvaluationSandboxState(
-            owner_id=EVALUATION_OWNER_ID,
+            owner_id=self._owner_id_value,
             workspace_id=EVALUATION_WORKSPACE_ID,
             material_id=EVALUATION_MATERIAL_ID,
             topic_id=EVALUATION_TOPIC_ID,
@@ -860,8 +842,7 @@ class EvaluationSandboxService:
         """Idempotently provision static resources without creating learning state."""
 
         observed_at = _utc(now or datetime.now(UTC))
-        owner_id = self._owner_id()
-        self._identity.disable_interactive_access(owner_id)
+        owner_id = self._owner_id_value
         self._ensure_static_seed(owner_id=owner_id, now=observed_at)
         material = self._knowledge.get_material(
             owner_id=owner_id,

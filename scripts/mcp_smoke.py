@@ -27,10 +27,15 @@ def _validate_report(
     result: dict[str, object],
     *,
     required_mode: str | None = None,
+    expected_account: str | None = None,
 ) -> None:
     checks = (
         ("protocol_versions", "2026-07-28" in result.get("protocol_versions", [])),
         ("tools", set(result.get("tools", [])) == EXPECTED_TOOLS),
+        (
+            "account_email",
+            expected_account is None or result.get("account_email") == expected_account,
+        ),
         ("material_count", int(result.get("material_count", 0)) >= 1),
         ("search_results", int(result.get("search_results", 0)) >= 1),
         ("task_citations", int(result.get("task_citations", 0)) >= 1),
@@ -73,11 +78,10 @@ def _payload(result, *, output_schema: dict | None = None) -> dict:
     return structured
 
 
-async def _run(url: str, secret: str, *, trust_env: bool = True) -> dict[str, object]:
+async def _run(url: str, *, trust_env: bool = True) -> dict[str, object]:
     client_key = f"public-smoke-{uuid4().hex}"
-    headers = {"Authorization": f"Bearer {secret}"}
     async with (
-        httpx2.AsyncClient(headers=headers, timeout=30.0, trust_env=trust_env) as http_client,
+        httpx2.AsyncClient(timeout=30.0, trust_env=trust_env) as http_client,
         streamable_http_client(url, http_client=http_client) as (read, write),
         ClientSession(read, write) as session,
     ):
@@ -186,6 +190,7 @@ async def _run(url: str, secret: str, *, trust_env: bool = True) -> dict[str, ob
     return {
         "protocol_versions": discovery.supported_versions,
         "tools": sorted(names),
+        "account_email": begun["account"]["email"],
         "material_count": context["materials"]["indexed_count"],
         "search_results": len(search["results"]),
         "task_citations": len(task_citations),
@@ -214,14 +219,22 @@ def main() -> int:
         choices=("ai", "fallback"),
         help="Fail unless question generation and grading both use this runtime mode.",
     )
+    parser.add_argument(
+        "--expected-account",
+        default=os.environ.get("REFINEQ_MCP_ACCOUNT_EMAIL", ""),
+        help="Fail unless MCP reports this server-bound account email.",
+    )
     args = parser.parse_args()
-    secret = os.environ.get("REFINEQ_MCP_EVALUATION_SECRET", "")
-    if not args.url or not secret:
-        parser.error("REFINEQ_MCP_URL/--url and REFINEQ_MCP_EVALUATION_SECRET are required")
+    if not args.url or not args.expected_account:
+        parser.error("REFINEQ_MCP_URL/--url and --expected-account are required")
     if not args.allow_http and not args.url.lower().startswith("https://"):
         parser.error("public MCP smoke tests require HTTPS")
-    result = asyncio.run(_run(args.url, secret, trust_env=not args.allow_http))
-    _validate_report(result, required_mode=args.require_mode)
+    result = asyncio.run(_run(args.url, trust_env=not args.allow_http))
+    _validate_report(
+        result,
+        required_mode=args.require_mode,
+        expected_account=args.expected_account.strip().lower(),
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

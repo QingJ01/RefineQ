@@ -14,14 +14,16 @@ def test_caddy_preserves_the_exact_mcp_path_and_streaming() -> None:
     assert caddy.index("handle /mcp {") < caddy.index("handle_path /api/*")
 
 
-def test_caddy_rejects_api_prefixed_mcp_before_stripping_api_prefix() -> None:
+def test_caddy_proxies_exact_api_prefixed_mcp_without_path_stripping() -> None:
     caddy = Path("infra/Caddyfile").read_text(encoding="utf-8")
 
-    exact_rejection = 'handle /api/mcp {\n        respond "Not Found" 404\n    }'
     child_rejection = 'handle /api/mcp/* {\n        respond "Not Found" 404\n    }'
-    assert exact_rejection in caddy
+    api_block = caddy.split("handle /api/mcp {", 1)[1].split("\n    }", 1)[0]
+    assert "reverse_proxy api:8000" in api_block
+    assert "flush_interval -1" in api_block
+    assert "max_size 131072" in api_block
     assert child_rejection in caddy
-    assert caddy.index(exact_rejection) < caddy.index("handle_path /api/*")
+    assert caddy.index("handle /api/mcp {") < caddy.index("handle_path /api/*")
     assert caddy.index(child_rejection) < caddy.index("handle_path /api/*")
 
 
@@ -30,7 +32,8 @@ def test_compose_passes_only_namespaced_mcp_configuration() -> None:
     example = Path(".env.example").read_text(encoding="utf-8")
     for name in (
         "REFINEQ_MCP_ENABLED",
-        "REFINEQ_MCP_EVALUATION_SECRET",
+        "REFINEQ_MCP_INTERNAL_SECRET",
+        "REFINEQ_MCP_ACCOUNT_EMAIL",
         "REFINEQ_MCP_ALLOWED_HOSTS",
         "REFINEQ_MCP_RUN_TTL_SECONDS",
         "REFINEQ_MCP_IDEMPOTENCY_TTL_SECONDS",

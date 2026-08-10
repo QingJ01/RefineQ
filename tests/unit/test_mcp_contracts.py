@@ -9,6 +9,7 @@ def test_success_result_has_structured_and_text_content() -> None:
         run_id="run-token",
         expires_at="2026-08-09T12:00:00Z",
         simulation=True,
+        account={"email": "qingj1314@163.com"},
         space={"id": "space", "title": "极限与连续性", "material_count": 1},
         runtime={"observed_at": None, "stale": True},
         next_tool="refineq_get_learning_context",

@@ -134,9 +134,10 @@ npm run test:e2e
 
 ## MCP evaluation endpoint
 
-RefineQ can expose an optional, resettable MCP simulation at `/mcp` for external product
-evaluation. It is disabled by default, uses a dedicated bearer secret, exposes exactly five
-tools, and never touches real learner mastery. See
+RefineQ can expose an optional, resettable MCP simulation at `/mcp` and `/api/mcp` for external
+product evaluation. It is disabled by default, binds requests to one existing RefineQ account
+without requiring a client Bearer secret, and exposes exactly five tools. The tools operate only
+on a dedicated resettable workspace under that account, not its existing learning spaces. See
 [`docs/operations/mcp.md`](docs/operations/mcp.md) for setup, tool order,
 security boundaries, and the independent HTTPS smoke test.
 

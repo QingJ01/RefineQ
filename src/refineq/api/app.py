@@ -66,7 +66,7 @@ from refineq.learning.intelligence import LearningIntelligenceService
 from refineq.learning.personalized import TargetedPlanService
 from refineq.learning.service import LearningService
 from refineq.materials.service import MaterialAnalysisService
-from refineq.mcp.auth import EvaluationBearerGateway, ExactAsgiRoute
+from refineq.mcp.auth import AccountBoundMcpGateway, ExactAsgiRoute
 from refineq.mcp.evaluation import EvaluationLearningIntelligence
 from refineq.mcp.observability import McpTelemetry
 from refineq.mcp.sandbox import EvaluationSandboxService, McpSandboxRepository
@@ -246,6 +246,11 @@ def create_app(
     )
     app.state.sessions = SessionRepository(app.state.store)
     if app.state.settings.mcp_enabled:
+        app.state.mcp_account = app.state.identity.find_by_email(
+            app.state.settings.mcp_account_email or ""
+        )
+        if app.state.mcp_account is None:
+            raise ValueError("configured MCP account does not exist")
         app.state.mcp_telemetry = McpTelemetry()
         app.state.mcp_embedding_service = PlatformEmbeddingService(
             app.state.integrations,
@@ -275,15 +280,15 @@ def create_app(
         )
         app.state.mcp_runs = McpSandboxRepository(
             app.state.database,
-            secret=app.state.settings.mcp_evaluation_secret.get_secret_value(),
-            principal_id="evaluation",
+            secret=app.state.settings.mcp_internal_secret.get_secret_value(),
+            principal_id=app.state.mcp_account.id,
             run_ttl=timedelta(seconds=app.state.settings.mcp_run_ttl_seconds),
             idempotency_ttl=timedelta(seconds=app.state.settings.mcp_idempotency_ttl_seconds),
         )
         app.state.mcp_runs.recover_startup()
         app.state.mcp_sandbox = EvaluationSandboxService(
-            database=app.state.database,
-            identity=app.state.identity,
+            owner_id=app.state.mcp_account.id,
+            account_email=app.state.mcp_account.email,
             workspaces=app.state.workspaces,
             learning=app.state.learning,
             learning_service=app.state.mcp_learning_service,
@@ -299,6 +304,7 @@ def create_app(
             learning=app.state.learning,
             learning_service=app.state.mcp_learning_service,
             knowledge=app.state.mcp_knowledge,
+            account_email=app.state.mcp_account.email,
             telemetry=app.state.mcp_telemetry,
             model_settings=app.state.model_settings,
         )
@@ -401,10 +407,10 @@ def create_app(
                 allowed_origins=[],
             ),
         )
-        app.state.mcp_gateway = EvaluationBearerGateway(
+        app.state.mcp_gateway = AccountBoundMcpGateway(
             app.state.mcp_asgi,
-            secret=app.state.settings.mcp_evaluation_secret.get_secret_value(),
-            principal_id="evaluation",
+            principal_id=app.state.mcp_account.id,
+            account_email=app.state.mcp_account.email,
             read_limit=app.state.settings.mcp_read_rate_limit,
             write_limit=app.state.settings.mcp_write_rate_limit,
             window_seconds=60,
@@ -416,6 +422,14 @@ def create_app(
                 "/mcp",
                 app.state.mcp_gateway,
                 name="mcp-evaluation",
+            )
+        )
+        app.router.routes.append(
+            ExactAsgiRoute(
+                "/api/mcp",
+                app.state.mcp_gateway,
+                name="mcp-api",
+                forward_path="/mcp",
             )
         )
     return app

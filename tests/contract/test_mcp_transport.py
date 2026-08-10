@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from mcp.server.transport_security import TransportSecuritySettings
 
-from refineq.mcp.auth import EvaluationBearerGateway, ExactAsgiRoute
+from refineq.mcp.auth import AccountBoundMcpGateway, ExactAsgiRoute
 from refineq.mcp.server import create_mcp_server
 
 
@@ -31,10 +31,10 @@ def _transport_app() -> FastAPI:
             allowed_origins=[],
         ),
     )
-    gateway = EvaluationBearerGateway(
+    gateway = AccountBoundMcpGateway(
         child,
-        secret="s" * 48,
-        principal_id="evaluation",
+        principal_id="user_bound",
+        account_email="qingj1314@163.com",
         read_limit=20,
         write_limit=10,
         window_seconds=60,
@@ -47,6 +47,9 @@ def _transport_app() -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
     app.router.routes.append(ExactAsgiRoute("/mcp", gateway, name="mcp-evaluation"))
+    app.router.routes.append(
+        ExactAsgiRoute("/api/mcp", gateway, name="mcp-api", forward_path="/mcp")
+    )
     return app
 
 
@@ -67,7 +70,6 @@ def test_streamable_http_uses_one_exact_mcp_path_and_modern_wire_protocol() -> N
         },
     }
     headers = {
-        "Authorization": f"Bearer {'s' * 48}",
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         "Host": "testserver",
@@ -76,6 +78,7 @@ def test_streamable_http_uses_one_exact_mcp_path_and_modern_wire_protocol() -> N
     }
     with TestClient(_transport_app()) as client:
         response = client.post("/mcp", headers=headers, json=discover)
+        api_response = client.post("/api/mcp", headers=headers, json=discover)
         duplicate = client.post("/mcp/mcp", headers=headers, json=discover)
         bad_host = client.post(
             "/mcp",
@@ -85,6 +88,7 @@ def test_streamable_http_uses_one_exact_mcp_path_and_modern_wire_protocol() -> N
         unrelated = client.get("/not-an-api-route")
 
     assert response.status_code == 200
+    assert api_response.status_code == 200
     assert "2026-07-28" in response.json()["result"]["supportedVersions"]
     assert duplicate.status_code == 404
     assert bad_host.status_code == 421
@@ -94,7 +98,6 @@ def test_streamable_http_uses_one_exact_mcp_path_and_modern_wire_protocol() -> N
 
 def test_prior_stable_protocol_initializes_and_lists_the_same_five_tools() -> None:
     headers = {
-        "Authorization": f"Bearer {'s' * 48}",
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         "Host": "testserver",

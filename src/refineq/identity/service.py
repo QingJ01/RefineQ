@@ -265,6 +265,16 @@ class IdentityService:
             created_at=created_at,
         )
 
+    def find_by_email(self, email: str) -> User | None:
+        """Resolve one existing account without authenticating or creating it."""
+
+        email = self._canonical_email(email)
+        with self.database.session() as session:
+            row = session.execute(select(users).where(users.c.email == email)).one_or_none()
+        if row is None or row.deletion_id is not None:
+            return None
+        return self._public_user(row)
+
     def authenticate(self, *, email: str, password: str) -> User:
         try:
             email = self._canonical_email(email)

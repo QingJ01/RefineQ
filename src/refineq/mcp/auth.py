@@ -1,8 +1,7 @@
-"""Fail-closed authentication and abuse controls for the evaluation endpoint."""
+"""Account-bound transport and abuse controls for the MCP endpoint."""
 
 from __future__ import annotations
 
-import hmac
 import json
 from asyncio import timeout
 from typing import Any
@@ -24,10 +23,18 @@ _READ_TOOLS = {
 class ExactAsgiRoute(BaseRoute):
     """Route one exact HTTP path to an ASGI app without rewriting its scope."""
 
-    def __init__(self, path: str, app: ASGIApp, *, name: str) -> None:
+    def __init__(
+        self,
+        path: str,
+        app: ASGIApp,
+        *,
+        name: str,
+        forward_path: str | None = None,
+    ) -> None:
         self.path = path
         self.app = app
         self.name = name
+        self.forward_path = forward_path
 
     def matches(self, scope: Scope) -> tuple[Match, Scope]:
         if scope["type"] == "http" and get_route_path(scope) == self.path:
@@ -40,18 +47,23 @@ class ExactAsgiRoute(BaseRoute):
         raise NoMatchFound(name, path_params)
 
     async def handle(self, scope: Scope, receive: Receive, send: Send) -> None:
-        await self.app(scope, receive, send)
+        forwarded_scope = scope
+        if self.forward_path is not None:
+            forwarded_scope = dict(scope)
+            forwarded_scope["path"] = self.forward_path
+            forwarded_scope["raw_path"] = self.forward_path.encode("ascii")
+        await self.app(forwarded_scope, receive, send)
 
 
-class EvaluationBearerGateway:
-    """Authenticate one evaluation principal before any MCP protocol work."""
+class AccountBoundMcpGateway:
+    """Bind every MCP request to one server-configured account principal."""
 
     def __init__(
         self,
         app: Any,
         *,
-        secret: str,
         principal_id: str,
+        account_email: str,
         read_limit: int,
         write_limit: int,
         window_seconds: float,
@@ -59,11 +71,9 @@ class EvaluationBearerGateway:
         body_read_timeout_seconds: float = 5.0,
         telemetry: McpTelemetry | None = None,
     ) -> None:
-        if not secret:
-            raise ValueError("evaluation bearer secret must not be blank")
         self.app = app
-        self._secret = secret.encode("utf-8")
         self._principal_id = principal_id
+        self._account_email = account_email
         self._read_limit = read_limit
         self._write_limit = write_limit
         self._window_seconds = window_seconds
@@ -144,47 +154,6 @@ class EvaluationBearerGateway:
             return
         header_pairs = [(key.lower(), value) for key, value in scope.get("headers", [])]
         headers = {key: value for key, value in header_pairs}
-        authorization_headers = [value for key, value in header_pairs if key == b"authorization"]
-        authorization = (
-            authorization_headers[0].decode("latin-1") if len(authorization_headers) == 1 else ""
-        )
-        scheme, separator, token = authorization.partition(" ")
-        valid = (
-            separator == " "
-            and scheme.casefold() == "bearer"
-            and bool(token)
-            and hmac.compare_digest(token.encode("utf-8"), self._secret)
-        )
-        if not valid:
-            client = scope.get("client")
-            client_host = str(client[0]) if client else "unknown"
-            limited = self._limiter.check(
-                f"mcp-client:{client_host}:unauthorized",
-                limit=max(5, self._write_limit),
-                window_seconds=self._window_seconds,
-            )
-            if limited is not None:
-                await self._respond(
-                    scope,
-                    receive,
-                    send,
-                    status=429,
-                    code="rate_limited",
-                    message="Too many authentication attempts; retry later.",
-                    headers={"Retry-After": str(limited)},
-                )
-                return
-            await self._respond(
-                scope,
-                receive,
-                send,
-                status=401,
-                code="unauthorized",
-                message="A valid evaluation bearer token is required.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            return
-
         try:
             async with timeout(self._body_read_timeout_seconds):
                 body, replay, too_large = await self._body(
@@ -254,4 +223,5 @@ class EvaluationBearerGateway:
                 user_agent=headers.get(b"user-agent", b"").decode("latin-1"),
             )
         scope.setdefault("state", {})["mcp_principal_id"] = self._principal_id
+        scope["state"]["mcp_account_email"] = self._account_email
         await self.app(scope, replay, send)

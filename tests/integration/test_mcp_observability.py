@@ -16,6 +16,7 @@ class ObservedService:
             run_id="mcp_run_" + "x" * 43,
             expires_at="2026-08-09T12:00:00+00:00",
             simulation=True,
+            account={"email": "qingj1314@163.com"},
             space={"id": "sandbox"},
             runtime={"question": {"mode": "fallback"}},
             next_tool="refineq_get_learning_context",

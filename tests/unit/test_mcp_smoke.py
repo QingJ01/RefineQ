@@ -11,11 +11,12 @@ from scripts import mcp_smoke
 def test_smoke_fails_when_the_reported_learning_loop_did_not_succeed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def invalid_result(_url: str, _secret: str, *, trust_env: bool = True):
+    async def invalid_result(_url: str, *, trust_env: bool = True):
         del trust_env
         return {
             "protocol_versions": ["2026-07-28"],
             "tools": sorted(mcp_smoke.EXPECTED_TOOLS),
+            "account_email": "qingj1314@163.com",
             "material_count": 0,
             "search_results": 0,
             "task_citations": 0,
@@ -31,8 +32,17 @@ def test_smoke_fails_when_the_reported_learning_loop_did_not_succeed(
         }
 
     monkeypatch.setattr(mcp_smoke, "_run", invalid_result)
-    monkeypatch.setenv("REFINEQ_MCP_EVALUATION_SECRET", "not-printed")
-    monkeypatch.setattr(sys, "argv", ["mcp_smoke.py", "--url", "https://mcp.example.test/mcp"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp_smoke.py",
+            "--url",
+            "https://mcp.example.test/mcp",
+            "--expected-account",
+            "qingj1314@163.com",
+        ],
+    )
 
     with pytest.raises(RuntimeError, match="material_count"):
         mcp_smoke.main()
@@ -42,6 +52,7 @@ def test_smoke_can_require_the_deterministic_fallback_path() -> None:
     report = {
         "protocol_versions": ["2026-07-28"],
         "tools": sorted(mcp_smoke.EXPECTED_TOOLS),
+        "account_email": "qingj1314@163.com",
         "material_count": 1,
         "search_results": 1,
         "task_citations": 1,

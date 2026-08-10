@@ -63,6 +63,7 @@ class McpToolService:
         learning: LearningRepository,
         learning_service: LearningService,
         knowledge: KnowledgeIndex,
+        account_email: str,
         telemetry: McpTelemetry | None = None,
         model_settings: Any | None = None,
     ) -> None:
@@ -72,6 +73,7 @@ class McpToolService:
         self._learning = learning
         self._learning_service = learning_service
         self._knowledge = knowledge
+        self._account_email = account_email
         self._telemetry = telemetry
         self._model_settings = model_settings
 
@@ -208,6 +210,7 @@ class McpToolService:
             run_id=run.run_token,
             expires_at=run.expires_at.isoformat(),
             simulation=True,
+            account={"email": self._account_email},
             space={
                 "id": state.workspace_id,
                 "title": "Function Limits Evaluation",

@@ -8,13 +8,12 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
-from refineq.mcp.auth import EvaluationBearerGateway
+from refineq.mcp.auth import AccountBoundMcpGateway
 from refineq.mcp.observability import McpTelemetry
 
 
 def _gateway(
     *,
-    secret: str = "s" * 48,
     read_limit: int = 10,
     write_limit: int = 10,
     telemetry: McpTelemetry | None = None,
@@ -24,10 +23,10 @@ def _gateway(
 
     child = Starlette()
     child.add_route("/", endpoint, methods=["GET", "POST"])
-    return EvaluationBearerGateway(
+    return AccountBoundMcpGateway(
         child,
-        secret=secret,
-        principal_id="evaluation",
+        principal_id="user_bound",
+        account_email="qingj1314@163.com",
         read_limit=read_limit,
         write_limit=write_limit,
         window_seconds=60,
@@ -35,45 +34,17 @@ def _gateway(
     )
 
 
-def test_mcp_auth_accepts_only_the_authorization_bearer_header() -> None:
-    secret = "correct-evaluation-secret-which-is-long-enough"
-    with TestClient(_gateway(secret=secret)) as client:
+def test_mcp_gateway_accepts_requests_without_bearer_credentials() -> None:
+    with TestClient(_gateway()) as client:
         missing = client.get("/")
-        query = client.get(f"/?token={secret}")
-        client.cookies.set("token", secret)
-        cookie = client.get("/")
-        client.cookies.clear()
-        wrong = client.get("/", headers={"Authorization": "Bearer wrong"})
-        accepted = client.get("/", headers={"Authorization": f"Bearer {secret}"})
+        legacy_header = client.get("/", headers={"Authorization": "Bearer ignored"})
 
-    for response in (missing, query, cookie, wrong):
-        assert response.status_code == 401
-        assert response.json()["error"]["code"] == "unauthorized"
-        assert response.headers["www-authenticate"] == "Bearer"
-        assert secret not in response.text
-    assert accepted.status_code == 200
-
-
-def test_mcp_auth_rejects_ambiguous_headers_and_rate_limits_bad_credentials() -> None:
-    secret = "correct-evaluation-secret-which-is-long-enough"
-    with TestClient(_gateway(secret=secret, write_limit=1)) as client:
-        ambiguous = client.get(
-            "/",
-            headers=[
-                ("Authorization", f"Bearer {secret}"),
-                ("Authorization", "Bearer wrong"),
-            ],
-        )
-        responses = [client.get("/", headers={"Authorization": "Bearer wrong"}) for _ in range(5)]
-
-    assert ambiguous.status_code == 401
-    assert [response.status_code for response in responses[:-1]] == [401] * 4
-    assert responses[-1].status_code == 429
-    assert responses[-1].json()["error"]["code"] == "rate_limited"
+    assert missing.status_code == 200
+    assert legacy_header.status_code == 200
+    assert "www-authenticate" not in missing.headers
 
 
 def test_mcp_auth_uses_independent_read_and_write_rate_limits() -> None:
-    headers = {"Authorization": f"Bearer {'s' * 48}"}
     read_body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     write_body = {
         "jsonrpc": "2.0",
@@ -82,10 +53,10 @@ def test_mcp_auth_uses_independent_read_and_write_rate_limits() -> None:
         "params": {"name": "refineq_begin_demo", "arguments": {}},
     }
     with TestClient(_gateway(read_limit=1, write_limit=1)) as client:
-        assert client.post("/", headers=headers, json=read_body).status_code == 200
-        read_limited = client.post("/", headers=headers, json=read_body)
-        assert client.post("/", headers=headers, json=write_body).status_code == 200
-        write_limited = client.post("/", headers=headers, json=write_body)
+        assert client.post("/", json=read_body).status_code == 200
+        read_limited = client.post("/", json=read_body)
+        assert client.post("/", json=write_body).status_code == 200
+        write_limited = client.post("/", json=write_body)
 
     assert read_limited.status_code == 429
     assert write_limited.status_code == 429
@@ -93,7 +64,6 @@ def test_mcp_auth_uses_independent_read_and_write_rate_limits() -> None:
 
 
 def test_begin_demo_has_a_stricter_reset_bucket_than_other_writes() -> None:
-    headers = {"Authorization": f"Bearer {'s' * 48}"}
     begin = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -107,19 +77,18 @@ def test_begin_demo_has_a_stricter_reset_bucket_than_other_writes() -> None:
         "params": {"name": "refineq_get_practice_task", "arguments": {}},
     }
     with TestClient(_gateway(write_limit=6)) as client:
-        assert client.post("/", headers=headers, json=begin).status_code == 200
-        assert client.post("/", headers=headers, json=begin).status_code == 200
-        reset_limited = client.post("/", headers=headers, json=begin)
-        ordinary_write = client.post("/", headers=headers, json=practice)
+        assert client.post("/", json=begin).status_code == 200
+        assert client.post("/", json=begin).status_code == 200
+        reset_limited = client.post("/", json=begin)
+        ordinary_write = client.post("/", json=practice)
 
     assert reset_limited.status_code == 429
     assert ordinary_write.status_code == 200
 
 
 def test_mcp_gateway_bounds_the_body_before_json_parsing() -> None:
-    headers = {"Authorization": f"Bearer {'s' * 48}"}
     with TestClient(_gateway()) as client:
-        response = client.post("/", headers=headers, content=b"x" * (128 * 1024 + 1))
+        response = client.post("/", content=b"x" * (128 * 1024 + 1))
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "request_body_too_large"
@@ -128,7 +97,6 @@ def test_mcp_gateway_bounds_the_body_before_json_parsing() -> None:
 def test_mcp_gateway_records_only_bounded_transport_categories() -> None:
     telemetry = McpTelemetry()
     headers = {
-        "Authorization": f"Bearer {'s' * 48}",
         "Mcp-Protocol-Version": "2026-07-28",
         "User-Agent": "python-httpx/0.28",
     }
@@ -144,7 +112,6 @@ def test_mcp_gateway_records_only_bounded_transport_categories() -> None:
 def test_mcp_gateway_collapses_unknown_protocol_versions_to_one_bucket() -> None:
     telemetry = McpTelemetry()
     headers = {
-        "Authorization": f"Bearer {'s' * 48}",
         "Mcp-Protocol-Version": "attacker-controlled-version",
     }
     with TestClient(_gateway(telemetry=telemetry)) as client:
@@ -154,14 +121,14 @@ def test_mcp_gateway_collapses_unknown_protocol_versions_to_one_bucket() -> None
 
 
 @pytest.mark.asyncio
-async def test_mcp_gateway_times_out_a_stalled_authenticated_body() -> None:
+async def test_mcp_gateway_times_out_a_stalled_body() -> None:
     async def child(_scope, _receive, _send):
         raise AssertionError("stalled body must not reach the MCP application")
 
-    gateway = EvaluationBearerGateway(
+    gateway = AccountBoundMcpGateway(
         child,
-        secret="s" * 48,
-        principal_id="evaluation",
+        principal_id="user_bound",
+        account_email="qingj1314@163.com",
         read_limit=10,
         write_limit=10,
         window_seconds=60,
@@ -181,7 +148,7 @@ async def test_mcp_gateway_times_out_a_stalled_authenticated_body() -> None:
             "type": "http",
             "method": "POST",
             "path": "/",
-            "headers": [(b"authorization", f"Bearer {'s' * 48}".encode())],
+            "headers": [],
             "client": ("127.0.0.1", 1234),
         },
         stalled_receive,

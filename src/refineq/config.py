@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -73,7 +74,8 @@ class Settings(BaseSettings):
     mutation_rate_limit_requests: int = Field(default=240, ge=1, le=1_000_000)
     rate_limit_window_seconds: float = Field(default=60.0, gt=0.0, le=3_600.0)
     mcp_enabled: bool = False
-    mcp_evaluation_secret: SecretStr | None = None
+    mcp_internal_secret: SecretStr | None = None
+    mcp_account_email: str | None = None
     mcp_allowed_hosts: str = ""
     mcp_run_ttl_seconds: int = Field(default=300, ge=60, le=3_600)
     mcp_idempotency_ttl_seconds: int = Field(default=86_400, ge=300, le=604_800)
@@ -119,6 +121,16 @@ class Settings(BaseSettings):
             raise ValueError("database URL must use PostgreSQL or SQLite")
         return value
 
+    @field_validator("mcp_account_email", mode="after")
+    @classmethod
+    def normalize_mcp_account_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+            raise ValueError("MCP account email must be a valid address")
+        return normalized
+
     @model_validator(mode="after")
     def validate_password_reset_delivery(self) -> Settings:
         """Reject partial SMTP configuration before the API starts."""
@@ -153,8 +165,8 @@ class Settings(BaseSettings):
             raise ValueError("backup root must be outside the data root")
         if self.mcp_enabled:
             secret = (
-                self.mcp_evaluation_secret.get_secret_value().strip()
-                if self.mcp_evaluation_secret is not None
+                self.mcp_internal_secret.get_secret_value().strip()
+                if self.mcp_internal_secret is not None
                 else ""
             )
             normalized_secret = secret.casefold()
@@ -172,7 +184,9 @@ class Settings(BaseSettings):
                     )
                 )
             ):
-                raise ValueError("enabled MCP requires a strong evaluation secret")
+                raise ValueError("enabled MCP requires a strong internal signing secret")
+            if not self.mcp_account_email:
+                raise ValueError("enabled MCP requires a bound account email")
             if not self.allowed_mcp_hosts:
                 raise ValueError("enabled MCP requires at least one allowed host")
             if any(

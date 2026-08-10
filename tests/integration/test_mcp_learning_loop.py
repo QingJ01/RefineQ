@@ -14,18 +14,20 @@ from sqlalchemy import func, select, update
 from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.database.engine import Database
 from refineq.database.schema import (
     material_chunks,
     mcp_evaluation_idempotency,
     mcp_evaluation_runs,
 )
+from refineq.identity.service import IdentityService
 from refineq.learning.intelligence import (
     GradingModelOutput,
     QuestionModelOutput,
     TrustedAnswerKeyOutput,
 )
 from refineq.mcp.errors import McpServiceError
-from refineq.mcp.sandbox import EVALUATION_EMAIL, EVALUATION_MATERIAL
+from refineq.mcp.sandbox import EVALUATION_MATERIAL
 from refineq.storage.json_store import RecordAlreadyExistsError, RecordNotFoundError
 
 
@@ -93,15 +95,29 @@ class EvaluationModel:
         raise AssertionError(response_model)
 
 
+MCP_ACCOUNT_EMAIL = "qingj1314@163.com"
+MCP_ACCOUNT_PASSWORD = "test-account-password-123"
+
+
 def _app(tmp_path: Path, *, learning_model_transport=None):
+    settings = Settings(
+        data_root=tmp_path / "data",
+        mcp_enabled=True,
+        mcp_internal_secret=SecretStr("internal-signing-secret-that-is-long-enough-123456"),
+        mcp_account_email=MCP_ACCOUNT_EMAIL,
+        mcp_allowed_hosts="testserver",
+        _env_file=None,
+    )
+    database = Database(settings.resolved_database_url)
+    database.initialize()
+    IdentityService(database).register(
+        email=MCP_ACCOUNT_EMAIL,
+        password=MCP_ACCOUNT_PASSWORD,
+        display_name="Bound MCP Account",
+    )
     return create_app(
-        Settings(
-            data_root=tmp_path / "data",
-            mcp_enabled=True,
-            mcp_evaluation_secret=SecretStr("evaluation-secret-that-is-long-enough-123456"),
-            mcp_allowed_hosts="testserver",
-            _env_file=None,
-        ),
+        settings,
+        database=database,
         learning_model_transport=learning_model_transport,
     )
 
@@ -110,15 +126,38 @@ def _answer() -> str:
     return '{"limit":2,"point_value":9,"equal":false}'
 
 
+def test_enabled_mcp_fails_closed_when_bound_account_does_not_exist(tmp_path: Path) -> None:
+    settings = Settings(
+        data_root=tmp_path / "data",
+        mcp_enabled=True,
+        mcp_internal_secret=SecretStr(
+            "internal-signing-secret-that-is-long-enough-123456"
+        ),
+        mcp_account_email="missing@example.com",
+        mcp_allowed_hosts="testserver",
+        _env_file=None,
+    )
+    database = Database(settings.resolved_database_url)
+    database.initialize()
+
+    with pytest.raises(ValueError, match="configured MCP account does not exist"):
+        create_app(settings, database=database)
+
+
 def test_complete_fallback_learning_loop_is_grounded_idempotent_and_resettable(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
     tools = app.state.mcp_tools
-    assert app.state.identity.request_password_reset(EVALUATION_EMAIL) is None
+    assert app.state.mcp_account.email == MCP_ACCOUNT_EMAIL
+    assert app.state.identity.authenticate(
+        email=MCP_ACCOUNT_EMAIL,
+        password=MCP_ACCOUNT_PASSWORD,
+    ).email == MCP_ACCOUNT_EMAIL
 
     begun = tools.begin_demo(client_run_key="external-evaluator-0001")
     assert begun.simulation is True
+    assert begun.account == {"email": MCP_ACCOUNT_EMAIL}
     assert begun.runtime["question"]["mode"] == "deterministic_fallback"
     assert begun.runtime["observed_at"] is None
     assert begun.runtime["stale"] is True
@@ -214,7 +253,7 @@ def test_model_available_and_grading_timeout_modes_complete_the_same_safe_loop(
 ) -> None:
     model = EvaluationModel()
     app = _app(tmp_path, learning_model_transport=model)
-    evaluation_owner = app.state.mcp_sandbox._owner_id()
+    evaluation_owner = app.state.mcp_sandbox.owner_id
     app.state.model_settings.save(
         evaluation_owner,
         ModelSettings(
@@ -249,7 +288,7 @@ def test_model_available_and_grading_timeout_modes_complete_the_same_safe_loop(
 def test_model_available_mode_can_complete_with_ai_grading(tmp_path: Path) -> None:
     model = EvaluationModel()
     app = _app(tmp_path, learning_model_transport=model)
-    evaluation_owner = app.state.mcp_sandbox._owner_id()
+    evaluation_owner = app.state.mcp_sandbox.owner_id
     app.state.model_settings.save(
         evaluation_owner,
         ModelSettings(
@@ -284,7 +323,7 @@ def test_exact_typed_answer_remains_authoritative_when_ai_grader_rejects_it(
     model = EvaluationModel()
     model.reject_grading = True
     app = _app(tmp_path, learning_model_transport=model)
-    evaluation_owner = app.state.mcp_sandbox._owner_id()
+    evaluation_owner = app.state.mcp_sandbox.owner_id
     app.state.model_settings.save(
         evaluation_owner,
         ModelSettings(
@@ -946,7 +985,7 @@ def test_submit_crash_recovery_rejects_changed_input_for_the_same_key(
     assert conflict.value.error.code == "idempotency_conflict"
 
 
-def test_evaluation_owner_is_excluded_from_admin_learning_and_job_metrics(
+def test_account_bound_mcp_seed_is_visible_in_bound_account_job_metrics(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
@@ -971,8 +1010,8 @@ def test_evaluation_owner_is_excluded_from_admin_learning_and_job_metrics(
     jobs = {item["id"]: item for item in app.state.admin_operations.jobs()["items"]}
 
     assert metrics["active_learners"] == 0
-    assert jobs["material_index"]["total"] == 0
-    assert jobs["embedding_backfill"]["total"] == 0
+    assert jobs["material_index"]["total"] == 1
+    assert jobs["embedding_backfill"]["total"] == 1
 
 
 def test_fallback_grading_rejects_keyword_stuffing_without_an_explanation(
@@ -1081,7 +1120,7 @@ def test_static_seed_recovers_when_another_worker_wins_workspace_creation(
 ) -> None:
     app = _app(tmp_path)
     sandbox = app.state.mcp_sandbox
-    owner_id = sandbox._owner_id()
+    owner_id = sandbox.owner_id
     original_get = app.state.workspaces.get
     get_calls = 0
 

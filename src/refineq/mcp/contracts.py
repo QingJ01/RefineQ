@@ -41,6 +41,7 @@ class BeginDemoOutput(ToolOutput):
     run_id: str
     expires_at: str
     simulation: bool
+    account: dict[str, str]
     space: dict[str, Any]
     runtime: dict[str, Any]
     next_tool: str

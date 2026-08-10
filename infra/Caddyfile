@@ -23,7 +23,16 @@
     }
 
     handle /api/mcp {
-        respond "Not Found" 404
+        request_body {
+            max_size 131072
+        }
+        reverse_proxy api:8000 {
+            flush_interval -1
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 25s
+            }
+        }
     }
 
     handle /api/mcp/* {
