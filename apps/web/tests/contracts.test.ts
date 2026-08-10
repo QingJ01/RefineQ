@@ -1249,6 +1249,51 @@ describe("projectless product surface", () => {
     expect(styles).toMatch(/\.auth-form-heading p\s*\{[^}]*font-size: var\(--auth-card-supporting-size\)/s);
   });
 
+  it("keeps muted helper text, sidebar labels and table headers at WCAG AA", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    const channel = (value: number) => {
+      const c = value / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    };
+    const contrast = (fg: string, bg: string) => {
+      const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const token = (name: string) => {
+      const match = styles.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`));
+      if (!match) throw new Error(`missing token ${name}`);
+      return match[1];
+    };
+
+    // The lightest tinted surfaces these tokens sit on across the audited
+    // pages (upload help, sidebar, cards, table headers).
+    const lightBackgrounds = ["#ffffff", "#f8f9fc", "#f3f5f9", "#f5f6fa", "#eef4ff", "#fafafa"];
+    for (const bg of lightBackgrounds) {
+      expect(contrast(token("--muted"), bg)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(token("--muted-strong"), bg)).toBeGreaterThanOrEqual(4.5);
+    }
+
+    // Pin the darkened shared token and the retired low-contrast greys.
+    expect(styles).toContain("--muted: #676970;");
+    expect(styles).not.toContain("--muted: #74767d;");
+    expect(styles).not.toContain("#8c8e94");
+    expect(styles).not.toContain("#9a9ea7");
+    expect(styles).not.toContain("#a4a5a9");
+
+    // Sidebar section labels and utility copy now route to AA-safe tokens.
+    expect(styles).toMatch(/\.app-sidebar-label\s*\{[^}]*color: var\(--muted-strong\)/s);
+    expect(styles).toMatch(/\.admin-nav-label\s*\{[^}]*color: var\(--muted-strong\)/s);
+    expect(styles).toMatch(/\.app-sidebar-utilities > p\s*\{[^}]*color: var\(--muted\)/s);
+  });
+
   it("gives the desktop authentication form enough visual weight", () => {
     const styles = readFileSync(
       fileURLToPath(new URL("../app/styles.css", import.meta.url)),

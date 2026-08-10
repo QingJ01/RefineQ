@@ -4,7 +4,7 @@
   --surface-soft: #f3f5f9;
   --sidebar: #f5f6fa;
   --text: #17181c;
-  --muted: #74767d;
+  --muted: #676970;
   --muted-strong: #555860;
   --border: #eceef3;
   --border-strong: #dde1e8;
@@ -5629,7 +5629,7 @@ textarea:focus {
 
 .admin-nav-label {
   margin: 22px 12px 7px;
-  color: #9a9ea7;
+  color: var(--muted-strong);
   font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.1em;
@@ -7832,7 +7832,7 @@ textarea:focus {
 .app-sidebar-label {
   display: block;
   margin: 0 10px 4px;
-  color: #8c8e94;
+  color: var(--muted-strong);
   font-size: 9px;
   font-weight: 760;
   letter-spacing: 0.12em;
@@ -8039,7 +8039,7 @@ textarea:focus {
 
 .app-sidebar-utilities > p {
   margin: 9px 10px 0;
-  color: #a4a5a9;
+  color: var(--muted);
   font-family: "Newsreader Variable", Georgia, serif;
   font-size: 11px;
   font-style: italic;
