@@ -11,7 +11,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from refineq.knowledge.deletion import MaterialDeletionCoordinator, PendingMaterialDeletion
+from refineq.knowledge.deletion import (
+    MaterialDeletionCoordinator,
+    MaterialMutationBusyError,
+    PendingMaterialDeletion,
+)
 from refineq.knowledge.index import KnowledgeIndex, MaterialRecord
 from refineq.learning.models import LearningEvidence, StudyPlan
 from refineq.learning.next_action import NextAction, select_next_action
@@ -61,6 +65,10 @@ class WorkspaceQuotaError(WorkspaceServiceError):
 
 class WorkspaceConflictError(WorkspaceServiceError):
     code = "workspace_conflict"
+
+
+class WorkspaceMaterialMutationBusyError(WorkspaceConflictError):
+    code = "material_mutation_busy"
 
 
 class WorkspaceMaterialRequiredError(WorkspaceServiceError):
@@ -597,6 +605,14 @@ class WorkspaceService:
                     owner_id,
                     workspace_id,
                 )
+                try:
+                    pending = self._material_deletions.prepare(
+                        owner_id=owner_id,
+                        project_id=workspace_id,
+                        material_ids=[],
+                    )
+                except MaterialMutationBusyError as error:
+                    raise WorkspaceMaterialMutationBusyError(str(error)) from error
                 linked_material_ids = [
                     material.id
                     for material in self._knowledge.list_materials(
@@ -604,12 +620,6 @@ class WorkspaceService:
                         project_id=workspace_id,
                     )
                 ]
-                if defer_material_finalization:
-                    pending = self._material_deletions.prepare(
-                        owner_id=owner_id,
-                        project_id=workspace_id,
-                        material_ids=[],
-                    )
                 if precondition is not None:
                     precondition()
                 self._learning.delete(owner_id, workspace_id)
@@ -632,6 +642,11 @@ class WorkspaceService:
                     workspace_id=workspace_id,
                     material_ids=linked_material_ids,
                 )
+            if pending is None:
+                raise RuntimeError("Workspace deletion lease was not acquired")
+            pending_to_complete = pending
+            pending = None
+            self._material_deletions.complete(pending_to_complete)
             return None
         except Exception:
             if workspace_snapshot is not None and learning_snapshot is not None:

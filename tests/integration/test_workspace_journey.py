@@ -1068,16 +1068,18 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         assert completed.status_code == 200
         assert completed.json()["status"] == "completed"
 
-        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        # The generated plan fills each day to the full budget, so move onto a
+        # later empty day to stay within the daily-minute budget.
+        open_day = datetime.now(UTC) + timedelta(days=20)
         rescheduled = client.patch(
             f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
             headers=headers,
-            json={"status": "planned", "planned_at": tomorrow.isoformat(), "minutes": 30},
+            json={"status": "planned", "planned_at": open_day.isoformat(), "minutes": 30},
         )
         assert rescheduled.status_code == 200
         assert rescheduled.json()["status"] == "planned"
         assert rescheduled.json()["minutes"] == 30
-        assert datetime.fromisoformat(rescheduled.json()["planned_at"]) >= tomorrow - timedelta(
+        assert datetime.fromisoformat(rescheduled.json()["planned_at"]) >= open_day - timedelta(
             seconds=1
         )
 
@@ -1087,19 +1089,19 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         ).json()["plan"]["sessions"][0]
         assert restored == rescheduled.json()
 
-        manual_time = datetime.now(UTC) + timedelta(days=2)
+        manual_time = datetime.now(UTC) + timedelta(days=21)
         added = client.post(
             f"/workspaces/{workspace_id}/learning/plan/sessions",
             headers=headers,
             json={
                 "topic_name": "定积分复习",
                 "planned_at": manual_time.isoformat(),
-                "minutes": 50,
+                "minutes": 40,
                 "activity": "review",
             },
         )
         assert added.status_code == 200
-        assert added.json()["minutes"] == 50
+        assert added.json()["minutes"] == 40
         assert added.json()["activity"] == "review"
 
         retargeted = client.patch(
@@ -1130,6 +1132,188 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         ).json()
         assert cleared_snapshot["plan"] is None
         assert cleared_snapshot["progress"]["topics"]
+
+
+def test_displacing_a_move_keeps_every_day_within_budget() -> None:
+    """Reflowing must actually fit the day, not push one session and give up.
+
+    A destination day can be full of several small sessions, so displacing the
+    latest one may still leave it over budget. The reflow has to keep going.
+    """
+
+    from refineq.learning.service import LearningService
+
+    budget = 45
+    day = datetime(2026, 9, 19, 10, tzinfo=UTC)
+    plan = {
+        "daily_minutes": budget,
+        "sessions": [
+            {
+                "id": f"filler-{index}",
+                "planned_at": (day + timedelta(minutes=index)).isoformat(),
+                "minutes": 15,
+                "status": "planned",
+            }
+            for index in range(3)
+        ]
+        + [
+            {
+                "id": "mover",
+                "planned_at": datetime(2026, 9, 10, 10, tzinfo=UTC).isoformat(),
+                "minutes": budget,
+                "status": "planned",
+            }
+        ],
+    }
+
+    LearningService._displace_for_move(
+        plan,
+        target_id="mover",
+        new_planned_at=day,
+        new_minutes=budget,
+        tz_offset_minutes=0,
+    )
+
+    loads: dict[str, int] = {}
+    for session in plan["sessions"]:
+        if session["id"] == "mover":
+            continue
+        bucket = datetime.fromisoformat(session["planned_at"]).date().isoformat()
+        loads[bucket] = loads.get(bucket, 0) + session["minutes"]
+    # The incoming session lands on the destination day.
+    destination = day.date().isoformat()
+    loads[destination] = loads.get(destination, 0) + budget
+
+    assert not [item for item in loads.items() if item[1] > budget], loads
+    # Nothing may be dropped or duplicated.
+    assert len(plan["sessions"]) == 4
+    assert len({session["id"] for session in plan["sessions"]}) == 4
+
+
+def test_reopening_a_completed_session_is_always_allowed(tmp_path: Path) -> None:
+    """Undoing a mis-clicked "complete" must never be blocked by the budget.
+
+    Completed sessions are excluded from the day's load, so a day can hold
+    completed work plus a full budget of planned work. Reopening restores work
+    that already belongs to that day rather than adding new load.
+    """
+
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "准备微积分考试"},
+        ).json()["workspace"]["id"]
+        plan = _generate_workspace_plan(client, headers, workspace_id)
+        session = plan["sessions"][0]
+        day = datetime.fromisoformat(session["planned_at"])
+
+        completed = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"status": "completed"},
+        )
+        assert completed.status_code == 200, completed.json()
+
+        # The freed budget gets taken by other planned work on the same day.
+        filler = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=headers,
+            json={
+                "topic_name": "补上的任务",
+                "planned_at": day.isoformat(),
+                "minutes": plan["daily_minutes"],
+                "activity": "practice",
+            },
+        )
+        assert filler.status_code == 200, filler.json()
+
+        reopened = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"status": "planned"},
+        )
+
+    assert reopened.status_code == 200, reopened.json()
+    assert reopened.json()["status"] == "planned"
+
+
+def test_postpone_cannot_exceed_the_daily_minute_budget(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "准备微积分考试"},
+        ).json()["workspace"]["id"]
+        plan = _generate_workspace_plan(client, headers, workspace_id)
+        assert plan["daily_minutes"] == 45
+
+        base = datetime.now(UTC).replace(hour=9, minute=0, second=0, microsecond=0)
+        day_d = base + timedelta(days=30)
+        day_e = base + timedelta(days=31)
+        day_f = base + timedelta(days=32)
+
+        # A full 45-minute task fills day D.
+        full = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=headers,
+            json={
+                "topic_name": "占满配额的任务",
+                "planned_at": day_d.isoformat(),
+                "minutes": 45,
+                "activity": "practice",
+            },
+        )
+        assert full.status_code == 200, full.json()
+
+        # Park a 30-minute session on an otherwise-empty day E.
+        movable = plan["sessions"][0]
+        parked = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{movable['id']}",
+            headers=headers,
+            json={"planned_at": day_e.isoformat(), "minutes": 30},
+        )
+        assert parked.status_code == 200, parked.json()
+
+        # Postponing the 30-minute session onto the already-full day D must 409.
+        conflict = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{movable['id']}",
+            headers=headers,
+            json={"planned_at": day_d.isoformat()},
+        )
+        assert conflict.status_code == 409, conflict.json()
+        error = conflict.json()["error"]
+        assert error["code"] == "daily_capacity_exceeded"
+        detail = error["detail"]
+        assert detail["date"] == day_d.date().isoformat()
+        assert detail["used"] == 45
+        assert detail["requested"] == 30
+        assert detail["daily_minutes"] == 45
+        assert "next_free_date" in detail
+
+        # The rejected postpone left the session where it was.
+        snapshot_sessions = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["plan"]["sessions"]
+        still_parked = next(item for item in snapshot_sessions if item["id"] == movable["id"])
+        assert datetime.fromisoformat(still_parked["planned_at"]).date() == day_e.date()
+
+        # A non-overloading postpone onto empty day F still succeeds.
+        ok = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{movable['id']}",
+            headers=headers,
+            json={"planned_at": day_f.isoformat()},
+        )
+        assert ok.status_code == 200, ok.json()
 
 
 def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_request(
@@ -1167,13 +1351,15 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         )
         assert completed.status_code == 200
 
+        # Saving without regeneration keeps the 45-minute sessions, so the daily
+        # budget can only be raised (not lowered below the scheduled load) here.
         saved = client.put(
             f"/workspaces/{workspace_id}/learning/plan",
             headers=headers,
             json={
                 "goal": "Pass the calculus final with confident problem solving",
                 "exam_at": exam_at.isoformat(),
-                "daily_minutes": 35,
+                "daily_minutes": 60,
                 "topic_order": topic_order,
                 "regenerate": False,
             },
@@ -1185,7 +1371,23 @@ def test_workspace_plan_settings_save_without_regeneration_and_regenerate_on_req
         ]
         assert saved.json()["sessions"][0]["status"] == "completed"
         assert saved.json()["goal"] == "Pass the calculus final with confident problem solving"
-        assert saved.json()["daily_minutes"] == 35
+        assert saved.json()["daily_minutes"] == 60
+
+        # Lowering the budget below the existing per-day load without regenerating
+        # would overload those days and must be rejected.
+        overloaded = client.put(
+            f"/workspaces/{workspace_id}/learning/plan",
+            headers=headers,
+            json={
+                "goal": "Pass the calculus final with confident problem solving",
+                "exam_at": exam_at.isoformat(),
+                "daily_minutes": 20,
+                "topic_order": topic_order,
+                "regenerate": False,
+            },
+        )
+        assert overloaded.status_code == 409, overloaded.json()
+        assert overloaded.json()["error"]["code"] == "daily_capacity_exceeded"
 
         regenerated = client.put(
             f"/workspaces/{workspace_id}/learning/plan",
@@ -1470,6 +1672,138 @@ def test_workspace_delete_waits_for_plan_update_and_leaves_no_orphan(
             app.state.workspaces.get(user.id, workspace.id)
 
 
+def test_answer_fails_closed_on_a_superseded_question(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]
+        workspace_id = workspace["id"]
+        topic_text = f"{workspace['topics'][0]} is explained by this source.".encode()
+        client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("limits.txt", topic_text, "text/plain")},
+        )
+
+        q1 = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "stale-first"},
+        ).json()
+        assert q1["prompt_hash"]
+        first_prompt_hash = q1["prompt_hash"]
+
+        # Regenerating replaces the pending question, so the first question's
+        # identity token is now stale.
+        q2 = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "stale-second", "replace": True},
+        ).json()
+        assert q2["prompt_hash"] != first_prompt_hash
+
+        answer_body = (
+            "A limit is the value a function approaches near an input; "
+            "for example sin(x)/x approaches 1 as x approaches 0."
+        )
+        # An answer written for the superseded question must fail closed rather
+        # than be graded against the question that replaced it.
+        stale = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "attempt-stale",
+                "question_id": q2["id"],
+                "answer": answer_body,
+                "prompt_hash": first_prompt_hash,
+            },
+        )
+        assert stale.status_code == 409
+
+        # Answering the question actually on screen succeeds.
+        fresh = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "attempt-fresh",
+                "question_id": q2["id"],
+                "answer": answer_body,
+                "prompt_hash": q2["prompt_hash"],
+            },
+        )
+        assert fresh.status_code == 200
+
+
+def test_answer_survives_a_reload_and_unrelated_learning_writes(tmp_path: Path) -> None:
+    """The identity fence must bind the question, not every learning-record write.
+
+    A reloaded page re-reads the question from the snapshot, and bookmarking or
+    any other learning mutation advances the record version. Neither changes
+    which question the learner is answering, so neither may block the answer.
+    """
+
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]
+        workspace_id = workspace["id"]
+        topic_text = f"{workspace['topics'][0]} is explained by this source.".encode()
+        client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={"files": ("limits.txt", topic_text, "text/plain")},
+        )
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "fence-question"},
+        ).json()
+
+        # A reload serves the same question from the snapshot; its identity token
+        # must be usable to answer.
+        snapshot_question = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()["active_question"]
+        assert snapshot_question["id"] == question["id"]
+        assert snapshot_question["prompt_hash"] == question["prompt_hash"]
+
+        # An unrelated learning write (bookmarking) advances the record version.
+        client.put(
+            f"/workspaces/{workspace_id}/learning/questions/{question['id']}/saved",
+            headers=headers,
+            json={"saved": True},
+        )
+
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "fence-attempt",
+                "question_id": question["id"],
+                "answer": (
+                    "A limit is the value a function approaches near an input; "
+                    "for example sin(x)/x approaches 1 as x approaches 0."
+                ),
+                "prompt_hash": snapshot_question["prompt_hash"],
+            },
+        )
+
+    assert answer.status_code == 200, answer.json()
+
+
 def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
@@ -1505,6 +1839,13 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         assert saved.json()["saved"] is True
         assert saved.json()["saved_at"]
         assert "expected_answer" not in saved.text
+        reviews_before = {
+            session["id"]
+            for session in client.get(
+                f"/workspaces/{workspace_id}/snapshot", headers=headers
+            ).json()["plan"]["sessions"]
+            if session["activity"] == "review"
+        }
 
         answer = client.post(
             f"/workspaces/{workspace_id}/learning/answer",
@@ -1516,7 +1857,8 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
             },
         )
         assert answer.status_code == 200
-        assert answer.json()["next_review_at"]
+        assert answer.json()["next_review_at"] is None
+        assert answer.json()["mastery_updated"] is False
 
         listed = client.get(
             f"/workspaces/{workspace_id}/learning/questions/saved",
@@ -1528,11 +1870,11 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
         assert snapshot.json()["active_question"]["id"] == question["id"]
         assert snapshot.json()["active_question"]["prompt"] == question["prompt"]
         assert snapshot.json()["last_answer"]["attempt_id"] == "saved-attempt"
-        assert any(
-            session["activity"] == "review"
-            and session["planned_at"] == answer.json()["next_review_at"]
+        assert {
+            session["id"]
             for session in snapshot.json()["plan"]["sessions"]
-        )
+            if session["activity"] == "review"
+        } == reviews_before
 
         bob = client.post(
             "/auth/register",
@@ -1580,3 +1922,90 @@ def test_saved_practice_questions_are_durable_and_owner_scoped(tmp_path: Path) -
     assert unsaved.json()["saved"] is False
     assert unsaved.json()["saved_at"] is None
     assert after.json() == []
+
+
+def test_targeted_plan_idempotency_key_replays_despite_changed_fields(tmp_path: Path) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study linear algebra"},
+        ).json()["workspace"]["id"]
+        material_id = client.post(
+            f"/workspaces/{workspace_id}/materials",
+            headers=headers,
+            files={
+                "files": (
+                    "linear-algebra.txt",
+                    (
+                        b"Chapter 1 Eigenvalues\n"
+                        b"Eigenvalues describe invariant directions of a linear map."
+                    ),
+                    "text/plain",
+                )
+            },
+        ).json()[0]["id"]
+        analysis = client.post(
+            f"/workspaces/{workspace_id}/materials/{material_id}/analysis",
+            headers=headers,
+        )
+        assert analysis.status_code == 200
+        topics = analysis.json()["topics"]
+        assert topics, "fallback analysis should surface at least one topic"
+
+        def payload(idempotency_key: str, routine_notes: str) -> dict:
+            return {
+                "idempotency_key": idempotency_key,
+                "material_id": material_id,
+                "focus_topics": topics[:1],
+                "exam_at": (datetime.now(UTC) + timedelta(days=14)).isoformat(),
+                "daily_minutes": 45,
+                "study_weekdays": [0, 1, 2, 3, 4, 5, 6],
+                "preferred_hour": 9,
+                "timezone_offset_minutes": 0,
+                "routine_notes": routine_notes,
+            }
+
+        first = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload("journey-plan-key-1", "Study after dinner on weekdays"),
+        )
+        assert first.status_code == 200, first.text
+        first_plan = first.json()
+
+        # The client gave up at its timeout and the server had already committed;
+        # retrying with the SAME idempotency key but a tweaked routine must replay
+        # the committed plan rather than overwrite it with a fresh one.
+        replay = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload("journey-plan-key-1", "Switched to early mornings instead"),
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["id"] == first_plan["id"]
+
+        after_replay = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert after_replay["progress"]["plan_id"] == first_plan["id"]
+
+        # A genuinely new user action (fresh key) is allowed to regenerate.
+        regenerated = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json=payload("journey-plan-key-2", "Switched to early mornings instead"),
+        )
+        assert regenerated.status_code == 200, regenerated.text
+        assert regenerated.json()["id"] != first_plan["id"]
+
+        after_regenerate = client.get(
+            f"/workspaces/{workspace_id}/snapshot",
+            headers=headers,
+        ).json()
+        assert after_regenerate["progress"]["plan_id"] == regenerated.json()["id"]

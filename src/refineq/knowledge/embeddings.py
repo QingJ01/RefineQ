@@ -21,8 +21,11 @@ class Embedder(Protocol):
 
 
 class PlatformEmbeddingService:
-    def __init__(self, integrations: IntegrationRepository) -> None:
+    def __init__(self, integrations: IntegrationRepository, *, timeout: float = 30.0) -> None:
+        if timeout <= 0:
+            raise ValueError("embedding timeout must be positive")
         self.integrations = integrations
+        self.timeout = timeout
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -39,7 +42,7 @@ class PlatformEmbeddingService:
         client = OpenAI(
             api_key=integration.secrets["api_key"].get_secret_value(),
             base_url=str(integration.config["base_url"]),
-            timeout=30.0,
+            timeout=self.timeout,
             http_client=DefaultHttpxClient(follow_redirects=False),
         )
         response = client.embeddings.create(

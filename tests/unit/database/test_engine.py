@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 
 from refineq.database.engine import Database
-from refineq.database.schema import SCHEMA_VERSION, schema_versions
+from refineq.database.schema import (
+    SCHEMA_VERSION,
+    material_chunks,
+    materials,
+    schema_versions,
+    workspace_materials,
+)
 
 
 def test_initialize_creates_the_complete_application_schema() -> None:
@@ -100,3 +108,79 @@ def test_database_health_check_executes_a_real_query() -> None:
 
     assert database.ping() is True
     assert database.is_postgresql is False
+
+
+def test_v2_migration_deduplicates_identical_materials_across_workspaces(tmp_path) -> None:
+    database = Database(f"sqlite+pysqlite:///{(tmp_path / 'v2-duplicates.sqlite3').as_posix()}")
+    database.initialize()
+    with database.engine.begin() as connection:
+        connection.execute(text("DROP INDEX uq_materials_owner_material"))
+        connection.execute(text("DELETE FROM workspace_materials"))
+        connection.execute(text("UPDATE schema_versions SET version = 2"))
+        for workspace_id in ("calculus", "linear-algebra"):
+            connection.execute(
+                materials.insert().values(
+                    owner_id="owner",
+                    project_id=workspace_id,
+                    material_id="same-content",
+                    filename=f"{workspace_id}.txt",
+                    title=f"{workspace_id} notes",
+                    tags=[],
+                    content_type="text/plain",
+                    size=12,
+                    status="indexed",
+                    chunk_count=1,
+                    content_sha256="a" * 64,
+                    storage_key=f"objects/{workspace_id}/same-content.txt",
+                )
+            )
+            connection.execute(
+                material_chunks.insert().values(
+                    owner_id="owner",
+                    project_id=workspace_id,
+                    material_id="same-content",
+                    filename=f"{workspace_id}.txt",
+                    chunk_index=0,
+                    content="shared mathematical content",
+                    embedding=None,
+                )
+            )
+
+    database.initialize()
+
+    with database.engine.connect() as connection:
+        material_rows = connection.execute(
+            select(materials).where(materials.c.owner_id == "owner")
+        ).all()
+        chunk_rows = connection.execute(
+            select(material_chunks).where(material_chunks.c.owner_id == "owner")
+        ).all()
+        link_rows = connection.execute(
+            select(workspace_materials).where(workspace_materials.c.owner_id == "owner")
+        ).all()
+    assert len(material_rows) == 1
+    assert material_rows[0].project_id == "library"
+    assert len(chunk_rows) == 1
+    assert chunk_rows[0].project_id == "library"
+    assert {(row.workspace_id, row.material_id) for row in link_rows} == {
+        ("calculus", "same-content"),
+        ("linear-algebra", "same-content"),
+    }
+
+    with pytest.raises(IntegrityError), database.engine.begin() as connection:
+        connection.execute(
+            materials.insert().values(
+                owner_id="owner",
+                project_id="legacy-workspace",
+                material_id="same-content",
+                filename="duplicate.txt",
+                title="duplicate",
+                tags=[],
+                content_type="text/plain",
+                size=1,
+                status="indexed",
+                chunk_count=0,
+                content_sha256="b" * 64,
+                storage_key="objects/duplicate.txt",
+            )
+        )

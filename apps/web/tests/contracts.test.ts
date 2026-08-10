@@ -40,7 +40,7 @@ import {
     practiceStatus,
     projectIntegrationTestResult,
 } from "../lib/view-models";
-import type { StudyPlan } from "../lib/types";
+import type { StudyPlan, TargetedPlanInput } from "../lib/types";
 
 
 describe("workspace state boundaries", () => {
@@ -79,6 +79,22 @@ describe("workspace state boundaries", () => {
     expect(workspaceSource).toContain("key={workspace.id}");
     expect(agentSource).toContain("api.chatWorkspace");
     expect(agentSource).toContain("agentGenerationRef.current === generation");
+  });
+});
+
+
+describe("global material library recovery and destructive actions", () => {
+  it("shows load failures and exposes an explicit global delete flow", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../components/global-material-library-route.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).not.toContain("if (loading || !token)");
+    expect(source).toContain("api.deleteLibraryMaterial");
+    expect(source).toContain("<ConfirmDialog");
+    expect(source).not.toContain("来自 ${new Set");
+    expect(source).not.toContain("Across ${new Set");
   });
 });
 
@@ -494,6 +510,20 @@ describe("responsive learning workspace layout", () => {
     expect(styles).toContain("@media (hover: none)");
     expect(styles).toMatch(/\.calendar-grid\s*\{[^}]*grid-template-columns: 1fr/s);
     expect(styles).toMatch(/\.calendar-day\.empty\s*\{[^}]*display: none/s);
+  });
+
+  it("keeps shared action buttons at a 44px touch target", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    // The account page save/export/logout/delete controls all use these
+    // shared classes, so the base rule must meet the 44px touch target.
+    expect(styles).toMatch(
+      /\.primary-action,\s*\.secondary-action,\s*\.danger-action\s*\{[^}]*min-height: 44px/s,
+    );
+    expect(styles).toMatch(/\.account-panel input\s*\{[^}]*min-height: 44px/s);
   });
 });
 
@@ -1113,6 +1143,58 @@ describe("recoverable client workflows", () => {
 });
 
 
+describe("targeted plan idempotency", () => {
+  const idempotencyPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+  function planInput(overrides: Partial<TargetedPlanInput> = {}): TargetedPlanInput {
+    return {
+      material_id: "material-1",
+      focus_topics: ["Eigenvalues"],
+      exam_at: "2026-09-01T12:00:00.000Z",
+      daily_minutes: 45,
+      study_weekdays: [0, 1, 2, 3, 4],
+      preferred_hour: 9,
+      timezone_offset_minutes: 0,
+      routine_notes: "",
+      ...overrides,
+    };
+  }
+
+  it("attaches a generated idempotency key when the caller omits one", async () => {
+    let requestedBody: Record<string, unknown> = {};
+    const client = new ApiClient("/api", async (_input, init) => {
+      requestedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "plan-1", goal: "", sessions: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await client.createTargetedPlan("token", "workspace-1", planInput());
+
+    expect(typeof requestedBody.idempotency_key).toBe("string");
+    expect(String(requestedBody.idempotency_key)).toMatch(idempotencyPattern);
+  });
+
+  it("preserves a caller-provided idempotency key so a retry replays", async () => {
+    const keys: Array<unknown> = [];
+    const client = new ApiClient("/api", async (_input, init) => {
+      keys.push(JSON.parse(String(init?.body)).idempotency_key);
+      return new Response(JSON.stringify({ id: "plan-1", goal: "", sessions: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const input = planInput({ idempotency_key: "stable-user-action-key" });
+    await client.createTargetedPlan("token", "workspace-1", input);
+    await client.createTargetedPlan("token", "workspace-1", input);
+
+    expect(keys).toEqual(["stable-user-action-key", "stable-user-action-key"]);
+  });
+});
+
+
 describe("targeted and saved practice API", () => {
   it("sends topic, plan session, learning mode, difficulty, and replacement intent without leaking them into paths", async () => {
     let requestedPath = "";
@@ -1223,6 +1305,51 @@ describe("projectless product surface", () => {
     expect(styles).toContain("--auth-card-supporting-size: 14px");
     expect(styles).toMatch(/\.auth-copy > p\s*\{[^}]*font-size: var\(--auth-supporting-size\)/s);
     expect(styles).toMatch(/\.auth-form-heading p\s*\{[^}]*font-size: var\(--auth-card-supporting-size\)/s);
+  });
+
+  it("keeps muted helper text, sidebar labels and table headers at WCAG AA", () => {
+    const styles = readFileSync(
+      fileURLToPath(new URL("../app/styles.css", import.meta.url)),
+      "utf8",
+    );
+
+    const channel = (value: number) => {
+      const c = value / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    };
+    const contrast = (fg: string, bg: string) => {
+      const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const token = (name: string) => {
+      const match = styles.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`));
+      if (!match) throw new Error(`missing token ${name}`);
+      return match[1];
+    };
+
+    // The lightest tinted surfaces these tokens sit on across the audited
+    // pages (upload help, sidebar, cards, table headers).
+    const lightBackgrounds = ["#ffffff", "#f8f9fc", "#f3f5f9", "#f5f6fa", "#eef4ff", "#fafafa"];
+    for (const bg of lightBackgrounds) {
+      expect(contrast(token("--muted"), bg)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(token("--muted-strong"), bg)).toBeGreaterThanOrEqual(4.5);
+    }
+
+    // Pin the darkened shared token and the retired low-contrast greys.
+    expect(styles).toContain("--muted: #676970;");
+    expect(styles).not.toContain("--muted: #74767d;");
+    expect(styles).not.toContain("#8c8e94");
+    expect(styles).not.toContain("#9a9ea7");
+    expect(styles).not.toContain("#a4a5a9");
+
+    // Sidebar section labels and utility copy now route to AA-safe tokens.
+    expect(styles).toMatch(/\.app-sidebar-label\s*\{[^}]*color: var\(--muted-strong\)/s);
+    expect(styles).toMatch(/\.admin-nav-label\s*\{[^}]*color: var\(--muted-strong\)/s);
+    expect(styles).toMatch(/\.app-sidebar-utilities > p\s*\{[^}]*color: var\(--muted\)/s);
   });
 
   it("gives the desktop authentication form enough visual weight", () => {
@@ -1533,6 +1660,7 @@ describe("implicit workspace API", () => {
       daily_minutes: 35,
       topic_order: ["limits"],
       regenerate: true,
+      timezone_offset_minutes: -new Date().getTimezoneOffset(),
     });
     expect(plan.id).toBe("plan-2");
   });
@@ -1844,6 +1972,10 @@ describe("recoverable material and Agent interactions", () => {
     expect(materialSource).toContain('data-testid="clear-material-search"');
     expect(materialSource).toContain('data-testid="clear-upload-queue"');
     expect(materialSource).toContain("SourceDrawer");
+    // Search-result scores are a weighted-RRF fusion rank, not similarity, so
+    // the percentage is labelled (relevance) instead of shown bare.
+    expect(materialSource).toContain('{Math.round(source.score * 100)}% {t("sourceMatch")}');
+    expect(materialSource).not.toContain("<em>{Math.round(source.score * 100)}%</em>");
     expect(materialSource).toContain('data-testid="material-filter-status"');
     expect(materialSource).toContain('data-testid="material-bulk-delete"');
     expect(workspaceSource).toContain("updateWorkspaceMaterial");
@@ -1876,6 +2008,12 @@ describe("safe authentication and administration", () => {
     expect(adminSource).toContain("loadError");
     expect(authSource).not.toContain("localStorage");
     expect(adminSource).not.toContain("localStorage");
+    // The restore-validation dialog auto-submits its confirmation; there is no
+    // passphrase field, so it must not claim the admin binds one to the backup.
+    expect(adminSource).not.toContain("确认口令会精确绑定此备份 ID");
+    expect(adminSource).not.toContain("The confirmation token is bound to this backup ID");
+    expect(adminSource).toContain("无需手动输入口令");
+    expect(adminSource).toContain("No passphrase is required");
   });
 
   it("uses application dialogs and inline editing instead of browser prompts", () => {
@@ -1968,7 +2106,7 @@ describe("accessible application shell", () => {
       "utf8",
     );
     const backendStart = configSource.indexOf('command: `"${python}" -m uvicorn');
-    const frontendStart = configSource.indexOf('command: "npm run dev');
+    const frontendStart = configSource.indexOf("command: `npm run dev");
 
     expect(backendStart).toBeGreaterThanOrEqual(0);
     expect(frontendStart).toBeGreaterThan(backendStart);
@@ -2170,5 +2308,46 @@ describe("navigation efficiency remediation", () => {
     expect(adminSource).not.toContain("window.location.assign(pendingHref)");
     expect(cssSource).not.toContain(".app-spaces-all");
     expect(cssSource).not.toContain(".app-recent-spaces > small");
+  });
+});
+
+
+describe("targeted plan request isolation", () => {
+  it("checks workspace and request generation before applying an async plan", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const workspaceGuard = workspaceSource.indexOf(
+      "workspaceRef.current?.id !== targetWorkspaceId",
+    );
+    const planCommit = workspaceSource.indexOf("setPlan(created)");
+
+    expect(workspaceSource).toContain("targetedPlanBusyRef.current");
+    expect(workspaceSource).toContain("targetedPlanGenerationRef.current !== generation");
+    expect(workspaceGuard).toBeGreaterThan(-1);
+    expect(planCommit).toBeGreaterThan(workspaceGuard);
+  });
+
+  it("reuses one idempotency key across a client-timeout retry instead of overwriting", () => {
+    const workspaceSource = readFileSync(
+      fileURLToPath(new URL("../components/study-workspace.tsx", import.meta.url)),
+      "utf8",
+    );
+    const createFn = workspaceSource.slice(
+      workspaceSource.indexOf("async function createTargetedPlan"),
+      workspaceSource.indexOf("async function addCalendarSession"),
+    );
+
+    // One stable idempotency key per user action, derived once and reused.
+    expect(createFn).toMatch(
+      /idempotency_key:\s*input\.idempotency_key\s*\?\?\s*crypto\.randomUUID/,
+    );
+    // A client timeout (408) must not be terminal: the server may have committed,
+    // so retry with the SAME request/key to replay it rather than overwrite it.
+    expect(createFn).toContain("caught.status === 408");
+    const retryCalls =
+      createFn.split("api.createTargetedPlan(targetToken, targetWorkspaceId, request)").length - 1;
+    expect(retryCalls).toBe(2);
   });
 });

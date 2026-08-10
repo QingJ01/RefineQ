@@ -138,7 +138,7 @@ export function AuthPanel({
       <section className="auth-welcome">
         <div className="auth-brand"><BrandMark className="brand-mark" size={36} /><BrandName /></div>
         <div className="auth-copy"><span className="kicker">PERSONAL LEARNING AGENT</span><h1>{t("authPrompt")}</h1><p>{t("authSubline")}</p></div>
-        <Image className="auth-illustration" src="/assets/refineq-learning-illustration.png" alt="" aria-hidden="true" width={1254} height={1254} priority />
+        <Image className="auth-illustration" src="/assets/refineq-learning-illustration.png" alt="" aria-hidden="true" width={1254} height={1254} priority unoptimized />
       </section>
       <section className="auth-form-side">
         <div className="auth-form-card">

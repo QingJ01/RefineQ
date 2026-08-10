@@ -12,6 +12,12 @@ process.env.no_proxy = noProxy;
 const repositoryRoot = path.resolve(__dirname, "../..");
 const python = process.env.REFINEQ_PYTHON ?? "python";
 const testDataRoot = path.join(__dirname, ".playwright-data");
+const apiPort = process.env.REFINEQ_E2E_API_PORT ?? "8000";
+const webPort = process.env.REFINEQ_E2E_WEB_PORT ?? "3000";
+
+if (!/^\d+$/.test(apiPort) || !/^\d+$/.test(webPort)) {
+  throw new Error("REFINEQ_E2E_API_PORT and REFINEQ_E2E_WEB_PORT must be numeric");
+}
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -21,7 +27,7 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "list",
   outputDir: "./test-results",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: `http://127.0.0.1:${webPort}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -37,28 +43,28 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `"${python}" -m uvicorn refineq.api.app:app --host 127.0.0.1 --port 8000`,
+      command: `"${python}" -m uvicorn refineq.api.app:app --host 127.0.0.1 --port ${apiPort}`,
       cwd: repositoryRoot,
       env: {
         ...process.env,
         PYTHONPATH: path.join(repositoryRoot, "src"),
         REFINEQ_DATA_ROOT: testDataRoot,
         REFINEQ_HOST: "127.0.0.1",
-        REFINEQ_PORT: "8000",
+        REFINEQ_PORT: apiPort,
         REFINEQ_PASSWORD_RESET_EXPOSE_TOKEN: "true",
       },
-      url: "http://127.0.0.1:8000/health/live",
+      url: `http://127.0.0.1:${apiPort}/health/live`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
     {
-      command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
+      command: `npm run dev -- --hostname 127.0.0.1 --port ${webPort}`,
       cwd: __dirname,
       env: {
         ...process.env,
-        REFINEQ_API_ORIGIN: "http://127.0.0.1:8000",
+        REFINEQ_API_ORIGIN: `http://127.0.0.1:${apiPort}`,
       },
-      url: "http://127.0.0.1:3000",
+      url: `http://127.0.0.1:${webPort}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },

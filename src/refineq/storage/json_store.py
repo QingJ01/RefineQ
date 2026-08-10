@@ -208,6 +208,11 @@ class AtomicJsonStore:
     def list(self, owner_id: str, collection: str) -> list[StoredRecord]:
         """Return every valid record in one owner-scoped collection."""
 
+        return list(self.list_items(owner_id, collection).values())
+
+    def list_items(self, owner_id: str, collection: str) -> dict[str, StoredRecord]:
+        """Return valid records keyed by their owner-scoped record identifier."""
+
         owner_id = validate_identifier(owner_id, field="owner_id")
         collection = validate_identifier(collection, field="collection")
         owner_root = (self.data_root / "users" / owner_id).resolve()
@@ -217,11 +222,11 @@ class AtomicJsonStore:
         except ValueError as error:
             raise InvalidIdentifierError("Collection path escaped the owner scope") from error
         if not collection_root.exists():
-            return []
-        records: list[StoredRecord] = []
+            return {}
+        records: dict[str, StoredRecord] = {}
         for path in sorted(collection_root.glob("*.json")):
             with self._lock_for(path):
-                records.append(self._deserialize(path))
+                records[path.stem] = self._deserialize(path)
         return records
 
     def read_many(

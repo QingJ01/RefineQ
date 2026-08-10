@@ -3,15 +3,46 @@
 from __future__ import annotations
 
 import math
+from typing import Literal
 
 import fitz
 from openai import DefaultHttpxClient, OpenAI
+from pydantic import BaseModel, ConfigDict, Field
 
+from refineq.agent.settings import ModelSettings
+from refineq.agent.structured import (
+    OpenAICompatibleStructuredTransport,
+    StructuredModelTransport,
+)
 from refineq.integrations.endpoints import assert_safe_endpoint
 from refineq.integrations.models import IntegrationKind, IntegrationTestResult
 from refineq.integrations.object_storage import S3ObjectStorage
 from refineq.integrations.ocr import OpenAIVisionTransport, VisionTransport
 from refineq.integrations.repository import IntegrationRepository
+
+
+class _ChatClassificationProbe(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["direct_answer"]
+    reason: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class _ChatAnswerProbe(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    content: str = Field(min_length=1)
+    basis: str = Field(min_length=1)
+    convertible_goal: bool
+
+
+class _ChatCapabilityProbe(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["ok"]
+    classification: _ChatClassificationProbe
+    answer: _ChatAnswerProbe
 
 
 class IntegrationTester:
@@ -20,9 +51,14 @@ class IntegrationTester:
         repository: IntegrationRepository,
         *,
         vision_transport: VisionTransport | None = None,
+        chat_transport: StructuredModelTransport | None = None,
     ) -> None:
         self.repository = repository
         self.vision_transport = vision_transport or OpenAIVisionTransport()
+        self.chat_transport = chat_transport or OpenAICompatibleStructuredTransport(
+            timeout=15.0,
+            max_retries=0,
+        )
 
     @staticmethod
     def _vision_test_image() -> bytes:
@@ -39,23 +75,31 @@ class IntegrationTester:
         secrets = {name: value.get_secret_value() for name, value in integration.secrets.items()}
         try:
             if kind is IntegrationKind.CHAT:
-                assert_safe_endpoint(
-                    str(integration.config["base_url"]),
-                    allow_private_network=bool(
-                        integration.config.get("allow_private_network", False)
+                self.chat_transport.complete(
+                    settings=ModelSettings(
+                        api_key=secrets["api_key"],
+                        base_url=str(integration.config["base_url"]),
+                        model=str(integration.config["model"]),
+                        temperature=float(integration.config.get("temperature", 0.2)),
+                        allow_private_network=bool(
+                            integration.config.get("allow_private_network", False)
+                        ),
                     ),
-                    allow_transparent_proxy=True,
-                )
-                client = OpenAI(
-                    api_key=secrets["api_key"],
-                    base_url=str(integration.config["base_url"]),
-                    timeout=15.0,
-                    http_client=DefaultHttpxClient(follow_redirects=False),
-                )
-                client.chat.completions.create(
-                    model=str(integration.config["model"]),
-                    messages=[{"role": "user", "content": "Reply OK"}],
-                    max_tokens=2,
+                    response_model=_ChatCapabilityProbe,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Return a JSON capability probe. Use status ok; classify this as "
+                                "direct_answer with a short reason and confidence; provide a "
+                                "bounded answer with basis and convertible_goal false."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": "What is spaced repetition?",
+                        },
+                    ],
                 )
             elif kind is IntegrationKind.EMBEDDING:
                 assert_safe_endpoint(
@@ -103,7 +147,11 @@ class IntegrationTester:
             )
             return IntegrationTestResult(kind=kind, status="failed", message=message)
 
-        message = "Connection succeeded"
+        message = (
+            "Structured chat capability succeeded"
+            if kind is IntegrationKind.CHAT
+            else "Connection succeeded"
+        )
         self.repository.record_test(kind, status="ok", message=message, actor_id=actor_id)
         return IntegrationTestResult(kind=kind, status="ok", message=message)
 

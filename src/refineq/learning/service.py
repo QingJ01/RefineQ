@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Callable
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -31,6 +32,7 @@ from refineq.learning.models import (
     StudyPlan,
     StudySession,
 )
+from refineq.learning.next_action import _local_date
 from refineq.learning.planning import build_study_plan
 from refineq.learning.session_adaptation import (
     decide_next_session_action,
@@ -164,6 +166,14 @@ class LearningConflictError(LearningServiceError):
     code = "learning_conflict"
 
 
+class DailyCapacityExceededError(LearningConflictError):
+    code = "daily_capacity_exceeded"
+
+    def __init__(self, message: str, *, detail: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
 class MaterialGroundingRequiredError(LearningConflictError):
     code = "material_insufficient"
 
@@ -223,6 +233,8 @@ class QuestionResponse(BaseModel):
     saved: bool = False
     review_session_id: str | None = None
     plan_session_id: str | None = None
+    state_version: int = 0
+    prompt_hash: str = ""
 
 
 class SavedQuestionResponse(QuestionResponse):
@@ -270,6 +282,7 @@ class AnswerRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=10_000)
     remaining_minutes: int | None = Field(default=None, ge=0, le=480)
     summary_reserve_minutes: int | None = Field(default=None, ge=1, le=30)
+    prompt_hash: str | None = Field(default=None, max_length=128)
 
 
 class SessionDecision(BaseModel):
@@ -303,6 +316,7 @@ class AnswerResponse(BaseModel):
     sources: list[SearchResult] = Field(default_factory=list)
     grounding: Grounding = Grounding.GENERAL
     grading_mode: str = "fallback"
+    reason_code: str = "ok"
     mastery_updated: bool = True
     next_review_at: datetime | None = None
     answer: str = ""
@@ -326,6 +340,7 @@ class PlanSessionUpdate(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
     )
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
 class PlanSessionCreate(BaseModel):
@@ -335,6 +350,7 @@ class PlanSessionCreate(BaseModel):
     planned_at: datetime
     minutes: int = Field(ge=5, le=480)
     activity: str = Field(default="practice", pattern=r"^(learn|practice|apply|review)$")
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
 class PlanUpdateRequest(BaseModel):
@@ -345,6 +361,7 @@ class PlanUpdateRequest(BaseModel):
     daily_minutes: int = Field(ge=5, le=480)
     topic_order: list[str] = Field(min_length=1, max_length=200)
     regenerate: bool = False
+    timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
 
 
 class AttemptFeedbackRequest(BaseModel):
@@ -470,6 +487,17 @@ class LearningService:
         return progress
 
     @staticmethod
+    def _require_scope_fence(
+        progress: dict[str, Any],
+        expected_scope_fence: str | None,
+    ) -> None:
+        if (
+            expected_scope_fence is not None
+            and progress.get("_scope_fence") != expected_scope_fence
+        ):
+            raise LearningConflictError("Learning state belongs to a different operation scope")
+
+    @staticmethod
     def _progress_response(data: dict[str, Any]) -> ProgressResponse:
         progress = LearningService._progress(data)
         plan = progress.get("plan")
@@ -499,6 +527,8 @@ class LearningService:
         owner_id: str,
         project_id: str,
         payload: SeedRequest,
+        *,
+        answer_key_subjects: dict[str, str] | None = None,
     ) -> ProgressResponse:
         self._require_project(owner_id, project_id)
         topic_ids = [topic.id for topic in payload.topics]
@@ -506,6 +536,18 @@ class LearningService:
             raise LearningConflictError("Topic IDs must be unique")
         if payload.exam_at.tzinfo is None or payload.exam_at.utcoffset() is None:
             raise LearningConflictError("exam_at must be timezone-aware")
+        resolved_subjects = (
+            {topic.id: topic.name for topic in payload.topics}
+            if answer_key_subjects is None
+            else answer_key_subjects
+        )
+        if not set(resolved_subjects).issubset(topic_ids):
+            raise LearningConflictError("Answer-key subjects must belong to seeded topics")
+        normalized_subjects = {
+            topic_id: subject.strip() for topic_id, subject in resolved_subjects.items()
+        }
+        if any(not subject or len(subject) > 200 for subject in normalized_subjects.values()):
+            raise LearningConflictError("Answer-key subjects must contain 1 to 200 characters")
 
         def initialize(data: dict[str, Any]) -> dict[str, Any]:
             if data.get("attempts"):
@@ -515,7 +557,17 @@ class LearningService:
                 "goal": payload.goal.strip(),
                 "exam_at": payload.exam_at.astimezone(UTC).isoformat(),
                 "daily_minutes": payload.daily_minutes,
-                "topics": {topic.id: topic.model_dump(mode="json") for topic in payload.topics},
+                "topics": {
+                    topic.id: {
+                        **topic.model_dump(mode="json"),
+                        **(
+                            {"answer_key_subject": normalized_subjects[topic.id]}
+                            if topic.id in normalized_subjects
+                            else {}
+                        ),
+                    }
+                    for topic in payload.topics
+                },
                 "topic_order": [topic.id for topic in payload.topics],
                 "bkt_states": {
                     topic.id: DEFAULT_BKT.model_dump(mode="json") for topic in payload.topics
@@ -601,6 +653,7 @@ class LearningService:
             if existing is not None:
                 if str(existing.get("name", "")).casefold() != topic.name.casefold():
                     raise LearningConflictError("Topic ID already belongs to another topic")
+                existing.setdefault("answer_key_subject", topic.name.strip())
                 return data
             if any(
                 str(item.get("name", "")).casefold() == topic.name.casefold()
@@ -610,7 +663,10 @@ class LearningService:
             if len(progress["topics"]) >= 200:
                 raise LearningConflictError("Learning topic limit reached")
 
-            progress["topics"][topic.id] = topic.model_dump(mode="json")
+            progress["topics"][topic.id] = {
+                **topic.model_dump(mode="json"),
+                "answer_key_subject": topic.name.strip(),
+            }
             progress.setdefault("topic_order", list(progress["topics"]))
             if topic.id not in progress["topic_order"]:
                 progress["topic_order"].append(topic.id)
@@ -688,6 +744,153 @@ class LearningService:
             raise LearningServiceError("Plan generation failed")
         return generated
 
+    @staticmethod
+    def _assert_daily_capacity(
+        plan_sessions: list[dict[str, Any]],
+        *,
+        target_id: str | None,
+        new_planned_at: datetime,
+        new_minutes: int,
+        daily_minutes: int,
+        tz_offset_minutes: int,
+    ) -> None:
+        """Reject a placement that would push a local calendar day over its budget.
+
+        Every non-completed session is bucketed to its LOCAL date so the budget is
+        measured on the day the learner actually sees, not on the UTC instant. The
+        session identified by ``target_id`` is excluded because it is the one being
+        moved or created; its new minutes are what we are trying to fit.
+        """
+
+        target_date = _local_date(new_planned_at, tz_offset_minutes)
+        buckets: dict[date, int] = {}
+        for session in plan_sessions:
+            if session.get("status") == "completed":
+                continue
+            if target_id is not None and session.get("id") == target_id:
+                continue
+            planned_at = session["planned_at"]
+            if isinstance(planned_at, str):
+                planned_at = datetime.fromisoformat(planned_at)
+            bucket = _local_date(planned_at, tz_offset_minutes)
+            buckets[bucket] = buckets.get(bucket, 0) + int(session["minutes"])
+
+        used = buckets.get(target_date, 0)
+        if used + new_minutes <= daily_minutes:
+            return
+
+        # "The next open day" only means something when we are actually placing a
+        # session. On the lower-the-budget path new_minutes is 0, so every day
+        # would qualify — including days with no free capacity at all.
+        next_free_date: str | None = None
+        if 0 < new_minutes <= daily_minutes:
+            candidate = target_date
+            for _ in range(366):
+                candidate += timedelta(days=1)
+                if buckets.get(candidate, 0) + new_minutes <= daily_minutes:
+                    next_free_date = candidate.isoformat()
+                    break
+        raise DailyCapacityExceededError(
+            "This day would exceed the daily study budget.",
+            detail={
+                "date": target_date.isoformat(),
+                "used": used,
+                "requested": new_minutes,
+                "daily_minutes": daily_minutes,
+                "next_free_date": next_free_date,
+            },
+        )
+
+    @classmethod
+    def _displace_for_move(
+        cls,
+        plan: dict[str, Any],
+        *,
+        target_id: str,
+        new_planned_at: datetime,
+        new_minutes: int,
+        tz_offset_minutes: int,
+    ) -> None:
+        """Make room on the destination day by pushing its pending work later.
+
+        Sessions are displaced one local day at a time, cascading only as far as
+        needed, so the daily budget stays true and no session is silently dropped.
+        """
+
+        daily_minutes = int(plan["daily_minutes"])
+        target_date = _local_date(new_planned_at, tz_offset_minutes)
+        # Reflowing must not push study work past the exam it is preparing for.
+        raw_exam_at = plan.get("exam_at")
+        exam_date: date | None = None
+        if raw_exam_at:
+            parsed_exam_at = (
+                datetime.fromisoformat(raw_exam_at) if isinstance(raw_exam_at, str) else raw_exam_at
+            )
+            exam_date = _local_date(parsed_exam_at, tz_offset_minutes)
+
+        def bucket_of(session: dict[str, Any]) -> date:
+            planned_at = session["planned_at"]
+            if isinstance(planned_at, str):
+                planned_at = datetime.fromisoformat(planned_at)
+            return _local_date(planned_at, tz_offset_minutes)
+
+        def pending_on(day: date) -> list[dict[str, Any]]:
+            return [
+                item
+                for item in plan["sessions"]
+                if item.get("id") != target_id
+                and item.get("status") != "completed"
+                and bucket_of(item) == day
+            ]
+
+        # Work a day at a time, and keep pushing that day's latest session out
+        # until it genuinely fits. Displacing only once leaves a day made of
+        # several small sessions still over budget, which silently breaks the
+        # very invariant this reflow exists to preserve.
+        pending_days: list[tuple[date, int]] = [(target_date, new_minutes)]
+        for _ in range(2_000):
+            if not pending_days:
+                return
+            day, incoming = pending_days.pop(0)
+            occupants = pending_on(day)
+            used = sum(int(item["minutes"]) for item in occupants)
+            if used + incoming <= daily_minutes:
+                continue
+            occupants.sort(key=lambda item: str(item["planned_at"]))
+            displaced = occupants[-1]
+            planned_at = displaced["planned_at"]
+            if isinstance(planned_at, str):
+                planned_at = datetime.fromisoformat(planned_at)
+            moved_to = planned_at + timedelta(days=1)
+            if exam_date is not None and _local_date(moved_to, tz_offset_minutes) > exam_date:
+                raise DailyCapacityExceededError(
+                    "Reflowing this move would push study work past the exam date.",
+                    detail={
+                        "date": target_date.isoformat(),
+                        "used": sum(int(item["minutes"]) for item in pending_on(target_date)),
+                        "requested": new_minutes,
+                        "daily_minutes": daily_minutes,
+                        "next_free_date": None,
+                    },
+                )
+            displaced["planned_at"] = moved_to.isoformat()
+            # Re-check this day (it may still be over), then the day that just
+            # received the displaced session.
+            pending_days.insert(0, (day, incoming))
+            next_day = bucket_of(displaced)
+            if not any(entry[0] == next_day for entry in pending_days):
+                pending_days.append((next_day, 0))
+        raise DailyCapacityExceededError(
+            "The plan cannot absorb this move.",
+            detail={
+                "date": target_date.isoformat(),
+                "used": sum(int(item["minutes"]) for item in pending_on(target_date)),
+                "requested": new_minutes,
+                "daily_minutes": daily_minutes,
+                "next_free_date": None,
+            },
+        )
+
     def update_plan_session(
         self,
         owner_id: str,
@@ -696,6 +899,7 @@ class LearningService:
         payload: PlanSessionUpdate,
         *,
         expected_version: int | None = None,
+        displace_on_conflict: bool = False,
     ):
         self._require_project(owner_id, project_id)
         updated = None
@@ -709,12 +913,59 @@ class LearningService:
             for session in plan["sessions"]:
                 if session["id"] != session_id:
                     continue
+                if payload.planned_at is not None and (
+                    payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None
+                ):
+                    raise LearningConflictError("planned_at must be timezone-aware")
+                new_status = payload.status if payload.status is not None else session["status"]
+                if payload.planned_at is not None:
+                    new_planned_at = payload.planned_at.astimezone(UTC)
+                else:
+                    new_planned_at = datetime.fromisoformat(session["planned_at"])
+                new_minutes = payload.minutes if payload.minutes is not None else session["minutes"]
+                moving_day = payload.planned_at is not None and _local_date(
+                    new_planned_at, payload.timezone_offset_minutes
+                ) != _local_date(
+                    datetime.fromisoformat(session["planned_at"]),
+                    payload.timezone_offset_minutes,
+                )
+                # Reopening a completed session restores work that already belongs
+                # to that day; it adds no new load, and blocking it would leave a
+                # mis-clicked "complete" with no way back.
+                reopening_in_place = (
+                    session["status"] == "completed"
+                    and new_status != "completed"
+                    and payload.planned_at is None
+                    and payload.minutes is None
+                )
+                if new_status != "completed" and not reopening_in_place:
+                    if moving_day and displace_on_conflict:
+                        # Moving a session onto a day is a *move*, not an addition:
+                        # a generated plan already fills every day to the budget, so
+                        # requiring free space would make "move it to Saturday"
+                        # permanently impossible. Push the day's existing pending
+                        # work back to keep the budget true without dead-ending the
+                        # learner.
+                        self._displace_for_move(
+                            plan,
+                            target_id=session_id,
+                            new_planned_at=new_planned_at,
+                            new_minutes=new_minutes,
+                            tz_offset_minutes=payload.timezone_offset_minutes,
+                        )
+                    else:
+                        self._assert_daily_capacity(
+                            plan["sessions"],
+                            target_id=session_id,
+                            new_planned_at=new_planned_at,
+                            new_minutes=new_minutes,
+                            daily_minutes=plan["daily_minutes"],
+                            tz_offset_minutes=payload.timezone_offset_minutes,
+                        )
                 if payload.status is not None:
                     session["status"] = payload.status
                 if payload.planned_at is not None:
-                    if payload.planned_at.tzinfo is None or payload.planned_at.utcoffset() is None:
-                        raise LearningConflictError("planned_at must be timezone-aware")
-                    session["planned_at"] = payload.planned_at.astimezone(UTC).isoformat()
+                    session["planned_at"] = new_planned_at.isoformat()
                 if payload.minutes is not None:
                     session["minutes"] = payload.minutes
                 if payload.topic_id is not None:
@@ -764,14 +1015,16 @@ class LearningService:
             if not plan:
                 raise LearningNotSeededError("Learning plan has not been created")
             topic_id = stable_id("topic", project_id, payload.topic_name.strip())
-            progress["topics"].setdefault(
+            topic = progress["topics"].setdefault(
                 topic_id,
                 {
                     "id": topic_id,
                     "name": payload.topic_name.strip(),
                     "knowledge_type": KnowledgeType.CONCEPT.value,
+                    "answer_key_subject": payload.topic_name.strip(),
                 },
             )
+            topic.setdefault("answer_key_subject", payload.topic_name.strip())
             progress["bkt_states"].setdefault(topic_id, DEFAULT_BKT.model_dump(mode="json"))
             progress["difficulty_states"].setdefault(
                 topic_id, DifficultyState().model_dump(mode="json")
@@ -791,6 +1044,14 @@ class LearningService:
                 planned_at=payload.planned_at,
                 minutes=payload.minutes,
                 activity=payload.activity,
+            )
+            self._assert_daily_capacity(
+                plan["sessions"],
+                target_id=None,
+                new_planned_at=payload.planned_at,
+                new_minutes=payload.minutes,
+                daily_minutes=plan["daily_minutes"],
+                tz_offset_minutes=payload.timezone_offset_minutes,
             )
             plan["sessions"].append(created.model_dump(mode="json"))
             return data
@@ -892,6 +1153,27 @@ class LearningService:
                         "daily_minutes": payload.daily_minutes,
                     }
                 )
+                if payload.daily_minutes < existing.daily_minutes:
+                    # Preserved sessions were laid out for the old, higher budget;
+                    # a lower budget must not silently overload any local day.
+                    kept_sessions = generated.model_dump(mode="json")["sessions"]
+                    checked: set[date] = set()
+                    for session in kept_sessions:
+                        if session.get("status") == "completed":
+                            continue
+                        planned_at = datetime.fromisoformat(session["planned_at"])
+                        day = _local_date(planned_at, payload.timezone_offset_minutes)
+                        if day in checked:
+                            continue
+                        checked.add(day)
+                        self._assert_daily_capacity(
+                            kept_sessions,
+                            target_id=None,
+                            new_planned_at=planned_at,
+                            new_minutes=0,
+                            daily_minutes=payload.daily_minutes,
+                            tz_offset_minutes=payload.timezone_offset_minutes,
+                        )
 
             progress["goal"] = normalized_goal
             progress["exam_at"] = exam_at.isoformat()
@@ -971,6 +1253,7 @@ class LearningService:
         question: dict[str, Any],
         *,
         saved_at: str | datetime | None = None,
+        state_version: int = 0,
     ) -> QuestionResponse:
         return QuestionResponse(
             id=question["id"],
@@ -988,6 +1271,8 @@ class LearningService:
             saved=saved_at is not None,
             review_session_id=question.get("review_session_id"),
             plan_session_id=question.get("plan_session_id"),
+            state_version=state_version,
+            prompt_hash=stable_id("question-prompt", question["id"], question["prompt"]),
         )
 
     def next_question(
@@ -1003,13 +1288,24 @@ class LearningService:
         review_session_id: str | None = None,
         plan_session_id: str | None = None,
         require_material_grounding: bool = False,
+        expected_scope_fence: str | None = None,
+        scope_guard: Callable[[], None] | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
+        if scope_guard is not None:
+            scope_guard()
         if require_material_grounding:
             self.quarantine_ungrounded_pending(owner_id, project_id)
 
         def public_question(question: dict[str, Any], saved_at: str | None) -> QuestionResponse:
-            response = self._public_question(question, saved_at=saved_at)
+            # The state version at the moment the question is handed to the client
+            # becomes the token the answer must echo, so a later regeneration that
+            # advances the version fails the answer closed instead of grading a
+            # different question than the learner saw.
+            state_version = self._learning.get(owner_id, project_id).version
+            response = self._public_question(
+                question, saved_at=saved_at, state_version=state_version
+            )
             if require_material_grounding and (
                 response.grounding != Grounding.MATERIAL or not response.sources
             ):
@@ -1022,6 +1318,7 @@ class LearningService:
             current = self._learning.get(owner_id, project_id)
             snapshot_version = current.version
             progress = self._progress(current.data)
+            self._require_scope_fence(progress, expected_scope_fence)
             history = progress.setdefault("question_history", {})
             requests = progress.setdefault("question_requests", {})
             if request_id and request_id in requests:
@@ -1110,6 +1407,7 @@ class LearningService:
                     workspace_id=project_id,
                     topic_id=selected_topic_id,
                     topic_name=topic["name"],
+                    trusted_topic_subject=topic.get("answer_key_subject"),
                     mastery=mastery,
                     difficulty_level=selected_difficulty,
                     learning_mode=learning_mode,
@@ -1149,6 +1447,7 @@ class LearningService:
             def store_once(data: dict[str, Any]) -> dict[str, Any]:
                 nonlocal selected
                 inner_progress = self._progress(data)
+                self._require_scope_fence(inner_progress, expected_scope_fence)
                 inner_history = inner_progress.setdefault("question_history", {})
                 sequence = int(inner_progress.get("question_sequence", len(inner_history)))
                 question_id = stable_id("question", project_id, selected_topic_id, str(sequence))
@@ -1182,8 +1481,11 @@ class LearningService:
                 return data
 
             with self._learning.question_transaction(owner_id, project_id):
+                if scope_guard is not None:
+                    scope_guard()
                 latest = self._learning.get(owner_id, project_id)
                 latest_progress = self._progress(latest.data)
+                self._require_scope_fence(latest_progress, expected_scope_fence)
                 latest_history = latest_progress.setdefault("question_history", {})
                 if request_id:
                     latest_requests = latest_progress.setdefault("question_requests", {})
@@ -1358,9 +1660,15 @@ class LearningService:
         payload: AnswerRequest,
         *,
         require_material_grounding: bool = False,
+        expected_scope_fence: str | None = None,
+        scope_guard: Callable[[], None] | None = None,
     ) -> AnswerResponse:
         self._require_project(owner_id, project_id)
+        if scope_guard is not None:
+            scope_guard()
         current = self._learning.get(owner_id, project_id)
+        current_progress = self._progress(current.data)
+        self._require_scope_fence(current_progress, expected_scope_fence)
         if payload.attempt_id in current.data["attempts"]:
             stored_attempt = current.data["attempts"][payload.attempt_id]
             stored_grounding = stored_attempt.get("grounding") or (
@@ -1381,7 +1689,6 @@ class LearningService:
                     ref_id=payload.attempt_id,
                 )
             return response
-        current_progress = self._progress(current.data)
         current_question = current_progress.get("pending_question")
         if current_question is None or current_question["id"] != payload.question_id:
             raise LearningConflictError("Question is not pending")
@@ -1392,6 +1699,17 @@ class LearningService:
             )
         if "grading" in current_question:
             generated = GeneratedQuestion.model_validate(current_question["grading"])
+            current_subject = str(
+                current_progress["topics"][generated.topic_id].get("answer_key_subject") or ""
+            ).strip()
+            if not current_subject or current_subject != (generated.answer_key_subject or ""):
+                generated = generated.model_copy(
+                    update={
+                        "expected_answer": "",
+                        "answer_key_trusted": False,
+                        "answer_key_subject": None,
+                    }
+                )
             grade = (
                 self._intelligence.grade_answer(
                     owner_id=owner_id,
@@ -1419,6 +1737,7 @@ class LearningService:
             nonlocal completed_plan_session_id, completed_review_session_id
             nonlocal next_review_at, replayed, result
             progress = self._progress(data)
+            self._require_scope_fence(progress, expected_scope_fence)
             if payload.attempt_id in data["attempts"]:
                 replayed = True
                 result = deepcopy(data["attempts"][payload.attempt_id])
@@ -1440,7 +1759,17 @@ class LearningService:
                 and bool(attempt.get("mastery_updated", True))
                 for attempt in data["attempts"].values()
             )
-            mastery_updated = grade.mastery_evidence and not already_credited
+            grading = (question.get("grading") or {}) if isinstance(question, dict) else {}
+            grading_subject = str(grading.get("answer_key_subject") or "").strip()
+            current_subject = str(
+                progress["topics"][topic_id].get("answer_key_subject") or ""
+            ).strip()
+            mastery_updated = (
+                grade.mastery_evidence
+                and bool(grading_subject)
+                and grading_subject == current_subject
+                and not already_credited
+            )
             if mastery_updated:
                 bkt_state = update_bkt(current_bkt, is_correct=is_correct).model_copy(
                     update={
@@ -1485,11 +1814,11 @@ class LearningService:
                 },
             )
             raw_plan = progress.get("plan")
-            if raw_plan:
+            if raw_plan and mastery_updated:
                 originating_session_id = question.get("plan_session_id") or question.get(
                     "review_session_id"
                 )
-                if mastery_updated and originating_session_id is not None:
+                if originating_session_id is not None:
                     originating_session = next(
                         (
                             session
@@ -1539,6 +1868,7 @@ class LearningService:
                 ],
                 "grounding": self._question_grounding(question).value,
                 "grading_mode": grade.mode,
+                "reason_code": grade.reason_code,
                 "mastery_updated": mastery_updated,
                 "next_review_at": (
                     next_review_at.isoformat() if next_review_at is not None else None
@@ -1576,6 +1906,27 @@ class LearningService:
             return data
 
         with self._learning.plan_transaction(owner_id, project_id):
+            if scope_guard is not None:
+                scope_guard()
+            # The fence must identify the *question*, not the learning record as a
+            # whole: the record version also advances on unrelated writes (saving a
+            # question, completing a plan session, a second tab), and it is not
+            # carried by every question producer. prompt_hash is stable across all
+            # of those and changes exactly when the pending question changes, so it
+            # is the token that fails a superseded answer closed.
+            if payload.prompt_hash is not None:
+                current = self._learning.get(owner_id, project_id)
+                is_replay = payload.attempt_id in current.data.get("attempts", {})
+                if not is_replay:
+                    pending = self._progress(current.data).get("pending_question")
+                    if (
+                        pending is not None
+                        and stable_id("question-prompt", pending["id"], pending["prompt"])
+                        != payload.prompt_hash
+                    ):
+                        raise LearningConflictError(
+                            "Question state changed before grading; reload the current question"
+                        )
             self._learning.mutate(owner_id, project_id, grade_once)
         if result is None:
             raise LearningServiceError("Answer grading failed")
@@ -1776,6 +2127,8 @@ class LearningService:
         occurred_at: datetime | None = None,
         ref_id: str | None = None,
     ) -> JourneyEvent | None:
+        if self._journey_events is None:
+            return None
         try:
             return self.record_journey_event(
                 owner_id,

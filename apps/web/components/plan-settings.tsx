@@ -69,6 +69,14 @@ const copy = {
   },
 } as const;
 
+function toLocalDateInput(iso: string): string {
+  const date = new Date(iso);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function initialOrder(topicOrder: string[], topics: Record<string, string>) {
   const available = Object.keys(topics);
   return topicOrder.length === available.length && topicOrder.every((topic) => topic in topics)
@@ -101,7 +109,7 @@ export function PlanSettings({
     return date.toISOString().slice(0, 10);
   }, []);
   const [goal, setGoal] = useState(plan?.goal ?? originalGoal);
-  const [examDate, setExamDate] = useState(plan?.exam_at.slice(0, 10) ?? defaultExamDate);
+  const [examDate, setExamDate] = useState(plan ? toLocalDateInput(plan.exam_at) : defaultExamDate);
   const [dailyMinutes, setDailyMinutes] = useState(plan?.daily_minutes ?? 45);
   const [order, setOrder] = useState(() => initialOrder(topicOrder, topics));
   const [errors, setErrors] = useState<PlanSettingsErrors>({});
@@ -111,7 +119,7 @@ export function PlanSettings({
 
   function reset() {
     setGoal(plan?.goal ?? originalGoal);
-    setExamDate(plan?.exam_at.slice(0, 10) ?? defaultExamDate);
+    setExamDate(plan ? toLocalDateInput(plan.exam_at) : defaultExamDate);
     setDailyMinutes(plan?.daily_minutes ?? 45);
     setOrder(initialOrder(topicOrder, topics));
     setErrors({});
@@ -176,7 +184,6 @@ export function PlanSettings({
     year: "numeric",
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
   }).format(new Date(plan.exam_at)) : null;
 
   return (

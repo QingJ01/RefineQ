@@ -129,6 +129,7 @@ class MaterialRecord(BaseModel):
     chunk_count: int = Field(ge=0)
     content_sha256: str
     indexed_at: datetime
+    workspace_ids: list[str] = Field(default_factory=list)
 
 
 class SearchResult(BaseModel):
@@ -618,6 +619,39 @@ class KnowledgeIndex:
         query: str,
         limit: int = 8,
     ) -> list[SearchResult]:
+        results, _mode = self.search_with_mode(
+            owner_id=owner_id,
+            project_id=project_id,
+            query=query,
+            limit=limit,
+        )
+        return results
+
+    def search_with_mode(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        query: str,
+        limit: int = 8,
+    ) -> tuple[list[SearchResult], str]:
+        """Return results with the retrieval path that actually produced them."""
+
+        return self._search_with_mode(
+            owner_id=owner_id,
+            project_id=project_id,
+            query=query,
+            limit=limit,
+        )
+
+    def _search_with_mode(
+        self,
+        *,
+        owner_id: str,
+        project_id: str,
+        query: str,
+        limit: int = 8,
+    ) -> tuple[list[SearchResult], str]:
         owner_id = validate_identifier(owner_id, field="owner_id")
         project_id = validate_identifier(project_id, field="project_id")
         query = query.strip()
@@ -732,7 +766,7 @@ class KnowledgeIndex:
             scored.append((score, row))
 
         scored.sort(key=lambda item: (-item[0], item[1].material_id, item[1].chunk_index))
-        return [
+        results = [
             SearchResult(
                 citation_id=f"{row.material_id}#{row.chunk_index}",
                 material_id=row.material_id,
@@ -743,6 +777,8 @@ class KnowledgeIndex:
             )
             for score, row in scored[:bounded_limit]
         ]
+        mode = "hybrid" if query_embedding is not None and semantic_scores else "lexical"
+        return results, mode
 
     def get_material(
         self,
@@ -905,6 +941,13 @@ class KnowledgeIndex:
                     material_id for material_id in normalized_ids if material_id not in by_id
                 )
                 raise MaterialNotFoundError(missing)
+            if project_id == "library":
+                session.execute(
+                    delete(workspace_materials).where(
+                        workspace_materials.c.owner_id == owner_id,
+                        workspace_materials.c.material_id.in_(normalized_ids),
+                    )
+                )
             session.execute(
                 delete(material_chunks).where(
                     material_chunks.c.owner_id == owner_id,
@@ -1033,7 +1076,21 @@ class KnowledgeIndex:
                     materials.c.project_id == "library",
                 )
             ).all()
-        records = [self._material_record(row) for row in rows]
+            links = session.execute(
+                select(
+                    workspace_materials.c.material_id,
+                    workspace_materials.c.workspace_id,
+                ).where(workspace_materials.c.owner_id == owner_id)
+            ).all()
+        workspace_ids: dict[str, list[str]] = {}
+        for link in links:
+            workspace_ids.setdefault(str(link.material_id), []).append(str(link.workspace_id))
+        records = [
+            self._material_record(row).model_copy(
+                update={"workspace_ids": sorted(workspace_ids.get(str(row.material_id), []))}
+            )
+            for row in rows
+        ]
         return sorted(records, key=lambda record: (-record.indexed_at.timestamp(), record.id))
 
     def ensure_filenames_available(self, *, owner_id: str, filenames: list[str]) -> None:
@@ -1054,9 +1111,19 @@ class KnowledgeIndex:
         owner_id = validate_identifier(owner_id, field="owner_id")
         workspace_id = validate_identifier(workspace_id, field="workspace_id")
         material_id = validate_identifier(material_id, field="material_id")
-        self.get_material(owner_id=owner_id, project_id="library", material_id=material_id)
         with self._lock_for(owner_id), self.database.session() as session:
             self._lock_owner_write(session, owner_id)
+            material_exists = session.scalar(
+                select(func.count())
+                .select_from(materials)
+                .where(
+                    materials.c.owner_id == owner_id,
+                    materials.c.project_id == "library",
+                    materials.c.material_id == material_id,
+                )
+            )
+            if not material_exists:
+                raise MaterialNotFoundError(material_id)
             exists = session.scalar(
                 select(func.count())
                 .select_from(workspace_materials)
@@ -1108,17 +1175,28 @@ class KnowledgeIndex:
         with self.database.session() as session:
             rows = session.execute(
                 select(
-                    materials.c.project_id,
+                    workspace_materials.c.workspace_id,
                     materials.c.status,
                     func.count().label("count"),
                 )
-                .where(
-                    materials.c.owner_id == owner_id,
-                    materials.c.project_id.in_(bounded_ids),
+                .select_from(
+                    workspace_materials.join(
+                        materials,
+                        and_(
+                            materials.c.owner_id == workspace_materials.c.owner_id,
+                            materials.c.material_id == workspace_materials.c.material_id,
+                            materials.c.project_id == "library",
+                        ),
+                    )
                 )
-                .group_by(materials.c.project_id, materials.c.status)
+                .where(
+                    workspace_materials.c.owner_id == owner_id,
+                    workspace_materials.c.workspace_id.in_(bounded_ids),
+                    materials.c.owner_id == owner_id,
+                )
+                .group_by(workspace_materials.c.workspace_id, materials.c.status)
             ).all()
         result: dict[str, dict[str, int]] = {item: {} for item in bounded_ids}
         for row in rows:
-            result[str(row.project_id)][str(row.status)] = int(row.count)
+            result[str(row.workspace_id)][str(row.status)] = int(row.count)
         return result

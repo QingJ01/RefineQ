@@ -51,6 +51,18 @@ def test_containers_are_unprivileged_and_runtime_state_is_mounted() -> None:
     assert compose.count("read_only: true") >= 2
 
 
+def test_web_runtime_binds_to_all_container_interfaces() -> None:
+    web_image = _read("infra/Dockerfile.web")
+
+    assert "HOSTNAME=0.0.0.0" in web_image
+
+
+def test_web_runtime_contains_public_assets() -> None:
+    web_image = _read("infra/Dockerfile.web")
+
+    assert "/app/public ./public" in web_image
+
+
 def test_custom_deployment_environment_is_namespaced() -> None:
     deployment_text = "\n".join(
         _read(path) for path in ["infra/compose.yml", "infra/Caddyfile", ".env.example"]
@@ -193,6 +205,7 @@ def test_compose_trusts_only_the_pinned_reverse_proxy_address() -> None:
     assert "REFINEQ_FORWARDED_ALLOW_IPS=172.30.0.2" in example
     assert "ipv4_address: 172.30.0.2" in compose
     assert "subnet: 172.30.0.0/24" in compose
+    assert "ip_range: 172.30.0.128/25" in compose
     assert "REFINEQ_FORWARDED_ALLOW_IPS=*" not in example
 
 

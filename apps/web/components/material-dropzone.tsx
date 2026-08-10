@@ -18,15 +18,18 @@ import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "reac
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SourceDrawer } from "@/components/source-drawer";
+import { TargetedPlanBuilder } from "@/components/targeted-plan-builder";
 import { ApiError } from "@/lib/api";
 import { consumeHistoryUploadContinuation } from "@/lib/history-navigation-guard";
 import type { Translator } from "@/lib/i18n";
+import { visibleSelectedMaterials } from "@/lib/material-selection";
 import type {
   Locale,
   MaterialAnalysis,
   MaterialRecord,
   MaterialUpdateInput,
   SearchSource,
+  TargetedPlanInput,
   TopicSuggestion,
 } from "@/lib/types";
 import {
@@ -70,7 +73,7 @@ const organizationCopy = {
     cancel: "取消",
     bulkDelete: "批量删除",
     bulkTitle: (count: number) => `删除 ${count} 份资料？`,
-    bulkDescription: "将同时删除原文件与检索索引；失败时会自动回滚。",
+    bulkDescription: "只从当前学习空间移除；原文件仍保留在总资料库。",
     noMatch: "当前筛选条件下没有资料。",
     originalFile: "原文件",
     status: "处理状态",
@@ -92,7 +95,7 @@ const organizationCopy = {
     cancel: "Cancel",
     bulkDelete: "Delete selected",
     bulkTitle: (count: number) => `Delete ${count} materials?`,
-    bulkDescription: "Original files and search indexes are removed together and restored if deletion fails.",
+    bulkDescription: "Remove from this learning space only; original files stay in the global library.",
     noMatch: "No material matches these filters.",
     originalFile: "Original file",
     status: "Processing status",
@@ -113,6 +116,9 @@ export function MaterialDropzone({
   onDownload,
   onDelete,
   onAnalyze,
+  onCreateTargetedPlan,
+  targetedPlanBusy = false,
+  targetExamAt,
   onUpdate,
   onBulkDelete,
   topicSuggestions = [],
@@ -132,6 +138,9 @@ export function MaterialDropzone({
   onDownload?: (material: MaterialRecord) => void | Promise<void>;
   onDelete?: (material: MaterialRecord) => void | Promise<void>;
   onAnalyze?: (material: MaterialRecord) => Promise<MaterialAnalysis>;
+  onCreateTargetedPlan?: (input: TargetedPlanInput) => void | Promise<void>;
+  targetedPlanBusy?: boolean;
+  targetExamAt?: string;
   onUpdate?: (material: MaterialRecord, input: MaterialUpdateInput) => void | Promise<void>;
   onBulkDelete?: (materials: MaterialRecord[]) => void | Promise<void>;
   topicSuggestions?: TopicSuggestion[];
@@ -233,7 +242,7 @@ export function MaterialDropzone({
       return new Date(right.indexed_at).getTime() - new Date(left.indexed_at).getTime();
     });
   }, [materials, sortOrder, statusFilter, tagFilter]);
-  const selectedMaterials = materials.filter((material) => selectedIds.has(material.id));
+  const selectedMaterials = visibleSelectedMaterials(materials, visibleMaterials, selectedIds);
   const availableLibraryMaterials = libraryMaterials.filter(
     (material) => !materials.some((linked) => linked.id === material.id),
   );
@@ -558,7 +567,7 @@ export function MaterialDropzone({
           {results.map((source) => (
             <li key={`${source.material_id}-${source.chunk_index}`}>
               <button type="button" onClick={() => setSelectedSources([source])}>
-                <span><strong>{source.filename}</strong><em>{Math.round(source.score * 100)}%</em></span>
+                <span><strong>{source.filename}</strong><em>{Math.round(source.score * 100)}% {t("sourceMatch")}</em></span>
                 <p>{source.text}</p>
               </button>
             </li>
@@ -578,7 +587,10 @@ export function MaterialDropzone({
               data-testid="material-filter-status"
               aria-label={copy.status}
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
+              onChange={(event) => {
+                setStatusFilter(event.target.value);
+                setSelectedIds(new Set());
+              }}
             >
               <option value="all">{copy.allStatuses}</option>
               {statuses.map((item) => <option value={item} key={item}>{item}</option>)}
@@ -587,7 +599,10 @@ export function MaterialDropzone({
               data-testid="material-filter-tag"
               aria-label={copy.allTags}
               value={tagFilter}
-              onChange={(event) => setTagFilter(event.target.value)}
+              onChange={(event) => {
+                setTagFilter(event.target.value);
+                setSelectedIds(new Set());
+              }}
             >
               <option value="all">{copy.allTags}</option>
               {tags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}
@@ -706,6 +721,17 @@ export function MaterialDropzone({
                           ))}
                         </ol>
                       </details>
+                    )}
+                    {onCreateTargetedPlan && analyses[material.id].topics.length > 0 && (
+                      <TargetedPlanBuilder
+                        key={`${analyses[material.id].analyzed_at}-${targetExamAt ?? "new"}`}
+                        locale={locale}
+                        materialId={material.id}
+                        topics={analyses[material.id].topics}
+                        initialExamAt={targetExamAt}
+                        disabled={targetedPlanBusy}
+                        onCreate={onCreateTargetedPlan}
+                      />
                     )}
                   </div>
                 )}

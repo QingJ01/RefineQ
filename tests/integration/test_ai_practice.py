@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
 
+import pytest
 from fastapi.testclient import TestClient
 
 from refineq.agent.settings import ModelSettings
 from refineq.api.app import create_app
 from refineq.config import Settings
+from refineq.learning.evidence import stable_id
+from refineq.learning.service import PlanSessionCreate, SeedRequest, TopicSeed
 from refineq.operations.admin import ensure_admin
 
 
@@ -38,7 +43,7 @@ class FakeLearningModel:
         self.calls: list[str] = []
 
     def complete(self, *, settings, messages, response_model):
-        del settings, messages
+        del settings
         self.calls.append(response_model.__name__)
         if response_model.__name__ == "QuestionModelOutput":
             return response_model.model_validate(
@@ -48,6 +53,13 @@ class FakeLearningModel:
                     "rubric": [{"criterion": "准确解释极限", "max_points": 100}],
                     "explanation": "检查核心概念。",
                     "citations": ["material-1#0"],
+                }
+            )
+        if response_model.__name__ == "TrustedAnswerKeyOutput":
+            return response_model.model_validate(
+                {
+                    "supported": True,
+                    "expected_answer": "函数极限是函数值趋近的目标。",
                 }
             )
         if response_model.__name__ == "MaterialAnalysisModelOutput":
@@ -67,6 +79,11 @@ class FakeLearningModel:
                     "confidence": 0.91,
                 }
             )
+        learner_answer = (
+            messages[-1]["content"]
+            .split("<learner_answer>\n", 1)[1]
+            .split("\n</learner_answer>", 1)[0]
+        )
         return response_model.model_validate(
             {
                 "score": 88,
@@ -76,6 +93,7 @@ class FakeLearningModel:
                 "feedback": "回答正确，下一步练习形式化定义。",
                 "citations": [],
                 "sufficient_evidence": True,
+                "evidence_spans": [learner_answer],
             }
         )
 
@@ -121,15 +139,20 @@ class SequencedGradingLearningModel(FakeLearningModel):
         self.scores = iter(scores)
 
     def complete(self, *, settings, messages, response_model):
-        if response_model.__name__ == "QuestionModelOutput":
+        if response_model.__name__ in {"QuestionModelOutput", "TrustedAnswerKeyOutput"}:
             return super().complete(
                 settings=settings,
                 messages=messages,
                 response_model=response_model,
             )
-        del settings, messages
+        del settings
         self.calls.append(response_model.__name__)
         score = next(self.scores)
+        learner_answer = (
+            messages[-1]["content"]
+            .split("<learner_answer>\n", 1)[1]
+            .split("\n</learner_answer>", 1)[0]
+        )
         return response_model.model_validate(
             {
                 "score": score,
@@ -139,8 +162,532 @@ class SequencedGradingLearningModel(FakeLearningModel):
                 "feedback": "已记录这次独立作答。",
                 "citations": [],
                 "sufficient_evidence": True,
+                "evidence_spans": [learner_answer],
             }
         )
+
+
+class NominalAcademicLearningModel:
+    def __init__(self) -> None:
+        self.message_batches: list[list[dict[str, str]]] = []
+
+    def complete(self, *, settings, messages, response_model):
+        del settings
+        self.message_batches.append(messages)
+        prompt = "\n".join(message["content"] for message in messages).casefold()
+        if "feedback control" in prompt:
+            question = "Explain how feedback control changes system output."
+            answer = (
+                "Feedback control compares output with a reference and uses the error "
+                "to adjust the system input."
+            )
+        elif "compound interest" in prompt:
+            question = "Explain how compound interest changes an investment return."
+            answer = (
+                "Compound interest earns interest on principal and accumulated interest, "
+                "increasing investment returns over time."
+            )
+        else:
+            raise AssertionError(prompt)
+        if response_model.__name__ == "QuestionModelOutput":
+            return response_model.model_validate(
+                {
+                    "prompt": question,
+                    "expected_answer": answer,
+                    "rubric": [{"criterion": "Explain the core relationship", "max_points": 100}],
+                    "explanation": "The task checks the named academic relationship.",
+                    "citations": ["nominal-notes#0"],
+                }
+            )
+        if response_model.__name__ == "TrustedAnswerKeyOutput":
+            return response_model.model_validate({"supported": True, "expected_answer": answer})
+        learner_answer = (
+            messages[-1]["content"]
+            .split("<learner_answer>\n", 1)[1]
+            .split("\n</learner_answer>", 1)[0]
+        )
+        return response_model.model_validate(
+            {
+                "score": 90,
+                "strengths": ["Explains the core relationship."],
+                "gaps": [],
+                "misconceptions": [],
+                "feedback": "The answer demonstrates the requested concept.",
+                "citations": [],
+                "sufficient_evidence": True,
+                "evidence_spans": [learner_answer],
+            }
+        )
+
+
+class ComposedMaterialLearningModel(NominalAcademicLearningModel):
+    def complete(self, *, settings, messages, response_model):
+        content = "\n".join(message["content"] for message in messages)
+        if response_model.__name__ == "MaterialAnalysisModelOutput":
+            self.message_batches.append(messages)
+            citation = re.search(r"\[([^\]\n]+#\d+)\]", content)
+            assert citation is not None
+            return response_model.model_validate(
+                {
+                    "material_type": "lecture_notes",
+                    "title": "Feedback control notes",
+                    "summary": "Explains output regulation using a feedback loop.",
+                    "sections": [
+                        {
+                            "title": "Output with feedback control",
+                            "topics": ["Output with feedback control"],
+                            "citation_ids": [citation.group(1)],
+                        }
+                    ],
+                    "topics": ["Output with feedback control"],
+                    "confidence": 0.95,
+                }
+            )
+        if response_model.__name__ == "TargetedPlanOutput":
+            self.message_batches.append(messages)
+            planned_at = (datetime.now(UTC) + timedelta(days=1)).replace(
+                hour=19,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+            return response_model.model_validate(
+                {
+                    "sessions": [
+                        {
+                            "topic": "Output with feedback control",
+                            "planned_at": planned_at.isoformat(),
+                            "minutes": 30,
+                            "activity": "practice",
+                        }
+                    ]
+                }
+            )
+        if response_model.__name__ == "QuestionModelOutput":
+            self.message_batches.append(messages)
+            citation = re.search(r"\[([^\]\n]+#\d+)\]", content)
+            assert citation is not None
+            return response_model.model_validate(
+                {
+                    "prompt": "Explain how feedback control changes system output.",
+                    "expected_answer": "A feedback loop adjusts the system input.",
+                    "rubric": [{"criterion": "Explain the feedback loop", "max_points": 100}],
+                    "explanation": "Checks the core closed-loop relationship.",
+                    "citations": [citation.group(1)],
+                }
+            )
+        return super().complete(
+            settings=settings,
+            messages=messages,
+            response_model=response_model,
+        )
+
+
+def test_nominal_control_word_topics_persist_mastery_and_plan_progress(
+    tmp_path: Path,
+) -> None:
+    model = NominalAcademicLearningModel()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=model,
+    )
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "nominal-topics@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Nominal Topic Learner",
+            },
+        ).json()
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study feedback systems and investment returns"},
+        ).json()["workspace"]["id"]
+        topics = [
+            TopicSeed(id="feedback-control", name="Output with feedback control"),
+            TopicSeed(id="compound-interest", name="Return with compound interest"),
+        ]
+        app.state.workspace_learning_service.seed(
+            owner_id,
+            workspace_id,
+            SeedRequest(
+                goal="Master feedback control and compound interest",
+                exam_at=datetime.now(UTC) + timedelta(days=14),
+                daily_minutes=30,
+                topics=topics,
+            ),
+            answer_key_subjects={
+                "feedback-control": "feedback control",
+                "compound-interest": "compound interest",
+            },
+        )
+        plan = app.state.workspace_learning_service.create_plan(
+            owner_id,
+            workspace_id,
+            start_at=datetime.now(UTC),
+        )
+        app.state.knowledge.add_document(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id="nominal-notes",
+            filename="nominal-topics.md",
+            text=(
+                "Output with feedback control uses measured output and a reference to adjust "
+                "system input. Return with compound interest includes growth on principal and "
+                "previously accumulated interest."
+            ),
+        )
+        admin = ensure_admin(
+            app.state.identity,
+            email="nominal-topic-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Nominal Topic Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
+
+        completed_sessions: dict[str, str] = {}
+        for topic in topics:
+            plan_session = next(
+                session
+                for session in plan.sessions
+                if session.topic_id == topic.id and session.status == "planned"
+            )
+            question = client.post(
+                f"/workspaces/{workspace_id}/learning/question",
+                headers=headers,
+                json={
+                    "request_id": f"{topic.id}-question",
+                    "topic_id": topic.id,
+                    "plan_session_id": plan_session.id,
+                },
+            )
+            assert question.status_code == 200
+            expected_answer = (
+                "Feedback control compares output with a reference and uses the error to "
+                "adjust the system input."
+                if topic.id == "feedback-control"
+                else (
+                    "Compound interest earns interest on principal and accumulated interest, "
+                    "increasing investment returns over time."
+                )
+            )
+            answer = client.post(
+                f"/workspaces/{workspace_id}/learning/answer",
+                headers=headers,
+                json={
+                    "attempt_id": f"{topic.id}-attempt",
+                    "question_id": question.json()["id"],
+                    "answer": expected_answer,
+                },
+            )
+            assert answer.status_code == 200
+            assert answer.json()["mastery_updated"] is True
+            assert answer.json()["completed_plan_session_id"] == plan_session.id
+            completed_sessions[topic.id] = plan_session.id
+
+        stored = app.state.learning.get(owner_id, workspace_id).data["progress"]
+
+    assert all(stored["bkt_states"][topic.id]["p_mastery"] > 0.0 for topic in topics)
+    statuses = {session["id"]: session["status"] for session in stored["plan"]["sessions"]}
+    assert all(statuses[session_id] == "completed" for session_id in completed_sessions.values())
+    grading_prompts = [
+        batch[-1]["content"]
+        for batch in model.message_batches
+        if "<learner_answer>" in batch[-1]["content"]
+    ]
+    assert len(grading_prompts) == 2
+    assert all("Trusted answer key" not in prompt for prompt in grading_prompts)
+    assert all("untrusted_study_materials" not in prompt for prompt in grading_prompts)
+    assert all("Output with feedback control" not in prompt for prompt in grading_prompts)
+    assert all("Return with compound interest" not in prompt for prompt in grading_prompts)
+
+
+def test_material_analysis_registry_targeted_plan_completes_mastery_journey(
+    tmp_path: Path,
+) -> None:
+    model = ComposedMaterialLearningModel()
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=model,
+    )
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "material-registry-journey@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Material Registry Learner",
+            },
+        ).json()
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study feedback control"},
+        ).json()["workspace"]["id"]
+        material = client.post(
+            "/materials/library",
+            headers=headers,
+            files={
+                "files": (
+                    "feedback-control.txt",
+                    (
+                        b"Output with feedback control compares measured output with a reference "
+                        b"and uses the error to adjust system input."
+                    ),
+                    "text/plain",
+                )
+            },
+        ).json()[0]
+        attach = client.post(
+            f"/materials/library/library/{material['id']}/attach/{workspace_id}",
+            headers=headers,
+        )
+        assert attach.status_code == 201
+        admin = ensure_admin(
+            app.state.identity,
+            email="material-registry-admin@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Material Registry Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
+        analysis = client.post(
+            f"/workspaces/{workspace_id}/materials/{material['id']}/analysis",
+            headers=headers,
+        )
+        assert analysis.status_code == 200
+        plan = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/targeted",
+            headers=headers,
+            json={
+                "idempotency_key": "material-registry-plan-1",
+                "material_id": material["id"],
+                "focus_topics": ["Output with feedback control"],
+                "exam_at": (datetime.now(UTC) + timedelta(days=14)).isoformat(),
+                "daily_minutes": 30,
+                "study_weekdays": [0, 1, 2, 3, 4, 5, 6],
+                "preferred_hour": 19,
+                "timezone_offset_minutes": 0,
+                "routine_notes": "",
+            },
+        )
+        assert plan.status_code == 200
+        session = plan.json()["sessions"][0]
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "material-registry-question",
+                "topic_id": session["topic_id"],
+                "plan_session_id": session["id"],
+            },
+        )
+        assert question.status_code == 200
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": "material-registry-answer",
+                "question_id": question.json()["id"],
+                "answer": (
+                    "Feedback control compares output with a reference and uses the resulting "
+                    "error to adjust system input, for example by correcting a measured deviation."
+                ),
+            },
+        )
+        stored = app.state.learning.get(owner_id, workspace_id).data["progress"]
+
+    assert answer.status_code == 200
+    assert answer.json()["mastery_updated"] is True
+    assert answer.json()["completed_plan_session_id"] == session["id"]
+    topic = stored["topics"][session["topic_id"]]
+    assert topic["answer_key_subject"] == "feedback control"
+    assert stored["bkt_states"][session["topic_id"]]["p_mastery"] > 0.0
+
+
+def test_explicit_topic_actions_reauthorize_existing_topics_without_a_subject(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": "legacy-topic-actions@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Legacy Topic Learner",
+            },
+        ).json()
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study legacy topics"},
+        ).json()["workspace"]["id"]
+        plan_topic_name = "Legacy plan topic"
+        plan_topic_id = stable_id("topic", workspace_id, plan_topic_name)
+        app.state.workspace_learning_service.seed(
+            owner_id,
+            workspace_id,
+            SeedRequest(
+                goal="Restore explicit mastery authority",
+                exam_at=datetime.now(UTC) + timedelta(days=14),
+                daily_minutes=30,
+                topics=[
+                    TopicSeed(id="legacy-add-topic", name="Legacy add topic"),
+                    TopicSeed(id=plan_topic_id, name=plan_topic_name),
+                ],
+            ),
+            answer_key_subjects={},
+        )
+        app.state.workspace_learning_service.create_plan(
+            owner_id,
+            workspace_id,
+            start_at=datetime.now(UTC),
+        )
+
+        app.state.workspace_learning_service.add_topic(
+            owner_id,
+            workspace_id,
+            TopicSeed(id="legacy-add-topic", name="Legacy add topic"),
+        )
+        app.state.workspace_learning_service.add_plan_session(
+            owner_id,
+            workspace_id,
+            PlanSessionCreate(
+                topic_name=plan_topic_name,
+                # The generated plan fills each day to the daily budget; use a
+                # later empty day so the added session stays within budget.
+                planned_at=datetime.now(UTC) + timedelta(days=30),
+                minutes=20,
+                activity="practice",
+            ),
+        )
+        topics = app.state.learning.get(owner_id, workspace_id).data["progress"]["topics"]
+
+    assert topics["legacy-add-topic"]["answer_key_subject"] == "Legacy add topic"
+    assert topics[plan_topic_id]["answer_key_subject"] == plan_topic_name
+
+
+@pytest.mark.parametrize("restore_from_history", [False, True])
+def test_legacy_trusted_question_without_current_subject_cannot_update_mastery(
+    tmp_path: Path,
+    restore_from_history: bool,
+) -> None:
+    app = create_app(
+        Settings(data_root=tmp_path / "data", _env_file=None),
+        learning_model_transport=FakeLearningModel(),
+    )
+
+    with TestClient(app) as client:
+        auth = client.post(
+            "/auth/register",
+            json={
+                "email": f"legacy-question-{restore_from_history}@example.com",
+                "password": "correct-horse-battery-staple",
+                "display_name": "Legacy Question Learner",
+            },
+        ).json()
+        owner_id = auth["user"]["id"]
+        headers = {"Authorization": f"Bearer {auth['access_token']}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "Study function limits"},
+        ).json()["workspace"]["id"]
+        app.state.workspace_learning_service.seed(
+            owner_id,
+            workspace_id,
+            SeedRequest(
+                goal="Master limits",
+                exam_at=datetime.now(UTC) + timedelta(days=14),
+                daily_minutes=30,
+                topics=[TopicSeed(id="limits", name="函数极限")],
+            ),
+        )
+        app.state.knowledge.add_document(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id="material-1",
+            filename="limits.md",
+            text="函数极限是函数值趋近的目标，不要求函数在该点等于目标值。",
+        )
+        admin = ensure_admin(
+            app.state.identity,
+            email=f"legacy-admin-{restore_from_history}@example.com",
+            password="correct-horse-battery-staple",
+            display_name="Legacy Admin",
+        ).user
+        app.state.model_settings.save(
+            admin.id,
+            ModelSettings(
+                base_url="https://api.openai.com/v1",
+                model="study-model",
+                api_key="secret-key-1234",
+            ),
+        )
+        question = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={"request_id": "legacy-question", "topic_id": "limits"},
+        ).json()
+
+        def simulate_legacy_record(data):
+            progress = data["progress"]
+            progress["topics"]["limits"].pop("answer_key_subject", None)
+            for stored in progress["question_history"].values():
+                stored["grading"].pop("answer_key_subject", None)
+            if progress.get("pending_question") is not None:
+                progress["pending_question"]["grading"].pop("answer_key_subject", None)
+            if restore_from_history:
+                progress["pending_question"] = None
+            return data
+
+        app.state.learning.mutate(owner_id, workspace_id, simulate_legacy_record)
+        if restore_from_history:
+            retry = client.post(
+                f"/workspaces/{workspace_id}/learning/questions/{question['id']}/retry",
+                headers=headers,
+            )
+            assert retry.status_code == 200
+
+        answer = client.post(
+            f"/workspaces/{workspace_id}/learning/answer",
+            headers=headers,
+            json={
+                "attempt_id": f"legacy-attempt-{restore_from_history}",
+                "question_id": question["id"],
+                "answer": "函数极限是函数值趋近的目标，并且不要求在该点等于目标值。",
+            },
+        )
+        stored = app.state.learning.get(owner_id, workspace_id).data["progress"]
+
+    assert answer.status_code == 200
+    assert answer.json()["mastery_updated"] is False
+    assert stored["bkt_states"]["limits"]["p_mastery"] == 0.0
 
 
 def test_question_model_work_runs_outside_database_transaction(tmp_path: Path) -> None:
@@ -330,12 +877,13 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
         grade = answer.json()
         assert grade["score"] == 88
         assert grade["is_correct"] is True
+        assert grade["mastery_updated"] is True
         assert grade["feedback"] == "回答正确，下一步练习形式化定义。"
         assert grade["strengths"] == ["准确说明趋近"]
         assert grade["gaps"] == ["可以补充形式化定义"]
         assert grade["grading_mode"] == "ai"
         assert grade["grounding"] == "material"
-        assert grade["citations"] == []
+        assert grade["citations"] == ["material-1#0"]
         assert grade["sources"][0]["citation_id"] == "material-1#0"
         assert "expected_answer" not in answer.text
 
@@ -348,10 +896,11 @@ def test_workspace_practice_uses_ai_without_leaking_private_grading_data(
     assert replay.status_code == 200
     assert replay.json()["replayed"] is True
     assert replay.json()["score"] == 88
-    assert model.calls == [
+    assert sorted(model.calls) == [
+        "GradingModelOutput",
         "MaterialAnalysisModelOutput",
         "QuestionModelOutput",
-        "GradingModelOutput",
+        "TrustedAnswerKeyOutput",
     ]
 
 
@@ -429,7 +978,7 @@ def test_retrying_one_question_cannot_update_mastery_or_difficulty_twice(
         app.state.knowledge.add_document(
             owner_id=owner_id,
             project_id=workspace_id,
-            material_id="limits-evidence",
+            material_id="material-1",
             filename="limits.txt",
             text="函数极限描述函数值趋近的目标，函数在该点不一定等于极限值。",
         )

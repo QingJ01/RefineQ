@@ -90,6 +90,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly detail?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -161,6 +162,7 @@ export class ApiClient {
           response.status,
           body?.error?.code ?? "request_error",
           body?.error?.message ?? `Request failed (${response.status})`,
+          body?.error?.detail,
         );
       }
       if (response.status === 204) return undefined as T;
@@ -633,20 +635,25 @@ export class ApiClient {
     questionId: string,
     answer: string,
     attemptId?: string,
-    signal?: AbortSignal,
-    timing?: { remainingMinutes: number; summaryReserveMinutes: number },
+    options?: {
+      promptHash?: string;
+      signal?: AbortSignal;
+      remainingMinutes?: number;
+      summaryReserveMinutes?: number;
+    },
   ): Promise<AnswerResult> {
     return this.request(
       `/workspaces/${workspaceId}/learning/answer`,
       {
         method: "POST",
-        signal,
+        signal: options?.signal,
         body: JSON.stringify({
           attempt_id: attemptId ?? crypto.randomUUID().replaceAll("-", ""),
           question_id: questionId,
           answer,
-          remaining_minutes: timing?.remainingMinutes,
-          summary_reserve_minutes: timing?.summaryReserveMinutes,
+          ...(options?.promptHash ? { prompt_hash: options.promptHash } : {}),
+          remaining_minutes: options?.remainingMinutes,
+          summary_reserve_minutes: options?.summaryReserveMinutes,
         }),
       },
       token,
@@ -674,7 +681,13 @@ export class ApiClient {
   ): Promise<StudySession> {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions/${sessionId}`,
-      { method: "PATCH", body: JSON.stringify(input) },
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...input,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+      },
       token,
     );
   }
@@ -686,7 +699,13 @@ export class ApiClient {
   ): Promise<StudySession> {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions`,
-      { method: "POST", body: JSON.stringify(input) },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...input,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+      },
       token,
     );
   }
@@ -706,7 +725,13 @@ export class ApiClient {
   ): Promise<StudyPlan> {
     return this.request<StudyPlan>(
       `/workspaces/${workspaceId}/learning/plan`,
-      { method: "PUT", body: JSON.stringify(input) },
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          ...input,
+          timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        }),
+      },
       token,
     );
   }
@@ -771,6 +796,26 @@ export class ApiClient {
     return this.request("/materials/library", {}, token);
   }
 
+  deleteLibraryMaterial(token: string, materialId: string): Promise<void> {
+    return this.request(
+      `/materials/library/${encodeURIComponent(materialId)}`,
+      { method: "DELETE" },
+      token,
+    );
+  }
+
+  bulkDeleteLibraryMaterials(token: string, materialIds: string[]): Promise<void> {
+    return this.request(
+      "/materials/library",
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ material_ids: materialIds }),
+      },
+      token,
+    );
+  }
+
   attachLibraryMaterial(
     token: string,
     sourceScope: string,
@@ -815,9 +860,13 @@ export class ApiClient {
     workspaceId: string,
     input: TargetedPlanInput,
   ): Promise<StudyPlan> {
+    const body: TargetedPlanInput = {
+      ...input,
+      idempotency_key: input.idempotency_key ?? crypto.randomUUID().replaceAll("-", ""),
+    };
     return this.request<StudyPlan>(
       `/workspaces/${workspaceId}/learning/plan/targeted`,
-      { method: "POST", body: JSON.stringify(input) },
+      { method: "POST", body: JSON.stringify(body) },
       token,
       this.longRequestTimeouts.model,
     );

@@ -17,6 +17,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { BrandMark } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EvidenceLedger } from "@/components/evidence-ledger";
+import { InitialDiagnostic } from "@/components/initial-diagnostic";
 import { LearningHome } from "@/components/learning-home";
 import { LearningReport } from "@/components/learning-report";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
@@ -38,7 +39,7 @@ import {
   pendingCoachTurn,
   type PendingCoachTurn,
 } from "@/lib/coach-actions";
-import { localizeApiError } from "@/lib/error-messages";
+import { describePlanCapacityError, localizeApiError } from "@/lib/error-messages";
 import {
   browserHistoryNavigation,
   browserHistoryTraversalTarget,
@@ -75,6 +76,7 @@ import {
 import type {
   AttemptFeedbackInput,
   AttemptInsight,
+  DiagnosticResultInput,
   ExecutableActionProposal,
   AuthResponse,
   HomeActionReceipt,
@@ -90,10 +92,12 @@ import type {
   PracticeRequest,
   SearchSource,
   StudySession,
+  TargetedPlanInput,
   TopicSuggestion,
   WorkspaceSnapshot,
 } from "@/lib/types";
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
+import { chooseWorkspacePrimaryAction } from "@/lib/workspace-primary-action";
 import {
   clearWorkspaceSnapshots,
   consumeWorkspaceSnapshot,
@@ -164,10 +168,12 @@ export function StudyWorkspace({
   const {
     answer,
     attemptIdRef,
+    beginQuestionLoad,
     capturePracticeGeneration,
     clearPracticeState,
     hydratePractice,
     isPracticeGenerationCurrent,
+    isQuestionLoadCurrent,
     learningMode,
     practiceBusy,
     question,
@@ -187,6 +193,7 @@ export function StudyWorkspace({
   const [sessionStartedAt, setSessionStartedAt] = useState(() => Date.now());
   const [planView, setPlanView] = useState<"list" | "calendar">("list");
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
+  const [targetedPlanBusy, setTargetedPlanBusy] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [snapshotConflict, setSnapshotConflict] = useState(false);
   const [masteryBefore, setMasteryBefore] = useState<number | null>(null);
@@ -211,6 +218,8 @@ export function StudyWorkspace({
   ) => void>(() => undefined);
   const latestHomeRequestIdRef = useRef<string | null>(null);
   const workspaceOpenGenerationRef = useRef(0);
+  const targetedPlanGenerationRef = useRef(0);
+  const targetedPlanBusyRef = useRef(false);
   const authRef = useRef(auth);
   const workspaceRef = useRef(workspace);
   const localeRef = useRef(locale);
@@ -813,6 +822,7 @@ export function StudyWorkspace({
   async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
     if (!auth || !workspace) return false;
     const generation = capturePracticeGeneration();
+    const loadSeq = beginQuestionLoad();
     setPracticeBusy(true);
     setError("");
     const requestId = request.requestId
@@ -840,11 +850,33 @@ export function StudyWorkspace({
           questionRequestIdRef.current = null;
           attemptIdRef.current = null;
         },
+        () => isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq),
       );
-      return isPracticeGenerationCurrent(generation);
+      return isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq);
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
       return false;
+    } finally {
+      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
+    }
+  }
+
+  async function submitInitialDiagnostic(results: DiagnosticResultInput[]) {
+    if (!auth || !workspace) return;
+    const generation = capturePracticeGeneration();
+    setPracticeBusy(true);
+    setError("");
+    try {
+      await api.submitWorkspaceDiagnostic(auth.access_token, workspace.id, results);
+      if (!isPracticeGenerationCurrent(generation)) return;
+      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+      if (!isPracticeGenerationCurrent(generation)) return;
+      setProgress(snapshot.progress);
+      setEvidence(snapshot.evidence);
+      setPlan(snapshot.plan);
+      setNextAction(snapshot.next_action);
+    } catch (caught) {
+      if (isPracticeGenerationCurrent(generation)) reportError(caught);
     } finally {
       if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
     }
@@ -868,8 +900,8 @@ export function StudyWorkspace({
           question.id,
           answer,
           attemptId,
-          undefined,
           {
+            promptHash: question.prompt_hash,
             remainingMinutes: remainingSessionMinutes(sessionStartedAt, sessionMinutes),
             summaryReserveMinutes: summaryReserveMinutes(sessionMinutes),
           },
@@ -1190,9 +1222,80 @@ export function StudyWorkspace({
     }
   }
 
+  async function createTargetedPlan(input: TargetedPlanInput) {
+    if (!auth || !workspace || targetedPlanBusyRef.current) return;
+    const targetWorkspaceId = workspace.id;
+    const targetToken = auth.access_token;
+    const generation = ++targetedPlanGenerationRef.current;
+    targetedPlanBusyRef.current = true;
+    setTargetedPlanBusy(true);
+    setError("");
+    // One stable idempotency key for this whole user action. The endpoint is
+    // synchronous and commits even if the request times out, so a retry must
+    // reuse this exact key to replay the committed plan instead of forging a
+    // fresh-key plan that overwrites the one the learner never got to see.
+    const request: TargetedPlanInput = {
+      ...input,
+      idempotency_key: input.idempotency_key ?? crypto.randomUUID().replaceAll("-", ""),
+    };
+    try {
+      const created = await (async () => {
+        try {
+          return await api.createTargetedPlan(targetToken, targetWorkspaceId, request);
+        } catch (caught) {
+          // A client-side timeout (408) is not proof the server failed to commit.
+          // Retry once with the SAME key so the committed plan is reconciled back
+          // rather than surfaced as a terminal error that invites an overwrite.
+          if (
+            !(caught instanceof ApiError && caught.status === 408)
+            || targetedPlanGenerationRef.current !== generation
+            || workspaceRef.current?.id !== targetWorkspaceId
+            || authRef.current?.access_token !== targetToken
+          ) throw caught;
+          return api.createTargetedPlan(targetToken, targetWorkspaceId, request);
+        }
+      })();
+      if (
+        targetedPlanGenerationRef.current !== generation
+        || workspaceRef.current?.id !== targetWorkspaceId
+        || authRef.current?.access_token !== targetToken
+      ) return;
+      const snapshot = await api.getWorkspaceSnapshot(targetToken, targetWorkspaceId);
+      if (
+        targetedPlanGenerationRef.current !== generation
+        || workspaceRef.current?.id !== targetWorkspaceId
+        || authRef.current?.access_token !== targetToken
+      ) return;
+      setPlan(created);
+      setProgress(snapshot.progress);
+      setEvidence(snapshot.evidence);
+      setNextAction(snapshot.next_action);
+      setPlanView("calendar");
+      router.push(`/learn/${encodeURIComponent(targetWorkspaceId)}/calendar`);
+    } catch (caught) {
+      if (
+        targetedPlanGenerationRef.current === generation
+        && workspaceRef.current?.id === targetWorkspaceId
+      ) reportError(caught);
+      throw caught;
+    } finally {
+      if (targetedPlanGenerationRef.current === generation) {
+        targetedPlanBusyRef.current = false;
+        setTargetedPlanBusy(false);
+      }
+    }
+  }
+
   async function addCalendarSession(input: { topic_name: string; planned_at: string; minutes: number; activity: string }) {
     if (!auth || !workspace) return false;
-    await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    try {
+      await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    } catch (caught) {
+      // Adding onto a full day is a capacity conflict; show the day and the
+      // next open one instead of a generic banner.
+      setError(describePlanCapacityError(caught, locale));
+      return false;
+    }
     await refreshWorkspaceSnapshot();
     return true;
   }
@@ -1478,7 +1581,9 @@ export function StudyWorkspace({
       }
       return true;
     } catch (caught) {
-      reportError(caught);
+      // A daily-budget conflict gets a specific message (with the next open day)
+      // instead of the generic error banner.
+      setError(describePlanCapacityError(caught, locale));
       return false;
     } finally {
       setBusySessionId(null);
@@ -1509,7 +1614,9 @@ export function StudyWorkspace({
       if (input.regenerate) setPlanView("calendar");
       await refreshNextAction(auth.access_token, workspace.id);
     } catch (caught) {
-      reportError(caught);
+      // Lowering the daily budget below existing sessions is a capacity
+      // conflict; it carries the day and usage detail worth showing.
+      setError(describePlanCapacityError(caught, locale));
       throw caught;
     } finally {
       setPlanSettingsBusy(false);
@@ -1767,6 +1874,11 @@ export function StudyWorkspace({
   const averageMastery = masteryValues.reduce((sum, value) => sum + value, 0)
     / Math.max(1, masteryValues.length);
   const selectedTopic = insights?.topics.find((item) => item.topic_id === selectedTopicId);
+  const primaryAction = progress ? chooseWorkspacePrimaryAction({
+    diagnosticCount: progress.diagnostic_count,
+    attemptCount: progress.attempt_count,
+    nextActionType: nextAction?.action_type ?? null,
+  }) : "none";
   const nav: Array<{ id: LearningSection; icon: typeof BookOpen }> = [
     { id: "today", icon: BookOpen },
     { id: "plan", icon: CalendarDays },
@@ -1880,7 +1992,7 @@ export function StudyWorkspace({
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
           {section === "today" && !question && !result && nextAction
-            && progress && (
+            && primaryAction === "next_action" && progress && (
             <NextActionCard
               locale={locale}
               action={nextAction}
@@ -1899,6 +2011,17 @@ export function StudyWorkspace({
                 if (topicId) void startAlternativeTopicForToday(topicId);
                 else void getQuestion({ learningMode });
               }}
+            />
+          )}
+          {section === "today"
+            && primaryAction === "diagnostic"
+            && progress
+            && (
+            <InitialDiagnostic
+              locale={locale}
+              topics={progress.topics}
+              busy={practiceBusy}
+              onSubmit={submitInitialDiagnostic}
             />
           )}
           {section === "today" && (question || result) && (
@@ -2017,6 +2140,9 @@ export function StudyWorkspace({
               onUpload={uploadMaterials}
               onSearch={searchMaterials}
               onAnalyze={analyzeMaterial}
+              onCreateTargetedPlan={createTargetedPlan}
+              targetedPlanBusy={targetedPlanBusy}
+              targetExamAt={plan?.exam_at}
               onDownload={downloadMaterial}
               onDelete={deleteMaterial}
               onUpdate={updateMaterial}

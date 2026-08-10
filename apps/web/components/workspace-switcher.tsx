@@ -10,14 +10,14 @@ const copy = {
   zh: {
     current: "当前空间",
     switchSpace: "切换学习空间",
-    progress: "学习进度",
+    progress: "掌握度",
     allSpaces: "查看所有学习空间",
     menu: "学习空间列表",
   },
   en: {
     current: "Current space",
     switchSpace: "Switch learning space",
-    progress: "Learning progress",
+    progress: "Mastery",
     allSpaces: "View all learning spaces",
     menu: "Learning spaces",
   },

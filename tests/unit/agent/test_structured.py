@@ -85,6 +85,14 @@ def test_structured_transport_uses_finite_timeout_retry_and_output_budget(
     assert captured["client"]["max_retries"] <= 2
     assert captured["request"]["max_tokens"] <= 4_000
 
+    sent_messages = captured["request"]["messages"]
+    schema_instruction = sent_messages[-1]["content"]
+    assert sent_messages[-1]["role"] == "system"
+    assert "JSON" in schema_instruction
+    assert '"action"' in schema_instruction
+    assert '"reason"' in schema_instruction
+    assert '"additionalProperties": false' in schema_instruction
+
 
 def test_structured_transport_accepts_short_lived_client_configuration(monkeypatch) -> None:
     captured: dict[str, object] = {}

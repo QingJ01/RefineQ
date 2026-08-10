@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal
 
 from openai import OpenAIError
@@ -10,9 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from refineq.agent.settings import ModelNotConfiguredError, ModelSettingsRepository
 from refineq.agent.structured import StructuredModelResponseError, StructuredModelTransport
+from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.evidence import stable_id
 from refineq.learning.models import BKTState, DifficultyState, StudyPlan, StudySession
+from refineq.learning.trusted_topics import material_answer_key_subject
 from refineq.materials.models import MaterialAnalysis
+from refineq.operations.recovery import RecoveryLease
 from refineq.storage.learning import LearningRepository
 from refineq.storage.material_analyses import MaterialAnalysisRepository
 
@@ -20,6 +24,7 @@ from refineq.storage.material_analyses import MaterialAnalysisRepository
 class TargetedPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     material_id: str
     focus_topics: list[str] = Field(min_length=1, max_length=30)
     exam_at: datetime
@@ -66,16 +71,23 @@ class TargetedPlanOutput(BaseModel):
     sessions: list[PlannedSessionOutput] = Field(min_length=1, max_length=365)
 
 
+class MaterialMutationBusyError(RuntimeError):
+    pass
+
+
 class TargetedPlanService:
     def __init__(
         self,
         learning: LearningRepository,
         analyses: MaterialAnalysisRepository,
+        knowledge: KnowledgeIndex,
         settings: ModelSettingsRepository,
         transport: StructuredModelTransport,
+        material_mutation_lease_path: Path | None = None,
     ) -> None:
-        self.learning, self.analyses = learning, analyses
+        self.learning, self.analyses, self.knowledge = learning, analyses, knowledge
         self.settings, self.transport = settings, transport
+        self.material_mutation_lease_path = material_mutation_lease_path
 
     @staticmethod
     def _fallback(payload: TargetedPlanRequest, start: datetime) -> list[PlannedSessionOutput]:
@@ -99,10 +111,34 @@ class TargetedPlanService:
         user_timezone = timezone(timedelta(minutes=payload.timezone_offset_minutes))
         start = datetime.now(user_timezone)
         local_exam_at = payload.exam_at.astimezone(user_timezone)
+        self.knowledge.get_material(
+            owner_id=owner_id,
+            project_id=workspace_id,
+            material_id=payload.material_id,
+        )
         analysis: MaterialAnalysis = self.analyses.get(owner_id, workspace_id, payload.material_id)
+        supported_topics = set(analysis.topics)
+        unsupported = [topic for topic in payload.focus_topics if topic not in supported_topics]
+        if unsupported:
+            raise ValueError(
+                "focus_topics must be supported by the material analysis: " + ", ".join(unsupported)
+            )
         learning_record = self.learning.get_or_create(owner_id, workspace_id)
-        current_plan_data = learning_record.data.get("progress", {}).get("plan")
-        current_plan = StudyPlan.model_validate(current_plan_data) if current_plan_data else None
+        # Dedup on the client-supplied idempotency key, not a hash of the request
+        # body. The endpoint is synchronous and commits even after the browser
+        # aborts at its timeout, so a retry that tweaks any field must still replay
+        # the committed plan (same key) instead of forging a new one that would
+        # overwrite the plan the learner never saw.
+        request_key = payload.idempotency_key
+        current_progress = learning_record.data["progress"]
+        current_plan_raw = current_progress.get("plan")
+        request_plans = current_progress.get("targeted_plan_requests", {})
+        if (
+            isinstance(request_plans, dict)
+            and isinstance(current_plan_raw, dict)
+            and request_plans.get(request_key) == current_plan_raw.get("id")
+        ):
+            return StudyPlan.model_validate(current_plan_raw)
         localized_payload = payload.model_copy(update={"exam_at": local_exam_at})
         fallback = self._fallback(localized_payload, start)
         if not fallback:
@@ -140,16 +176,33 @@ class TargetedPlanService:
                 ],
             )
             allowed = set(payload.focus_topics)
-            sessions = [
-                item
-                for item in output.sessions
-                if item.topic in allowed
-                and start < item.planned_at.astimezone(user_timezone) < local_exam_at
-                and item.planned_at.astimezone(user_timezone).weekday()
-                in set(payload.study_weekdays)
-                and item.planned_at.astimezone(user_timezone).hour == payload.preferred_hour
-                and item.planned_at.astimezone(user_timezone).minute == 0
-            ] or fallback
+            sessions: list[PlannedSessionOutput] = []
+            daily_minutes: dict[object, int] = {}
+            for item in sorted(output.sessions, key=lambda candidate: candidate.planned_at):
+                local_at = item.planned_at.astimezone(user_timezone)
+                used = daily_minutes.get(local_at.date(), 0)
+                overlaps = any(
+                    item.planned_at < existing.planned_at + timedelta(minutes=existing.minutes)
+                    and existing.planned_at < item.planned_at + timedelta(minutes=item.minutes)
+                    for existing in sessions
+                )
+                if not (
+                    item.topic in allowed
+                    and start < local_at < local_exam_at
+                    and local_at.weekday() in set(payload.study_weekdays)
+                    and local_at.hour == payload.preferred_hour
+                    and local_at.minute == 0
+                    and item.minutes <= payload.daily_minutes
+                    and used + item.minutes <= payload.daily_minutes
+                    and not overlaps
+                ):
+                    continue
+                sessions.append(item)
+                daily_minutes[local_at.date()] = used + item.minutes
+            # A structurally valid fragment is still an incomplete plan. Keep
+            # the deterministic calendar when the model covers fewer study
+            # opportunities than the availability contract produced.
+            sessions = sessions if len(sessions) >= len(fallback) else fallback
         except (ModelNotConfiguredError, StructuredModelResponseError, OpenAIError, ValueError):
             sessions = fallback
 
@@ -160,7 +213,15 @@ class TargetedPlanService:
             workspace_id,
             payload.material_id,
             payload.exam_at.isoformat(),
-            *topic_names,
+            str(payload.daily_minutes),
+            ",".join(str(day) for day in payload.study_weekdays),
+            str(payload.preferred_hour),
+            str(payload.timezone_offset_minutes),
+            payload.routine_notes,
+            *(
+                f"{item.topic}|{item.planned_at.isoformat()}|{item.minutes}|{item.activity}"
+                for item in sessions
+            ),
         )
         plan = StudyPlan(
             id=plan_id,
@@ -179,15 +240,27 @@ class TargetedPlanService:
             ],
         )
 
-        merged_plan = plan
+        applied_plan: list[StudyPlan] = []
 
         def apply(data: dict) -> dict:
-            nonlocal merged_plan
             progress = data["progress"]
+            request_plans = progress.setdefault("targeted_plan_requests", {})
+            current_plan_raw = progress.get("plan")
+            if (
+                isinstance(request_plans, dict)
+                and isinstance(current_plan_raw, dict)
+                and request_plans.get(request_key) == current_plan_raw.get("id")
+            ):
+                applied_plan.append(StudyPlan.model_validate(current_plan_raw))
+                return data
             for name, topic_id in topic_ids.items():
-                progress["topics"].setdefault(
-                    topic_id, {"id": topic_id, "name": name, "knowledge_type": "concept"}
+                topic = progress["topics"].setdefault(
+                    topic_id,
+                    {"id": topic_id, "name": name, "knowledge_type": "concept"},
                 )
+                answer_key_subject = material_answer_key_subject(name)
+                if answer_key_subject is not None:
+                    topic.setdefault("answer_key_subject", answer_key_subject)
                 progress["bkt_states"].setdefault(topic_id, BKTState().model_dump(mode="json"))
                 progress["difficulty_states"].setdefault(
                     topic_id, DifficultyState().model_dump(mode="json")
@@ -196,51 +269,106 @@ class TargetedPlanService:
             for topic_id in topic_ids.values():
                 if topic_id not in progress["topic_order"]:
                     progress["topic_order"].append(topic_id)
-            existing_data = progress.get("plan")
-            existing = StudyPlan.model_validate(existing_data) if existing_data else current_plan
-            if existing:
-                existing_ids = {session.id for session in existing.sessions}
-                additions = [session for session in plan.sessions if session.id not in existing_ids]
-                if not additions:
-                    merged_plan = existing
-                    progress["goal"] = merged_plan.goal
-                    progress["exam_at"] = merged_plan.exam_at.astimezone(UTC).isoformat()
-                    progress["daily_minutes"] = merged_plan.daily_minutes
-                    progress["plan"] = merged_plan.model_dump(mode="json")
-                    return data
-                scheduled = list(existing.sessions)
-                for addition in sorted(additions, key=lambda session: session.planned_at):
-                    planned_at = addition.planned_at
-                    while True:
-                        conflicts = [
-                            session
-                            for session in scheduled
-                            if planned_at < session.planned_at + timedelta(minutes=session.minutes)
-                            and session.planned_at
-                            < planned_at + timedelta(minutes=addition.minutes)
-                        ]
-                        if not conflicts:
-                            break
-                        planned_at = max(
-                            session.planned_at + timedelta(minutes=session.minutes)
-                            for session in conflicts
-                        )
-                    scheduled.append(addition.model_copy(update={"planned_at": planned_at}))
-                combined_sessions = sorted(scheduled, key=lambda session: session.planned_at)
-                combined_goal = f"{existing.goal}；新增资料：{', '.join(topic_names)}"[:500]
-                merged_plan = StudyPlan(
-                    id=stable_id("merged-plan", existing.id, plan.id),
-                    goal=combined_goal,
-                    exam_at=max(existing.exam_at, plan.exam_at),
-                    daily_minutes=plan.daily_minutes,
-                    sessions=combined_sessions,
+            protected_sessions: list[StudySession] = []
+            pending_question = progress.get("pending_question") or {}
+            pending_session_id = pending_question.get("plan_session_id") or pending_question.get(
+                "review_session_id"
+            )
+            if isinstance(current_plan_raw, dict):
+                current_plan = StudyPlan.model_validate(current_plan_raw)
+                pending_session = next(
+                    (
+                        session
+                        for session in current_plan.sessions
+                        if session.id == pending_session_id
+                    ),
+                    None,
                 )
-            progress["goal"] = merged_plan.goal
-            progress["exam_at"] = merged_plan.exam_at.astimezone(UTC).isoformat()
+                if pending_session is not None:
+                    local_pending_at = pending_session.planned_at.astimezone(user_timezone)
+                    pending_is_compatible = (
+                        pending_session.minutes <= payload.daily_minutes
+                        and local_pending_at < local_exam_at
+                        and local_pending_at.weekday() in set(payload.study_weekdays)
+                        and local_pending_at.hour == payload.preferred_hour
+                        and local_pending_at.minute == 0
+                    )
+                    if not pending_is_compatible:
+                        pending_question["plan_session_id"] = None
+                        pending_question["review_session_id"] = None
+                        pending_session_id = None
+                protected_sessions = [
+                    session
+                    for session in current_plan.sessions
+                    if session.status == "completed" or session.id == pending_session_id
+                ]
+            protected_ids = {session.id for session in protected_sessions}
+            merged_sessions = protected_sessions + [
+                session
+                for session in plan.sessions
+                if session.id not in protected_ids
+                and not any(
+                    session.planned_at < protected.planned_at + timedelta(minutes=protected.minutes)
+                    and protected.planned_at
+                    < session.planned_at + timedelta(minutes=session.minutes)
+                    for protected in protected_sessions
+                )
+            ]
+            final_plan = plan.model_copy(
+                update={
+                    "id": stable_id(
+                        "targeted-plan-state",
+                        plan.id,
+                        *(f"{session.id}|{session.status}" for session in protected_sessions),
+                    ),
+                    "sessions": merged_sessions,
+                }
+            )
+            progress["goal"] = final_plan.goal
+            progress["exam_at"] = final_plan.exam_at.astimezone(UTC).isoformat()
             progress["daily_minutes"] = payload.daily_minutes
-            progress["plan"] = merged_plan.model_dump(mode="json")
+            progress["plan"] = final_plan.model_dump(mode="json")
+            if not isinstance(request_plans, dict):
+                request_plans = {}
+                progress["targeted_plan_requests"] = request_plans
+            request_plans[request_key] = final_plan.id
+            if len(request_plans) > 50:
+                for stale_key in list(request_plans)[:-50]:
+                    request_plans.pop(stale_key, None)
+            applied_plan.append(final_plan)
             return data
 
         with self.learning.plan_transaction(owner_id, workspace_id):
-            self.learning.mutate(owner_id, workspace_id, apply)
-        return merged_plan
+            lease = (
+                RecoveryLease.acquire_wait(self.material_mutation_lease_path)
+                if self.material_mutation_lease_path is not None
+                else None
+            )
+            if self.material_mutation_lease_path is not None and lease is None:
+                raise MaterialMutationBusyError("Another material mutation is already active")
+            try:
+                self.knowledge.get_material(
+                    owner_id=owner_id,
+                    project_id=workspace_id,
+                    material_id=payload.material_id,
+                )
+                latest_analysis = self.analyses.get(
+                    owner_id,
+                    workspace_id,
+                    payload.material_id,
+                )
+                unsupported_latest = [
+                    topic
+                    for topic in payload.focus_topics
+                    if topic not in set(latest_analysis.topics)
+                ]
+                if unsupported_latest:
+                    raise ValueError(
+                        "focus_topics are no longer supported by the material analysis: "
+                        + ", ".join(unsupported_latest)
+                    )
+                self.learning.mutate(owner_id, workspace_id, apply)
+            finally:
+                if lease is not None:
+                    lease.release()
+        return applied_plan[0]

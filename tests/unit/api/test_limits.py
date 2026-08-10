@@ -14,10 +14,10 @@ from fastapi.testclient import TestClient
 from refineq.api.app import create_app
 from refineq.api.limits import (
     RequestBodyLimitMiddleware,
-    SlidingWindowRateLimiter,
     UploadAdmissionController,
 )
 from refineq.config import Settings
+from refineq.rate_limits import SlidingWindowRateLimiter
 
 
 def _app(tmp_path: Path):

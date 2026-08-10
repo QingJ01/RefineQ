@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, insert, inspect, select, text
+from sqlalchemy import Engine, and_, create_engine, delete, insert, inspect, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -107,26 +107,115 @@ class Database:
                         "WHERE project_id <> 'library'"
                     )
                 )
-                connection.execute(
-                    text(
-                        "UPDATE material_chunks SET project_id = 'library' "
-                        "WHERE project_id <> 'library'"
+                legacy_rows = connection.execute(
+                    select(
+                        metadata.tables["materials"].c.owner_id,
+                        metadata.tables["materials"].c.material_id,
+                        metadata.tables["materials"].c.project_id,
+                        metadata.tables["materials"].c.status,
+                        metadata.tables["materials"].c.chunk_count,
+                        metadata.tables["materials"].c.indexed_at,
+                    ).order_by(
+                        metadata.tables["materials"].c.owner_id,
+                        metadata.tables["materials"].c.material_id,
+                        metadata.tables["materials"].c.project_id,
                     )
-                )
-                connection.execute(
-                    text(
-                        "UPDATE materials SET project_id = 'library' WHERE project_id <> 'library'"
+                ).all()
+                material_table = metadata.tables["materials"]
+                chunk_table = metadata.tables["material_chunks"]
+                grouped_rows: dict[tuple[str, str], list[object]] = {}
+                for row in legacy_rows:
+                    grouped_rows.setdefault((str(row.owner_id), str(row.material_id)), []).append(
+                        row
                     )
-                )
+                for (owner_id, material_id), candidate_rows in grouped_rows.items():
+                    source = max(
+                        candidate_rows,
+                        key=lambda row: (
+                            str(row.status) == "indexed",
+                            int(row.chunk_count),
+                            row.indexed_at,
+                            str(row.project_id) == "library",
+                            str(row.project_id),
+                        ),
+                    )
+                    source_project = str(source.project_id)
+                    duplicate_projects = [
+                        str(row.project_id)
+                        for row in candidate_rows
+                        if str(row.project_id) != source_project
+                    ]
+                    if duplicate_projects:
+                        connection.execute(
+                            delete(chunk_table).where(
+                                chunk_table.c.owner_id == owner_id,
+                                chunk_table.c.material_id == material_id,
+                                chunk_table.c.project_id.in_(duplicate_projects),
+                            )
+                        )
+                        connection.execute(
+                            delete(material_table).where(
+                                material_table.c.owner_id == owner_id,
+                                material_table.c.material_id == material_id,
+                                material_table.c.project_id.in_(duplicate_projects),
+                            )
+                        )
+                    if source_project != "library":
+                        scope = and_(
+                            material_table.c.owner_id == owner_id,
+                            material_table.c.material_id == material_id,
+                            material_table.c.project_id == source_project,
+                        )
+                        connection.execute(
+                            update(material_table).where(scope).values(project_id="library")
+                        )
+                        connection.execute(
+                            update(chunk_table)
+                            .where(
+                                chunk_table.c.owner_id == owner_id,
+                                chunk_table.c.material_id == material_id,
+                                chunk_table.c.project_id == source_project,
+                            )
+                            .values(project_id="library")
+                        )
                 connection.execute(
                     text("UPDATE schema_versions SET version = :version"),
                     {"version": 3},
                 )
                 current_version = 3
+            if current_version == 3:
+                connection.execute(
+                    text("UPDATE schema_versions SET version = :version"),
+                    {"version": 4},
+                )
+                current_version = 4
+            if current_version == 4:
+                run_columns = {
+                    column["name"]
+                    for column in inspect(connection).get_columns("mcp_evaluation_runs")
+                }
+                if "generation" not in run_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE mcp_evaluation_runs ADD COLUMN generation "
+                            "VARCHAR(32) NOT NULL DEFAULT 'legacy'"
+                        )
+                    )
+                connection.execute(
+                    text("UPDATE schema_versions SET version = :version"),
+                    {"version": 5},
+                )
+                current_version = 5
             if current_version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Unsupported database schema {current_version}; expected {SCHEMA_VERSION}"
                 )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_materials_owner_material "
+                    "ON materials (owner_id, material_id)"
+                )
+            )
             if self.is_postgresql:
                 connection.execute(
                     text(

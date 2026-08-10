@@ -34,6 +34,16 @@ STRUCTURE_QUERIES = (
     "contents chapter unit topic learning objectives exam questions",
 )
 logger = logging.getLogger(__name__)
+_GENERIC_CLAIM_TOKENS = {
+    "chapter",
+    "lesson",
+    "module",
+    "section",
+    "topic",
+    "unit",
+    "overview",
+    "introduction",
+}
 
 
 def _guess_type(filename: str, text: str) -> MaterialType:
@@ -62,6 +72,16 @@ def _heading_candidates(sources: list[SearchResult]) -> list[tuple[str, str]]:
             if line and any(re.match(pattern, line, flags=re.IGNORECASE) for pattern in patterns):
                 candidates.append((line[:300], source.citation_id))
     return list(dict.fromkeys(candidates))[:80]
+
+
+def _claim_has_lexical_evidence(claim: str, evidence: str) -> bool:
+    normalized_claim = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", claim.casefold()).strip()
+    normalized_evidence = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", evidence.casefold()).strip()
+    if len(normalized_claim) >= 2 and normalized_claim in normalized_evidence:
+        return True
+    tokens = re.findall(r"[a-z0-9]{3,}|[\u4e00-\u9fff]{2,}", normalized_claim)
+    meaningful = [token for token in tokens if token not in _GENERIC_CLAIM_TOKENS]
+    return bool(meaningful) and any(token in normalized_evidence for token in meaningful)
 
 
 def _fallback_analysis(
@@ -153,6 +173,7 @@ class MaterialAnalysisService:
         owner_id: str,
         workspace_id: str,
         material_id: str,
+        persist: bool = True,
     ) -> MaterialAnalysis:
         material = self._knowledge.get_material(
             owner_id=owner_id,
@@ -215,25 +236,41 @@ class MaterialAnalysisService:
                 "Material AI analysis failed; using local fallback (%s)",
                 type(error).__name__,
             )
-            return self._analyses.save(owner_id, workspace_id, fallback)
+            return self._analyses.save(owner_id, workspace_id, fallback) if persist else fallback
 
-        valid_citations = {source.citation_id for source in sources}
-        sections = [
-            section.model_copy(
-                update={
-                    "citation_ids": [
-                        value
-                        for value in dict.fromkeys(section.citation_ids)
-                        if value in valid_citations
-                    ]
-                }
+        sources_by_citation = {source.citation_id: source for source in sources}
+        sections: list[MaterialSection] = []
+        for section in output.sections:
+            citation_ids = [
+                value
+                for value in dict.fromkeys(section.citation_ids)
+                if value in sources_by_citation
+            ]
+            if not citation_ids:
+                continue
+            evidence = "\n".join(sources_by_citation[value].text for value in citation_ids)
+            supported_topics = [
+                topic
+                for topic in dict.fromkeys(section.topics)
+                if _claim_has_lexical_evidence(topic, evidence)
+            ]
+            title_supported = _claim_has_lexical_evidence(section.title, evidence)
+            if not supported_topics and not title_supported:
+                continue
+            sections.append(
+                section.model_copy(
+                    update={
+                        "citation_ids": citation_ids,
+                        "topics": supported_topics or [section.title],
+                    }
+                )
             )
-            for section in output.sections
-        ]
+        if not sections:
+            return self._analyses.save(owner_id, workspace_id, fallback) if persist else fallback
         topics = list(
             dict.fromkeys(
                 topic.strip()
-                for topic in [*output.topics, *(t for s in sections for t in s.topics)]
+                for topic in (topic for section in sections for topic in section.topics)
                 if topic.strip()
             )
         )[:200]
@@ -249,7 +286,20 @@ class MaterialAnalysisService:
             mode="ai",
             analyzed_at=datetime.now(UTC),
         )
-        return self._analyses.save(owner_id, workspace_id, analysis)
+        return self._analyses.save(owner_id, workspace_id, analysis) if persist else analysis
+
+    def save(
+        self,
+        *,
+        owner_id: str,
+        workspace_id: str,
+        analysis: MaterialAnalysis,
+    ) -> MaterialAnalysis:
+        return self._analyses.save(
+            owner_id,
+            workspace_id,
+            analysis,
+        )
 
     def get(self, *, owner_id: str, workspace_id: str, material_id: str) -> MaterialAnalysis:
         self._knowledge.get_material(

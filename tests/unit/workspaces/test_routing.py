@@ -194,3 +194,14 @@ def test_general_title_removes_schedule_noise() -> None:
     assert "10月25日" not in decision.title
     assert "每天能学" not in decision.title
     assert len(decision.title) <= 20
+
+
+def test_linear_algebra_goal_preserves_each_named_concept() -> None:
+    decision = route_workspace(
+        "我要系统学习线性代数，重点掌握特征值、正交投影和最小二乘，10月25日考试",
+        [],
+    )
+
+    assert decision.subject == "mathematics"
+    assert decision.title == "线性代数"
+    assert decision.topics == ["特征值与特征向量", "正交投影", "最小二乘"]

@@ -108,3 +108,75 @@ def test_relative_deadline_wins_over_unrelated_numbers() -> None:
 def test_invalid_calendar_dates_are_ignored() -> None:
     assert infer_intent_constraints("2月30日考试", now=NOW).exam_at is None
     assert infer_intent_constraints("13月1日考试", now=NOW).exam_at is None
+
+
+def test_constraints_inside_quotes_are_inert_data_not_real_commitments() -> None:
+    straight = infer_intent_constraints(
+        'What does "I have a math exam on October 25 and study 90 minutes daily" mean?',
+        now=NOW,
+    )
+    assert straight.exam_at is None
+    assert straight.daily_minutes is None
+
+    curly = infer_intent_constraints("“10月25日考试，每天90分钟”是什么意思", now=NOW)
+    assert curly.exam_at is None
+    assert curly.daily_minutes is None
+
+    cjk = infer_intent_constraints("「10月25日考试，每天90分钟」这句话怎么理解", now=NOW)
+    assert cjk.exam_at is None
+    assert cjk.daily_minutes is None
+
+
+def test_unquoted_constraints_survive_when_only_a_phrase_is_quoted() -> None:
+    mixed = infer_intent_constraints(
+        'Explain "least squares"; I have an exam on October 25 and study 90 minutes daily',
+        now=NOW,
+    )
+
+    assert mixed.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC)
+    assert mixed.daily_minutes == 90
+
+
+def test_quote_variants_and_unterminated_quotes_stay_inert() -> None:
+    """A missing closing quote must not hand quoted content back to extraction."""
+
+    quoted_body = "I have a math exam on October 25 and study 90 minutes daily"
+    for text in (
+        f'What does this mean: "{quoted_body}',  # unterminated
+        f"What does this mean: «{quoted_body}»",  # guillemets
+        f"What does this mean: 「{quoted_body}」",  # CJK corner brackets
+    ):
+        constraints = infer_intent_constraints(text, now=NOW)
+        assert constraints.exam_at is None, text
+        assert constraints.daily_minutes is None, text
+
+
+def test_apostrophes_do_not_swallow_a_real_goal() -> None:
+    """Single quotes are not stripped: apostrophes are far more common."""
+
+    constraints = infer_intent_constraints(
+        "I'm preparing and don't want to slip; my exam is on October 25 "
+        "and I study 90 minutes daily",
+        now=NOW,
+    )
+
+    assert constraints.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC)
+    assert constraints.daily_minutes == 90
+
+
+def test_stray_quote_characters_do_not_swallow_a_real_goal() -> None:
+    """Only a quotation-style lead-in opens an unterminated span.
+
+    A measurement mark, a typographic apostrophe, or an unbalanced quote in an
+    ordinary sentence must leave the learner's own constraints intact.
+    """
+
+    for text in (
+        'My exam is on October 25" and I study 90 minutes daily',
+        "5'6\" tall; my exam is on October 25 and I study 90 minutes daily",
+        "The professor‘s note: my exam is on October 25 and I study 90 minutes daily",
+        'He asked: "what now\nMy exam is on October 25 and I study 90 minutes daily',
+    ):
+        constraints = infer_intent_constraints(text, now=NOW)
+        assert constraints.exam_at == datetime(2026, 10, 25, 23, 59, 59, tzinfo=UTC), text
+        assert constraints.daily_minutes == 90, text
