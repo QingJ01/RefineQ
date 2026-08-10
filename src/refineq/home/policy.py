@@ -88,7 +88,10 @@ _EXPLICIT_QUOTED_EXPLANATION = re.compile(
     r"what\s+does\s+(?:this|the)\s+(?:quoted\s+|following\s+|above\s+)?"
     r"(?:sentence|text|passage|phrase|line|quote|quotation)\s+mean|"
     r"explain\s+(?:this|the\s+following)\s+(?:sentence|text|passage)|"
-    r"explain\s+it\b)",
+    # "explain it" only counts as a quoted-explanation request when a quoted span
+    # is actually present. Unanchored, it sits ahead of the destructive and
+    # high-risk gates and lets "…and explain it." defeat them.
+    r"(?<=[\"”」』])[\s\S]{0,40}?explain\s+it\b)",
     re.IGNORECASE,
 )
 _NEGATED_CREATION_OR_ONE_SHOT = re.compile(

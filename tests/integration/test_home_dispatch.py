@@ -1009,6 +1009,34 @@ def test_cancelling_a_proposal_records_outcome_without_creating_state(tmp_path: 
     assert app.state.home_events.list(owner)[0].proposal_confirmed is False
 
 
+def test_explain_it_cannot_bypass_the_high_risk_boundary() -> None:
+    """Appending an explanation phrase must not defeat the safety gates.
+
+    The quoted-explanation rule is the first gate in the policy, ahead of the
+    destructive and high-risk checks, so an unanchored "explain it" would let
+    four appended words route a blocked request to a direct answer.
+    """
+
+    from refineq.home.policy import HomeRoutingPolicy
+
+    policy = HomeRoutingPolicy()
+
+    medical = policy.decide(
+        "Give me medical advice about my chest pain and explain it.", workspaces=[]
+    )
+    destructive = policy.decide("Delete all my learning workspaces and explain it.", workspaces=[])
+    quoted = policy.decide(
+        'What does this quoted sentence mean: "I have a math exam on October 25 '
+        'and study 90 minutes daily"? Explain it only; do not create a workspace.',
+        workspaces=[],
+    )
+
+    assert medical.kind.value == "out_of_scope"
+    assert destructive.kind.value == "out_of_scope"
+    # A genuine quoted-explanation request still short-circuits to a direct answer.
+    assert quoted.kind.value == "direct_answer"
+
+
 def test_unconfigured_model_keeps_a_recoverable_learner_path(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
     with TestClient(app) as client:
