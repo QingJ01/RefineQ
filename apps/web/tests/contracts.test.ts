@@ -1905,6 +1905,12 @@ describe("safe authentication and administration", () => {
     expect(adminSource).toContain("loadError");
     expect(authSource).not.toContain("localStorage");
     expect(adminSource).not.toContain("localStorage");
+    // The restore-validation dialog auto-submits its confirmation; there is no
+    // passphrase field, so it must not claim the admin binds one to the backup.
+    expect(adminSource).not.toContain("确认口令会精确绑定此备份 ID");
+    expect(adminSource).not.toContain("The confirmation token is bound to this backup ID");
+    expect(adminSource).toContain("无需手动输入口令");
+    expect(adminSource).toContain("No passphrase is required");
   });
 
   it("uses application dialogs and inline editing instead of browser prompts", () => {
