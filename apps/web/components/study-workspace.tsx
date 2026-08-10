@@ -163,10 +163,12 @@ export function StudyWorkspace({
   const {
     answer,
     attemptIdRef,
+    beginQuestionLoad,
     capturePracticeGeneration,
     clearPracticeState,
     hydratePractice,
     isPracticeGenerationCurrent,
+    isQuestionLoadCurrent,
     learningMode,
     practiceBusy,
     question,
@@ -802,6 +804,7 @@ export function StudyWorkspace({
   async function getQuestion(request: PracticeRequest = {}): Promise<boolean> {
     if (!auth || !workspace) return false;
     const generation = capturePracticeGeneration();
+    const loadSeq = beginQuestionLoad();
     setPracticeBusy(true);
     setError("");
     const requestId = request.requestId
@@ -829,8 +832,9 @@ export function StudyWorkspace({
           questionRequestIdRef.current = null;
           attemptIdRef.current = null;
         },
+        () => isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq),
       );
-      return isPracticeGenerationCurrent(generation);
+      return isPracticeGenerationCurrent(generation) && isQuestionLoadCurrent(loadSeq);
     } catch (caught) {
       if (isPracticeGenerationCurrent(generation)) reportError(caught);
       return false;
@@ -876,6 +880,10 @@ export function StudyWorkspace({
           question.id,
           answer,
           attemptId,
+          {
+            expectedStateVersion: question.state_version,
+            promptHash: question.prompt_hash,
+          },
         );
       if (!isPracticeGenerationCurrent(generation)) return;
       setResult(graded);

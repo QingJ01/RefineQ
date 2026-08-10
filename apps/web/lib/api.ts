@@ -572,17 +572,21 @@ export class ApiClient {
     questionId: string,
     answer: string,
     attemptId?: string,
-    signal?: AbortSignal,
+    options?: { expectedStateVersion?: number; promptHash?: string; signal?: AbortSignal },
   ): Promise<AnswerResult> {
     return this.request(
       `/workspaces/${workspaceId}/learning/answer`,
       {
         method: "POST",
-        signal,
+        signal: options?.signal,
         body: JSON.stringify({
           attempt_id: attemptId ?? crypto.randomUUID().replaceAll("-", ""),
           question_id: questionId,
           answer,
+          ...(options?.expectedStateVersion !== undefined
+            ? { expected_state_version: options.expectedStateVersion }
+            : {}),
+          ...(options?.promptHash ? { prompt_hash: options.promptHash } : {}),
         }),
       },
       token,

@@ -303,7 +303,16 @@ export interface PracticeQuestion {
   learning_mode?: LearningMode;
   mode?: "ai" | "fallback";
   saved?: boolean;
+  state_version?: number;
+  prompt_hash?: string;
 }
+
+export type GradingReasonCode =
+  | "ok"
+  | "insufficient_answer_evidence"
+  | "grader_unavailable"
+  | "retrieval_empty"
+  | "question_state_conflict";
 
 export interface SavedPracticeQuestion extends PracticeQuestion {
   saved: boolean;
@@ -337,6 +346,7 @@ export interface AnswerResult {
   sources?: SearchSource[];
   grounding?: "material" | "general";
   grading_mode: "ai" | "fallback";
+  reason_code?: GradingReasonCode;
   mastery_updated: boolean;
   next_review_at?: string | null;
   completed_review_session_id?: string | null;
