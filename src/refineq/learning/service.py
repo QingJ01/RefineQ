@@ -758,8 +758,11 @@ class LearningService:
         if used + new_minutes <= daily_minutes:
             return
 
+        # "The next open day" only means something when we are actually placing a
+        # session. On the lower-the-budget path new_minutes is 0, so every day
+        # would qualify — including days with no free capacity at all.
         next_free_date: str | None = None
-        if new_minutes <= daily_minutes:
+        if 0 < new_minutes <= daily_minutes:
             candidate = target_date
             for _ in range(366):
                 candidate += timedelta(days=1)
@@ -867,7 +870,16 @@ class LearningService:
                     datetime.fromisoformat(session["planned_at"]),
                     payload.timezone_offset_minutes,
                 )
-                if new_status != "completed":
+                # Reopening a completed session restores work that already belongs
+                # to that day; it adds no new load, and blocking it would leave a
+                # mis-clicked "complete" with no way back.
+                reopening_in_place = (
+                    session["status"] == "completed"
+                    and new_status != "completed"
+                    and payload.planned_at is None
+                    and payload.minutes is None
+                )
+                if new_status != "completed" and not reopening_in_place:
                     if moving_day and payload.displace_on_conflict:
                         # Moving a session onto a day is a *move*, not an addition:
                         # a generated plan already fills every day to the budget, so

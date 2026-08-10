@@ -1240,7 +1240,14 @@ export function StudyWorkspace({
 
   async function addCalendarSession(input: { topic_name: string; planned_at: string; minutes: number; activity: string }) {
     if (!auth || !workspace) return false;
-    await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    try {
+      await api.addWorkspacePlanSession(auth.access_token, workspace.id, input);
+    } catch (caught) {
+      // Adding onto a full day is a capacity conflict; show the day and the
+      // next open one instead of a generic banner.
+      setError(describePlanCapacityError(caught, locale));
+      return false;
+    }
     await refreshWorkspaceSnapshot();
     return true;
   }
@@ -1526,7 +1533,9 @@ export function StudyWorkspace({
       if (input.regenerate) setPlanView("calendar");
       await refreshNextAction(auth.access_token, workspace.id);
     } catch (caught) {
-      reportError(caught);
+      // Lowering the daily budget below existing sessions is a capacity
+      // conflict; it carries the day and usage detail worth showing.
+      setError(describePlanCapacityError(caught, locale));
       throw caught;
     } finally {
       setPlanSettingsBusy(false);

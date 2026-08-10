@@ -1081,6 +1081,58 @@ def test_workspace_plan_sessions_can_be_completed_and_rescheduled(tmp_path: Path
         assert cleared_snapshot["progress"]["topics"]
 
 
+def test_reopening_a_completed_session_is_always_allowed(tmp_path: Path) -> None:
+    """Undoing a mis-clicked "complete" must never be blocked by the budget.
+
+    Completed sessions are excluded from the day's load, so a day can hold
+    completed work plus a full budget of planned work. Reopening restores work
+    that already belongs to that day rather than adding new load.
+    """
+
+    app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
+
+    with TestClient(app) as client:
+        token, _ = _register(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        workspace_id = client.post(
+            "/workspaces/resolve",
+            headers=headers,
+            json={"intent": "准备微积分考试"},
+        ).json()["workspace"]["id"]
+        plan = _generate_workspace_plan(client, headers, workspace_id)
+        session = plan["sessions"][0]
+        day = datetime.fromisoformat(session["planned_at"])
+
+        completed = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"status": "completed"},
+        )
+        assert completed.status_code == 200, completed.json()
+
+        # The freed budget gets taken by other planned work on the same day.
+        filler = client.post(
+            f"/workspaces/{workspace_id}/learning/plan/sessions",
+            headers=headers,
+            json={
+                "topic_name": "补上的任务",
+                "planned_at": day.isoformat(),
+                "minutes": plan["daily_minutes"],
+                "activity": "practice",
+            },
+        )
+        assert filler.status_code == 200, filler.json()
+
+        reopened = client.patch(
+            f"/workspaces/{workspace_id}/learning/plan/sessions/{session['id']}",
+            headers=headers,
+            json={"status": "planned"},
+        )
+
+    assert reopened.status_code == 200, reopened.json()
+    assert reopened.json()["status"] == "planned"
+
+
 def test_postpone_cannot_exceed_the_daily_minute_budget(tmp_path: Path) -> None:
     app = create_app(Settings(data_root=tmp_path / "data", _env_file=None))
 
