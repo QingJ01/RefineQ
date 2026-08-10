@@ -332,6 +332,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page).toHaveURL(/\/learn\/[^/]+\/calendar$/);
     await expect(page.getByTestId("plan-view-calendar")).toHaveAttribute("aria-pressed", "true");
     await page.getByTestId("nav-materials").click();
+    await expect(page.getByTestId("material-search")).toHaveAttribute("aria-label", /.+/);
     await page.getByTestId("material-search").fill("流水线 数据冒险");
     await page.locator(".material-search button").click();
     await expect(page.locator(".material-search-results")).toContainText("computer-architecture-notes.txt");
@@ -436,6 +437,102 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     await expect(page).toHaveURL(/\/today$/);
     await advanceSessionToPractice(page);
     await expect(page.getByTestId("session-practice-stage")).toContainText(retryPrompt);
+  });
+
+  await test.step("apply an Agent practice adjustment from chat through the question API", async () => {
+    await page.route("**/api/settings/model", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          base_url: "https://api.example.com/v1",
+          model: "demo-coach",
+          temperature: 0.2,
+          configured: true,
+          api_key_hint: "sk-…demo",
+        }),
+      });
+    });
+    await page.reload();
+    await expect(page.getByTestId("session-coach-input")).toBeEnabled();
+
+    await page.route("**/api/workspaces/*/agent/chat", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session_id: "agent-e2e-session",
+          message: "我会把当前练习调整为更简单的一题。",
+          citations: [],
+          sources: [],
+          action_proposal: {
+            type: "adjust_practice",
+            action_id: "agent-e2e-adjust",
+            topic_id: "pipelines",
+            topic_name: "Pipelines",
+            difficulty: 1,
+            learning_mode: "concept",
+            destructive: true,
+            expected_state_version: 42,
+          },
+        }),
+      });
+    }, { times: 1 });
+
+    let actionRequestBody: Record<string, unknown> | null = null;
+    await page.route("**/api/workspaces/*/learning/question", async (route) => {
+      const requestBody = route.request().postDataJSON() as Record<string, unknown>;
+      if (requestBody.expected_state_version === 42) actionRequestBody = requestBody;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "agent-e2e-question",
+          topic_id: "pipelines",
+          prompt: "Name one reason a pipeline may stall.",
+          explanation: null,
+          difficulty_level: 1,
+          citations: ["material-agent#0"],
+          sources: [{
+            citation_id: "material-agent#0",
+            material_id: "material-agent",
+            filename: "computer-architecture-notes.txt",
+            chunk_index: 0,
+            text: "A data hazard can require forwarding or a pipeline stall.",
+            score: 0.95,
+          }],
+          grounding: "material",
+          learning_mode: "concept",
+          mode: "ai",
+          saved: false,
+          review_session_id: null,
+          plan_session_id: null,
+          state_version: 43,
+          prompt_hash: "agent-e2e-prompt-hash",
+        }),
+      });
+    });
+
+    await page.getByTestId("session-coach-input").fill("换一道简单点的");
+    await page.getByTestId("session-coach-input").press("Enter");
+    await expect(page.getByTestId("coach-action-applied")).toContainText(/已执行|Applied/);
+    await page.getByTestId("session-start-task").click();
+    await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+    await expect(page.locator(".session-question-prompt")).toHaveText(
+      "Name one reason a pipeline may stall.",
+    );
+    expect(actionRequestBody).toMatchObject({
+      request_id: "agent-e2e-adjust",
+      topic_id: "pipelines",
+      difficulty: 1,
+      mode: "concept",
+      replace: true,
+      expected_state_version: 42,
+    });
+
+    await page.unroute("**/api/settings/model");
+    await page.unroute("**/api/workspaces/*/agent/chat");
+    await page.unroute("**/api/workspaces/*/learning/question");
   });
 
   await test.step("restore sources and keep the session usable when the coach is unavailable", async () => {

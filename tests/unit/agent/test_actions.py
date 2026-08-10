@@ -83,6 +83,7 @@ def _resolve(intent, *, progress: dict | None = None, timezone: str = "UTC"):
         session_id="coach-session",
         turn_id="turn-1",
         timezone=timezone,
+        expected_state_version=7,
         now=NOW,
     )
 
@@ -126,6 +127,7 @@ def test_adjust_practice_inherits_the_pending_question_fields() -> None:
     assert proposal.difficulty == 2
     assert proposal.learning_mode is LearningMode.CASE
     assert proposal.destructive is True
+    assert proposal.expected_state_version == 7
 
 
 def test_adjust_practice_without_pending_question_falls_back_to_weakest_topic() -> None:

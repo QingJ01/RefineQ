@@ -17,6 +17,7 @@ from refineq.agent.actions import (
     ActionProposal,
     BoundedIntentExecutor,
     IntentExtraction,
+    RejectedProposal,
     resolve_action_proposal,
 )
 from refineq.agent.context import build_agent_context
@@ -399,12 +400,22 @@ class AgentService:
                 citations = [citation for citation in citations if citation in available]
                 response_sources = [available[citation] for citation in citations]
             restored_citation_ids = {source.citation_id for source in response_sources}
+            stored_action = stored_turn.get("action_proposal")
+            if (
+                isinstance(stored_action, dict)
+                and stored_action.get("type") == "adjust_practice"
+                and "expected_state_version" not in stored_action
+            ):
+                stored_action = RejectedProposal(
+                    reason_code="stale_action_proposal",
+                    summary="This older action has expired. Ask the Agent again to refresh it.",
+                )
             return AgentChatResponse(
                 session_id=session_id,
                 message=_sanitize_reply(stored_turn["message"], restored_citation_ids),
                 citations=citations,
                 sources=response_sources,
-                action_proposal=stored_turn.get("action_proposal"),
+                action_proposal=stored_action,
             )
 
         session = None
@@ -478,7 +489,8 @@ class AgentService:
                     (perf_counter() - intent_started_at) * 1000,
                 )
             if extraction is not None and extraction.action is not None:
-                latest = self._learning.get(owner_id, project_id).data.get("progress", {})
+                latest_learning = self._learning.get(owner_id, project_id)
+                latest = latest_learning.data.get("progress", {})
                 timezone = (
                     payload.session_context.timezone
                     if payload.session_context is not None
@@ -490,6 +502,7 @@ class AgentService:
                     session_id=session_id,
                     turn_id=payload.turn_id,
                     timezone=timezone,
+                    expected_state_version=latest_learning.version,
                 )
 
         def append_messages(data):

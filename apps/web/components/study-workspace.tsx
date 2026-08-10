@@ -1486,6 +1486,7 @@ export function StudyWorkspace({
         difficulty: action.difficulty,
         learningMode: action.learning_mode,
         replace: action.destructive,
+        expectedStateVersion: action.expected_state_version,
       }),
       applyPlanUpdate: async (action) => {
         const target = plan?.sessions.find((session) => session.id === action.session_id);

@@ -132,6 +132,7 @@ class AdjustPracticeProposal(BaseModel):
     difficulty: int = Field(ge=1, le=5)
     learning_mode: LearningMode
     destructive: bool
+    expected_state_version: int = Field(ge=0)
 
 
 class UpdatePlanSessionProposal(BaseModel):
@@ -208,6 +209,7 @@ def _resolve_adjust(
     *,
     progress: dict[str, Any],
     action_id: str,
+    expected_state_version: int,
 ) -> ActionProposal:
     topics = _topic_candidates(progress)
     if not topics:
@@ -273,6 +275,7 @@ def _resolve_adjust(
         difficulty=difficulty,
         learning_mode=learning_mode,
         destructive=pending is not None,
+        expected_state_version=expected_state_version,
     )
 
 
@@ -439,12 +442,18 @@ def resolve_action_proposal(
     session_id: str,
     turn_id: str,
     timezone: str,
+    expected_state_version: int,
     now: datetime | None = None,
 ) -> ActionProposal:
     observed_at = (now or datetime.now(UTC)).astimezone(UTC)
     action_id = derive_action_id(session_id, turn_id, intent.type)
     if isinstance(intent, AdjustPracticeIntent):
-        return _resolve_adjust(intent, progress=progress, action_id=action_id)
+        return _resolve_adjust(
+            intent,
+            progress=progress,
+            action_id=action_id,
+            expected_state_version=expected_state_version,
+        )
     if isinstance(intent, SaveQuestionIntent):
         pending = progress.get("pending_question")
         if not isinstance(pending, dict) or not isinstance(pending.get("id"), str):

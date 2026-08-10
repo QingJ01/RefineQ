@@ -616,6 +616,7 @@ describe("focused learning components", () => {
             difficulty: 2,
             learning_mode: "concept",
             destructive: true,
+            expected_state_version: 12,
           },
         }}
         onConfirm={() => undefined}

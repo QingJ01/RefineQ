@@ -191,3 +191,97 @@ async def test_mcp_gateway_times_out_a_stalled_authenticated_body() -> None:
     assert sent[0]["status"] == 408
     payload = json.loads(sent[1]["body"])
     assert payload["error"]["code"] == "request_timeout"
+
+
+@pytest.mark.asyncio
+async def test_mcp_gateway_replays_body_then_forwards_client_disconnect() -> None:
+    downstream_messages: list[dict] = []
+
+    async def streaming_child(_scope, receive, _send):
+        downstream_messages.append(await receive())
+        downstream_messages.append(await receive())
+
+    gateway = EvaluationBearerGateway(
+        streaming_child,
+        secret="s" * 48,
+        principal_id="evaluation",
+        read_limit=10,
+        write_limit=10,
+        window_seconds=60,
+    )
+    incoming = iter(
+        [
+            {"type": "http.request", "body": b"", "more_body": False},
+            {"type": "http.disconnect"},
+        ]
+    )
+
+    async def receive():
+        return next(incoming)
+
+    async def send(_message):
+        return None
+
+    await gateway(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/mcp",
+            "headers": [(b"authorization", f"Bearer {'s' * 48}".encode())],
+            "client": ("127.0.0.1", 1234),
+        },
+        receive,
+        send,
+    )
+
+    assert downstream_messages == [
+        {"type": "http.request", "body": b"", "more_body": False},
+        {"type": "http.disconnect"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mcp_gateway_preserves_disconnect_during_partial_body() -> None:
+    downstream_messages: list[dict] = []
+
+    async def streaming_child(_scope, receive, _send):
+        downstream_messages.append(await receive())
+        downstream_messages.append(await asyncio.wait_for(receive(), timeout=0.05))
+
+    gateway = EvaluationBearerGateway(
+        streaming_child,
+        secret="s" * 48,
+        principal_id="evaluation",
+        read_limit=10,
+        write_limit=10,
+        window_seconds=60,
+    )
+    incoming = [
+        {"type": "http.request", "body": b'{"jsonrpc":', "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+
+    async def receive():
+        if incoming:
+            return incoming.pop(0)
+        await asyncio.Future()
+
+    async def send(_message):
+        return None
+
+    await gateway(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"authorization", f"Bearer {'s' * 48}".encode())],
+            "client": ("127.0.0.1", 1234),
+        },
+        receive,
+        send,
+    )
+
+    assert downstream_messages == [
+        {"type": "http.request", "body": b'{"jsonrpc":', "more_body": True},
+        {"type": "http.disconnect"},
+    ]

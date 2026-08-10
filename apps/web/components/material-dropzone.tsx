@@ -550,7 +550,15 @@ export function MaterialDropzone({
 
       <form className="material-search" onSubmit={searchMaterials}>
         <Search size={16} />
-        <input data-testid="material-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("searchMaterials")} />
+        <input
+          data-testid="material-search"
+          name="material-search"
+          autoComplete="off"
+          aria-label={t("searchMaterials")}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("searchMaterials")}
+        />
         <button type="submit" disabled={searching || !query.trim()}>{searching ? t("loading") : t("search")}</button>
       </form>
       {searchedQuery && (

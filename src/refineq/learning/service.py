@@ -166,6 +166,10 @@ class LearningConflictError(LearningServiceError):
     code = "learning_conflict"
 
 
+class LearningStateChangedError(LearningConflictError):
+    code = "learning_state_changed"
+
+
 class DailyCapacityExceededError(LearningConflictError):
     code = "daily_capacity_exceeded"
 
@@ -258,6 +262,7 @@ class QuestionRequest(BaseModel):
     difficulty: int | None = Field(default=None, ge=1, le=5)
     mode: LearningMode = LearningMode.CONCEPT
     replace: bool = False
+    expected_state_version: int | None = Field(default=None, ge=0)
     review_session_id: str | None = Field(
         default=None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
@@ -1289,6 +1294,7 @@ class LearningService:
         plan_session_id: str | None = None,
         require_material_grounding: bool = False,
         expected_scope_fence: str | None = None,
+        expected_state_version: int | None = None,
         scope_guard: Callable[[], None] | None = None,
     ) -> QuestionResponse:
         self._require_project(owner_id, project_id)
@@ -1328,6 +1334,10 @@ class LearningService:
                         replay,
                         progress.get("saved_questions", {}).get(replay["id"]),
                     )
+            if expected_state_version is not None and snapshot_version != expected_state_version:
+                raise LearningStateChangedError(
+                    "Learning state changed before the Agent action could be applied"
+                )
             if progress.get("pending_question") and not replace_pending:
                 pending = progress["pending_question"]
                 return public_question(
