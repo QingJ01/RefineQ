@@ -27,11 +27,13 @@ export function NextActionCard({
   locale,
   action,
   busy,
+  topics = {},
   ...handlers
 }: {
   locale: Locale;
   action: NextAction;
   busy: boolean;
+  topics?: Record<string, string>;
 } & NextActionHandlers) {
   const zh = locale === "zh";
   const copy = {
@@ -77,17 +79,36 @@ export function NextActionCard({
         <p>{action.reason}</p>
         <small>{action.expected_outcome}</small>
       </div>
-      <button
-        type="button"
-        className="primary-action"
-        data-testid={`next-action-${action.action_type}`}
-        data-target-id={action.target_id ?? undefined}
-        disabled={busy}
-        onClick={() => executeNextAction(action, handlers)}
-      >
-        {busy ? (zh ? "正在准备…" : "Preparing…") : copy.cta}
-        <ArrowRight size={16} />
-      </button>
+      <div className="next-action-controls">
+        <button
+          type="button"
+          className="primary-action"
+          data-testid={`next-action-${action.action_type}`}
+          data-target-id={action.target_id ?? undefined}
+          disabled={busy}
+          onClick={() => executeNextAction(action, handlers)}
+        >
+          {busy ? (zh ? "正在准备…" : "Preparing…") : copy.cta}
+          <ArrowRight size={16} />
+        </button>
+        {Object.keys(topics).length > 1 && action.action_type !== "upload_material" && (
+          <details className="today-topic-picker" data-testid="today-topic-picker">
+            <summary>{zh ? "今天想学其他内容" : "Choose another topic today"}</summary>
+            <div>
+              {Object.entries(topics).map(([topicId, topicName]) => (
+                <button
+                  key={topicId}
+                  type="button"
+                  disabled={busy || topicId === action.topic_id}
+                  onClick={() => handlers.onStartPractice(topicId)}
+                >
+                  {topicName}
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
     </article>
   );
 }

@@ -683,6 +683,7 @@ describe("focused learning components", () => {
         result={null}
         busy={false}
         learningMode="case"
+        agentToken="token"
         savedQuestions={[{
           id: "saved-question-1",
           topic_id: "user-needs",
@@ -708,14 +709,19 @@ describe("focused learning components", () => {
     );
 
     expect(html).toContain('data-testid="learning-session-canvas"');
-    expect(html).toContain('data-testid="mobile-sticky-task-action"');
-    expect(html).toContain('data-testid="learning-mode-case"');
-    expect(html).toContain("目标校准");
-    expect(html).toContain("案例拆解");
-    expect(html).toContain("实战任务");
-    expect(html).toContain("反馈复盘");
+    expect(html).toContain('data-testid="session-learning-stage"');
+    expect(html).toContain("今天跳过");
+    expect(html).not.toContain('data-testid="session-mode-picker"');
+    expect(html).toContain("快速回顾");
+    expect(html).toContain("今天学习");
+    expect(html).toContain("练一练");
+    expect(html).toContain("总结复盘");
     expect(html).toContain("用户访谈原文.md");
     expect(html).toContain('data-testid="session-coach"');
+    expect(html).toContain('data-testid="session-coach-disclosure"');
+    expect(html).toContain('open="" class="session-coach-disclosure"');
+    expect(html).toContain('open="" class="workspace-agent-disclosure"');
+    expect(html).toContain("遇到困难？问 Agent");
     expect(html).toContain('data-testid="saved-question-list"');
     expect(html).toContain("分析已收藏的用户访谈原题");
     expect(html).toContain('data-testid="practice-saved-question"');
@@ -785,6 +791,15 @@ describe("focused learning components", () => {
           grounding,
           grading_mode: "ai",
           mastery_updated: true,
+          session_decision: {
+            action: "continue_topic",
+            reason: "mastery_low",
+            topic_id: "user-needs",
+            estimated_minutes: 4,
+            remaining_minutes: 80,
+            summary_reserve_minutes: 10,
+            target_mastery: 0.75,
+          },
           replayed: false,
         } : null}
         masteryBefore={0.42}
@@ -818,6 +833,9 @@ describe("focused learning components", () => {
     expect(generalHtml).toContain("通用生成");
     expect(generalHtml).not.toContain("真实材料线索");
     expect(feedbackHtml).toContain('data-testid="feedback-grounding"');
+    expect(feedbackHtml).toContain('data-testid="session-task-feedback"');
+    expect(feedbackHtml).toContain('data-testid="next-difficulty"');
+    expect(feedbackHtml).not.toContain('data-testid="session-reflect-stage"');
     expect(feedbackHtml).toContain('data-testid="grading-mode"');
     expect(feedbackHtml).toContain('data-testid="feedback-misconceptions"');
     expect(feedbackHtml).toContain("misread observed behavior as stated preference");
@@ -1723,7 +1741,8 @@ describe("focused learning components", () => {
     expect(html).toContain('data-testid="agent-new-conversation"');
     expect(html).toContain("The learning Agent has not been configured");
     expect(html).toContain('data-testid="coach-configure-model"');
-    expect(html).toContain('data-testid="session-upload-prompt"');
+    expect(html).toContain('data-testid="session-learning-stage"');
+    expect(html).toContain("Skipped today");
     expect(html).toContain('data-testid="saved-question-empty"');
   });
 });

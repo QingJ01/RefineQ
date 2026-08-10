@@ -365,7 +365,7 @@ describe("durable learner routing", () => {
     expect(dispatchSource).toContain("api.dispatchHome(token, input, signal)");
     expect(dispatchSource).toContain("authRef.current?.access_token !== token");
     expect(dispatchSource).toContain(
-      'await openWorkspace(target, token, "today", "push", input.request_id)',
+      'result.workspace_target.route_action === "created" ? "materials" : "today"',
     );
     expect(dispatchSource).not.toContain("saveWorkspaceSnapshot");
   });
@@ -433,7 +433,7 @@ describe("durable learner routing", () => {
     expect(workspaceSource).toContain("<NextActionCard");
     expect(workspaceSource).toContain('id="learning-record"');
     expect(workspaceSource).toContain('href="#learning-record"');
-    expect(workspaceSource).toContain("onStartPlanSession={startPlanSession}");
+    expect(workspaceSource).toContain("evidence={evidence}");
   });
 });
 
@@ -1047,6 +1047,50 @@ describe("authentication and API errors", () => {
 
 
 describe("recoverable client workflows", () => {
+  it("recovers a question saved after the generation request fails", async () => {
+    vi.useFakeTimers();
+    let requests = 0;
+    const client = new ApiClient("/api", async (_input, init) => {
+      requests += 1;
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({
+          error: { code: "request_error", message: "Upstream closed early" },
+        }), { status: 500, headers: { "Content-Type": "application/json" } });
+      }
+      if (requests < 3) {
+        return new Response(JSON.stringify({
+          id: "question-old",
+          topic_id: "calculus",
+          plan_session_id: "session-1",
+          prompt: "Explain calculus",
+          difficulty_level: 2,
+          citations: [],
+          sources: [],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        id: "question-1",
+        topic_id: "limits",
+        plan_session_id: "session-2",
+        prompt: "Explain a limit",
+        difficulty_level: 2,
+        citations: [],
+        sources: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const pending = client.createWorkspaceQuestionRecovering(
+      "token",
+      "workspace-1",
+      { topicId: "limits", planSessionId: "session-2", requestId: "request-1" },
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toMatchObject({ id: "question-1", topic_id: "limits" });
+    expect(requests).toBe(3);
+    vi.useRealTimers();
+  });
+
   it("keeps the graded question intact when loading the next question fails", async () => {
     const previous = { id: "question-1", answer: "A limit is...", score: 80 };
     let state = previous;

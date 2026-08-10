@@ -91,6 +91,16 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
                 ),
             },
         )
+        continued = client.post(
+            f"/workspaces/{workspace_id}/learning/question",
+            headers=headers,
+            json={
+                "request_id": "question-after-graded-answer",
+                "topic_id": created.json()["topic_id"],
+                "mode": "concept",
+                "replace": False,
+            },
+        )
         shown = client.post(
             f"/workspaces/{workspace_id}/learning/attempts/material-gate-attempt/shown",
             headers=headers,
@@ -106,6 +116,10 @@ def test_workspace_question_requires_an_indexed_material(tmp_path: Path) -> None
     assert created.json()["grounding"] == "material"
     assert created.json()["sources"]
     assert graded.status_code == 200
+    assert continued.status_code == 200, continued.json()
+    assert continued.json()["id"] != created.json()["id"]
+    assert continued.json()["topic_id"] == created.json()["topic_id"]
+    assert continued.json()["grounding"] == "material"
     assert shown.status_code == 200
     assert shown.json() == shown_replay.json()
     assert stored.version == version_after_shown

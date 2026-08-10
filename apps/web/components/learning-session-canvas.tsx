@@ -9,24 +9,31 @@ import {
   Clock3,
   ExternalLink,
   FileText,
-  Layers3,
   Lightbulb,
   RotateCcw,
   Target,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentPanel } from "@/components/agent-panel";
+import { RichText } from "@/components/rich-text";
 import { SessionCoach } from "@/components/session-coach";
 import { SourceDrawer } from "@/components/source-drawer";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type { Translator } from "@/lib/i18n";
-import { buildSessionSteps, selectTodayPlanSession, sessionStage } from "@/lib/learning-session";
+import {
+  buildLessonHighlights,
+  buildSessionSteps,
+  remainingSessionMinutes,
+  selectTodayPlanSession,
+  selectYesterdayEvidence,
+} from "@/lib/learning-session";
 import type {
   AgentReply,
   AnswerResult,
   ExecutableActionProposal,
   LearningMode,
+  LearningEvidence,
   LearningWorkspace,
   Locale,
   MaterialRecord,
@@ -35,14 +42,9 @@ import type {
   SavedPracticeQuestion,
   SearchSource,
   StudyPlan,
-  StudySession,
 } from "@/lib/types";
 
 
-const modeCopy: Record<Locale, Record<LearningMode, string>> = {
-  zh: { concept: "概念学习", case: "案例拆解", project: "项目实战", exam: "模拟考试" },
-  en: { concept: "Concept", case: "Case study", project: "Project", exam: "Mock exam" },
-};
 const SESSION_RENDERED_AT = Date.now();
 
 const interfaceCopy = {
@@ -126,19 +128,14 @@ function framework(mode: LearningMode, locale: Locale) {
   return locale === "zh" ? zh[mode] : en[mode];
 }
 
-function lessonTitle(mode: LearningMode, locale: Locale, topic: string) {
-  const prefix = locale === "zh"
-    ? { concept: "建立可迁移的理解", case: "从真实场景拆解问题", project: "先定义可交付成果", exam: "梳理考点与解题条件" }[mode]
-    : { concept: "Build transferable understanding", case: "Analyze a real situation", project: "Define a useful deliverable", exam: "Map the tested idea and conditions" }[mode];
-  return `${prefix}：${topic}`;
-}
-
 export function LearningSessionCanvas({
   locale,
   t,
   workspace,
   plan,
   progress,
+  evidence = [],
+  beginWithReview = false,
   materials,
   question,
   answer,
@@ -153,11 +150,10 @@ export function LearningSessionCanvas({
   onRecheckModel,
   isAdmin = false,
   onOpenAgentSettings,
-  onLearningModeChange,
   onAnswerChange,
   onStartTask,
-  onStartPlanSession,
   preferredSessionId,
+  sessionStartedAt,
   onSubmit,
   onNextTask,
   onRetryTask,
@@ -174,6 +170,8 @@ export function LearningSessionCanvas({
   workspace: LearningWorkspace;
   plan: StudyPlan | null;
   progress: Progress | null;
+  evidence?: LearningEvidence[];
+  beginWithReview?: boolean;
   materials: MaterialRecord[];
   question: PracticeQuestion | null;
   answer: string;
@@ -191,8 +189,8 @@ export function LearningSessionCanvas({
   onLearningModeChange: (mode: LearningMode) => void;
   onAnswerChange: (answer: string) => void;
   onStartTask: () => void | Promise<void>;
-  onStartPlanSession?: (session: StudySession) => void | Promise<void>;
   preferredSessionId?: string | null;
+  sessionStartedAt?: number;
   onSubmit: () => void | Promise<void>;
   onNextTask: () => void | Promise<void>;
   onRetryTask?: () => void | Promise<void>;
@@ -208,9 +206,29 @@ export function LearningSessionCanvas({
   onCoachTurnHandled?: () => void;
 }) {
   const text = interfaceCopy[locale];
-  const steps = buildSessionSteps(learningMode, locale);
-  const stage = sessionStage(question, result);
-  const activeIndex = stage === "learn" ? 1 : stage === "practice" ? 2 : 3;
+  const yesterdayEvidence = useMemo(
+    () => selectYesterdayEvidence(evidence),
+    [evidence],
+  );
+  const hasYesterdayLearning = yesterdayEvidence.length > 0;
+  const [stage, setStage] = useState<"review" | "learn" | "practice" | "reflect">(
+    result
+      ? result.session_decision && result.session_decision.action !== "summary"
+        ? "practice"
+        : "reflect"
+      : beginWithReview
+        ? hasYesterdayLearning ? "review" : "learn"
+        : question ? "practice" : "learn",
+  );
+  const isInterimFeedback = Boolean(
+    result?.session_decision && result.session_decision.action !== "summary",
+  );
+  const visibleStage = result && !isInterimFeedback
+    ? "reflect"
+    : stage === "review" && !hasYesterdayLearning
+      ? "learn"
+      : stage;
+  const activeIndex = visibleStage === "review" ? 0 : visibleStage === "learn" ? 1 : visibleStage === "practice" ? 2 : 3;
   const nextSession = useMemo(() => {
     const sessions = plan?.sessions ?? [];
     const preferred = preferredSessionId
@@ -218,6 +236,23 @@ export function LearningSessionCanvas({
       : undefined;
     return preferred ?? selectTodayPlanSession(sessions);
   }, [plan, preferredSessionId]);
+  const sessionMinutes = nextSession?.minutes ?? plan?.daily_minutes ?? 45;
+  const steps = buildSessionSteps(
+    learningMode,
+    locale,
+    sessionMinutes,
+    hasYesterdayLearning,
+  );
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const remainingMinutes = remainingSessionMinutes(
+    sessionStartedAt ?? clockNow,
+    sessionMinutes,
+    clockNow,
+  );
   const activeTopicId = question?.topic_id ?? nextSession?.topic_id;
   const topic = activeTopicId
     ? progress?.topics?.[activeTopicId] ?? (locale === "zh" ? "未命名主题" : "Untitled topic")
@@ -226,6 +261,11 @@ export function LearningSessionCanvas({
   const agentRef = useRef<HTMLDetailsElement>(null);
   const sourceRecords = materials.slice(0, 2);
   const taskSources = result?.sources?.length ? result.sources : question?.sources ?? [];
+  const primarySourceText = taskSources[0]?.text ?? "";
+  const lessonHighlights = useMemo(
+    () => buildLessonHighlights(primarySourceText),
+    [primarySourceText],
+  );
   const taskGrounding = result?.grounding
     ?? question?.grounding
     ?? (taskSources.length > 0 ? "material" : "general");
@@ -242,6 +282,32 @@ export function LearningSessionCanvas({
   const daysUntilExam = plan?.exam_at
     ? Math.max(0, Math.ceil((new Date(plan.exam_at).getTime() - SESSION_RENDERED_AT) / 86_400_000))
     : null;
+  const reviewPrompts = useMemo(() => {
+    const topicNames = new Map<string, string>();
+    for (const item of yesterdayEvidence) {
+      const topicId = typeof item.details?.topic_id === "string" ? item.details.topic_id : "";
+      if (!topicId || topicNames.has(topicId)) continue;
+      topicNames.set(topicId, progress?.topics?.[topicId] ?? topicId);
+    }
+    const prompts = Array.from(topicNames.entries()).slice(0, 3).map(([topicId, topicName]) => {
+      const topicEvidence = yesterdayEvidence.filter((item) => item.details?.topic_id === topicId);
+      const weakPoint = topicEvidence
+        .flatMap((item) => [
+          ...(Array.isArray(item.details?.misconceptions) ? item.details.misconceptions : []),
+          ...(Array.isArray(item.details?.gaps) ? item.details.gaps : []),
+        ])
+        .find((item): item is string => typeof item === "string" && item.trim().length > 0);
+      if (weakPoint) {
+        return locale === "zh"
+          ? `昨天学习了“${topicName}”：请重新说明 ${weakPoint}`
+          : `Yesterday you studied “${topicName}”. Revisit: ${weakPoint}`;
+      }
+      return locale === "zh"
+        ? `昨天学习了“${topicName}”：请回忆它的核心概念，并举一个例子。`
+        : `Yesterday you studied “${topicName}”. Recall its core idea and one example.`;
+    });
+    return prompts;
+  }, [locale, progress?.topics, yesterdayEvidence]);
 
   function openFullCoach() {
     if (!agentRef.current) return;
@@ -263,7 +329,10 @@ export function LearningSessionCanvas({
               <Target size={16} /> {daysUntilExam} {t("daysLeft")}
             </span>
           )}
-          <span className="session-time"><Clock3 size={16} /> {plan?.daily_minutes ?? 45} {text.minutes}</span>
+          <span className="session-time" data-testid="session-time-remaining">
+            <Clock3 size={16} />
+            {locale === "zh" ? `剩余约 ${remainingMinutes} 分钟` : `About ${remainingMinutes} min left`}
+          </span>
         </div>
       </header>
 
@@ -273,42 +342,63 @@ export function LearningSessionCanvas({
             {steps.map((step, index) => (
               <li key={step.id} className={index < activeIndex ? "complete" : index === activeIndex ? "active" : ""}>
                 <span>{index < activeIndex ? <Check size={16} /> : index + 1}</span>
-                <div><strong>{step.label}</strong><small>{step.minutes} {text.minutes}</small></div>
+                <div><strong>{step.label}</strong><small>{step.minutes === 0 ? (locale === "zh" ? "今天跳过" : "Skipped today") : `${step.minutes} ${text.minutes}`}</small></div>
               </li>
             ))}
           </ol>
           <div className="session-progress-line"><span style={{ width: `${(activeIndex + 1) * 25}%` }} /></div>
 
-          <div className="session-mode-bar" aria-label={text.learningMode}>
-            <span>{text.learningMode}</span>
-            {(Object.keys(modeCopy[locale]) as LearningMode[]).map((mode) => (
+          {visibleStage === "review" && (
+            <article className="session-lesson session-review-stage" data-testid="session-review-stage">
+              <span className="session-section-label"><RotateCcw size={15} /> {steps[0].label}</span>
+              <h2>{locale === "zh" ? "先花几分钟回想一下" : "Take a few minutes to recall"}</h2>
+              <p>{locale === "zh" ? "不用查资料，试着在心里回答。不会也没关系，Agent 会把薄弱点带进今天的学习。" : "Try without looking anything up. It is okay not to know yet."}</p>
+              <ol className="session-review-questions">
+                {reviewPrompts.map((prompt) => <li key={prompt}>{prompt}</li>)}
+              </ol>
               <button
-                key={mode}
                 type="button"
-                data-testid={`learning-mode-${mode}`}
-                aria-pressed={learningMode === mode}
-                onClick={() => onLearningModeChange(mode)}
+                className="primary-action session-primary"
+                data-testid="session-finish-review"
                 disabled={busy}
+                onClick={async () => {
+                  if (!question) await onStartTask();
+                  setStage("learn");
+                }}
               >
-                {modeCopy[locale][mode]}
+                {locale === "zh" ? "完成回顾，开始今天学习" : "Finish review and start learning"} <ArrowRight size={18} />
               </button>
-            ))}
-          </div>
+            </article>
+          )}
 
-          {stage === "learn" && (
+          {visibleStage === "learn" && (
             <article className="session-lesson" data-testid="session-learning-stage">
-              <span className="session-section-label"><Lightbulb size={15} /> {modeCopy[locale][learningMode]}</span>
-              <h2>{lessonTitle(learningMode, locale, topic)}</h2>
-              <p>{workspace.goal}</p>
-              <div className="session-framework" aria-label={locale === "zh" ? "学习框架" : "Learning framework"}>
-                {framework(learningMode, locale).map((item, index) => (
-                  <div key={item}><span>{index + 1}</span><strong>{item}</strong></div>
-                ))}
-              </div>
-              <section className="session-brief">
-                <div><Target size={17} /><span>{text.capability}</span><strong>{workspace.goal}</strong></div>
-                <div><Layers3 size={17} /><span>{text.currentOutput}</span><strong>{text.outputHint}</strong></div>
-              </section>
+              <span className="session-section-label"><Lightbulb size={15} /> {steps[1].label}</span>
+              <h2>{topic}</h2>
+              <p>{locale === "zh" ? "以下内容来自今天的学习计划和相关资料。" : "This content follows today's plan and its related sources."}</p>
+              {lessonHighlights.length > 0 ? (
+                <section className="session-learning-content" data-testid="session-learning-content">
+                  <strong>{locale === "zh" ? "资料要点" : "Key points from your material"}</strong>
+                  <ul>
+                    {lessonHighlights.map((highlight) => (
+                      <li key={highlight}><RichText>{highlight}</RichText></li>
+                    ))}
+                  </ul>
+                  <details>
+                    <summary>{locale === "zh" ? "查看资料原文" : "View source excerpt"}</summary>
+                    <RichText>{taskSources[0].text}</RichText>
+                  </details>
+                </section>
+              ) : (
+                <div className="session-brief">
+                  <div><Target size={17} /><span>{text.capability}</span><strong>{workspace.goal}</strong></div>
+                </div>
+              )}
+              {taskSources.length > 0 && (
+                <button type="button" className="session-source-link" onClick={() => setSelectedSources(taskSources)}>
+                  <ExternalLink size={15} /> {text.sourceLabel} · {taskSources[0].filename}
+                </button>
+              )}
               {materials.length === 0 && (
                 <div className="session-upload-prompt" data-testid="session-upload-prompt">
                   <div>
@@ -326,17 +416,15 @@ export function LearningSessionCanvas({
                   className="primary-action session-primary"
                   data-testid="session-start-task"
                   disabled={busy}
-                  onClick={() => void (nextSession && onStartPlanSession
-                    ? onStartPlanSession(nextSession)
-                    : onStartTask())}
+                  onClick={() => setStage("practice")}
                 >
-                  {nextSession ? text.startPlannedSession : text.startTask} <ArrowRight size={18} />
+                  {locale === "zh" ? "开始练习" : "Start practice"} <ArrowRight size={18} />
                 </button>
               </div>
             </article>
           )}
 
-          {stage === "practice" && question && (
+          {visibleStage === "practice" && question && !result && (
             <article className="session-task" data-testid="session-practice-stage" data-question-id={question.id}>
               <span className="session-section-label"><Target size={15} /> {steps[2].label}</span>
               <span className={`session-grounding-badge ${taskGrounding}`} data-testid="practice-grounding">
@@ -347,18 +435,29 @@ export function LearningSessionCanvas({
                   {question.mode === "ai" ? t("aiQuestion") : t("fallbackQuestion")}
                 </span>
               )}
-              <h2>{question.prompt}</h2>
+              <span className="session-grounding-badge" data-testid="question-difficulty">
+                {locale === "zh" ? `难度 ${question.difficulty_level ?? 2}/5` : `Difficulty ${question.difficulty_level ?? 2}/5`}
+              </span>
+              <RichText className="session-question-prompt">{question.prompt}</RichText>
               {question.explanation && (
                 <div className="question-explanation" data-testid="question-explanation">
                   <strong>{locale === "zh" ? "为什么考这道题" : "Why this task matters"}</strong>
-                  <p>{question.explanation}</p>
+                  <RichText>{question.explanation}</RichText>
                 </div>
               )}
-              {taskSources[0]?.text && (
-                <blockquote className="session-case-evidence">
-                  <span>{locale === "zh" ? "真实材料线索" : "Source evidence"}</span>
-                  <p>{taskSources[0].text}</p>
-                </blockquote>
+              {lessonHighlights.length > 0 && (
+                <details className="session-practice-source" data-testid="session-practice-source">
+                  <summary>
+                    {locale === "zh" ? "需要提示？查看相关资料" : "Need a hint? View related material"}
+                  </summary>
+                  <div>
+                    <ul>
+                      {lessonHighlights.slice(0, 3).map((highlight) => (
+                        <li key={highlight}><RichText>{highlight}</RichText></li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
               )}
               <div className="session-task-framework" aria-label={locale === "zh" ? "作答框架" : "Answer framework"}>
                 {framework(learningMode, locale).map((item, index) => (
@@ -409,8 +508,12 @@ export function LearningSessionCanvas({
             </article>
           )}
 
-          {stage === "reflect" && result && question && (
-            <article className="session-feedback" data-testid="session-reflect-stage" role="status">
+          {(visibleStage === "reflect" || isInterimFeedback) && result && question && (
+            <article
+              className="session-feedback"
+              data-testid={isInterimFeedback ? "session-task-feedback" : "session-reflect-stage"}
+              role="status"
+            >
               <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
               <span className={`session-grounding-badge ${taskGrounding}`} data-testid="feedback-grounding">
                 {groundingLabel}
@@ -473,9 +576,34 @@ export function LearningSessionCanvas({
                     : text.reviewHint}</span>
                 </div>
               </div>
+              {result.session_decision && (
+                <div className={`session-adaptive-decision ${result.session_decision.action}`} data-testid="session-decision">
+                  <strong>{result.session_decision.action === "continue_topic"
+                    ? (locale === "zh" ? "再巩固一下当前知识点" : "Reinforce this topic")
+                    : result.session_decision.action === "next_topic"
+                      ? (locale === "zh" ? "可以进入下一个知识点" : "Ready for the next topic")
+                      : (locale === "zh" ? "现在进入总结复盘" : "Wrap up now")}</strong>
+                  <span>{result.session_decision.reason === "time_low"
+                    ? (locale === "zh" ? "剩余时间不足以完成一道新题，已为总结预留时间。" : "Time is reserved for reflection instead of starting another task.")
+                    : result.session_decision.action === "continue_topic"
+                      ? (locale === "zh" ? `当前掌握度 ${Math.round(result.mastery * 100)}%，达到 ${Math.round(result.session_decision.target_mastery * 100)}% 后再推进。` : `Current mastery is ${Math.round(result.mastery * 100)}%; target is ${Math.round(result.session_decision.target_mastery * 100)}%.`)
+                      : (locale === "zh" ? "系统根据掌握度和剩余时间给出这一步。" : "This step reflects mastery and remaining time.")}</span>
+                  {result.session_decision.action !== "summary" && (
+                    <span data-testid="next-difficulty">
+                      {locale === "zh"
+                        ? `下一题预计难度 ${result.difficulty_level}/5，约需 ${result.session_decision.estimated_minutes} 分钟。`
+                        : `Next difficulty: ${result.difficulty_level}/5, about ${result.session_decision.estimated_minutes} minutes.`}
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="mobile-sticky-task-action" data-testid="mobile-sticky-task-action">
-                <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => void onNextTask()}>
-                  {text.next} <ArrowRight size={18} />
+                <button type="button" className="primary-action session-primary" data-testid="next-question" disabled={busy} onClick={() => result.session_decision?.action === "summary" ? onViewProgress?.() : void onNextTask()}>
+                  {result.session_decision?.action === "summary"
+                    ? (locale === "zh" ? "完成今日学习" : "Finish session")
+                    : result.session_decision?.action === "next_topic"
+                      ? (locale === "zh" ? "学习下一个知识点" : "Learn next topic")
+                      : (locale === "zh" ? "继续巩固" : "Keep practicing")} <ArrowRight size={18} />
                 </button>
               </div>
               <div className="session-reflect-actions">
@@ -492,7 +620,7 @@ export function LearningSessionCanvas({
               </div>
             </article>
           )}
-          {stage === "reflect" && result && !question && (
+          {result && !question && (
             <article className="session-feedback" data-testid="reflect-recovery" role="status">
               <div className="feedback-score"><CheckCircle2 size={22} /><span>{text.score}</span><strong>{result.score}<small>/100</small></strong></div>
               <h2>{result.feedback}</h2>
@@ -548,23 +676,27 @@ export function LearningSessionCanvas({
             ) : <p className="context-empty">{text.noSources}</p>}
             <button type="button" className="context-link" onClick={onOpenLibrary}>{text.openLibrary} <ArrowRight size={15} /></button>
           </section>
-          <section className="session-method-summary">
-            <span>{text.learningMode}</span>
-            <strong>{modeCopy[locale][learningMode]}</strong>
-            <p>{locale === "zh" ? "Agent 会按当前方式组织内容、任务与反馈。" : "The Agent adapts content, tasks, and feedback to this method."}</p>
-          </section>
-          <SessionCoach
-            locale={locale}
-            onAsk={onAskCoach}
-            modelConfigured={modelConfigured}
-            onModelUnavailable={onModelUnavailable}
-            onRecheck={onRecheckModel}
-            isAdmin={isAdmin}
-            onConfigure={onOpenAgentSettings}
-            onOpenFullCoach={agentToken ? openFullCoach : undefined}
-            onApplyAction={onApplyCoachAction}
-            onTurnHandled={onCoachTurnHandled}
-          />
+          <details open className="session-coach-disclosure" data-testid="session-coach-disclosure">
+            <summary>
+              <span><Lightbulb size={17} /></span>
+              <div>
+                <strong>{locale === "zh" ? "遇到困难？问 Agent" : "Need help? Ask the Agent"}</strong>
+                <small>{locale === "zh" ? "解释题目、给提示或换个思路" : "Get an explanation, hint, or another approach"}</small>
+              </div>
+            </summary>
+            <SessionCoach
+              locale={locale}
+              onAsk={onAskCoach}
+              modelConfigured={modelConfigured}
+              onModelUnavailable={onModelUnavailable}
+              onRecheck={onRecheckModel}
+              isAdmin={isAdmin}
+              onConfigure={onOpenAgentSettings}
+              onOpenFullCoach={agentToken ? openFullCoach : undefined}
+              onApplyAction={onApplyCoachAction}
+              onTurnHandled={onCoachTurnHandled}
+            />
+          </details>
           <section className="session-next-review">
             <Clock3 size={18} />
             <div><span>{text.review}</span><strong>{nextReview ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", weekday: "short" }).format(new Date(nextReview)) : text.reviewHint}</strong></div>
@@ -572,7 +704,7 @@ export function LearningSessionCanvas({
         </aside>
       </div>
       {agentToken && (
-        <details ref={agentRef} className="workspace-agent-disclosure" data-testid="workspace-agent" tabIndex={-1}>
+        <details open ref={agentRef} className="workspace-agent-disclosure" data-testid="workspace-agent" tabIndex={-1}>
           <summary>{locale === "zh" ? "完整对话、历史与资料引用" : "Full conversation, history, and sources"}</summary>
           <AgentPanel
             token={agentToken}

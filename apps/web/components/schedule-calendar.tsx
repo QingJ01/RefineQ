@@ -35,7 +35,7 @@ export function ScheduleCalendar({
   focusedSessionId?: string | null;
   onUpdateSession: (
     session: StudySession,
-    input: { planned_at?: string; minutes?: number; status?: "planned" | "completed" },
+    input: { planned_at?: string; minutes?: number; status?: "planned" | "completed"; topic_id?: string },
   ) => void | boolean | Promise<void | boolean>;
   onAddSession?: (input: { topic_name: string; planned_at: string; minutes: number; activity: string }) => Promise<boolean>;
   onClearPlan?: () => Promise<boolean>;
@@ -54,6 +54,7 @@ export function ScheduleCalendar({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [plannedAt, setPlannedAt] = useState("");
   const [minutes, setMinutes] = useState(45);
+  const [topicId, setTopicId] = useState("");
   const [adding, setAdding] = useState(false);
   const [newTopic, setNewTopic] = useState("");
   const [confirmingClear, setConfirmingClear] = useState(false);
@@ -91,6 +92,7 @@ export function ScheduleCalendar({
     setEditingId(session.id);
     setPlannedAt(localInputValue(session.planned_at));
     setMinutes(session.minutes);
+    setTopicId(session.topic_id);
   }
 
   function showToday() {
@@ -103,6 +105,7 @@ export function ScheduleCalendar({
     const saved = await onUpdateSession(session, {
       planned_at: new Date(plannedAt).toISOString(),
       minutes,
+      topic_id: topicId,
     });
     if (saved === false) return;
     setSelectedDate(dateKey(new Date(plannedAt)));
@@ -170,6 +173,7 @@ export function ScheduleCalendar({
           {editingId && (() => {
             const session = selectedSessions.find((item) => item.id === editingId);
             return session ? <div className="calendar-editor calendar-edit-panel">
+              <label>{zh ? "学习知识点" : "Topic"}<select value={topicId} onChange={(event) => setTopicId(event.target.value)}>{Object.entries(topicLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
               <label>{zh ? "日期与时间" : "Date and time"}<input type="datetime-local" value={plannedAt} onChange={(event) => setPlannedAt(event.target.value)} /></label>
               <label>{zh ? "时长（分钟）" : "Minutes"}<input type="number" min={5} max={480} value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} /></label>
               <div><button type="button" disabled={busySessionId === session.id || !plannedAt} onClick={() => void save(session)}>{zh ? "保存" : "Save"}</button><button type="button" onClick={() => setEditingId(null)}>{zh ? "取消" : "Cancel"}</button></div>

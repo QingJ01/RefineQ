@@ -127,6 +127,18 @@ def _source_block(sources: list[SearchResult]) -> str:
     )
 
 
+def _prioritize_assessment_sources(sources: list[SearchResult]) -> list[SearchResult]:
+    """Prefer learner-uploaded question sets while preserving retrieval relevance."""
+    assessment_pattern = re.compile(
+        r"past[ _-]?exam|assignment|practice[ _-]?question|quiz|test|试卷|真题|作业|练习题",
+        re.IGNORECASE,
+    )
+    return sorted(
+        sources,
+        key=lambda source: 0 if assessment_pattern.search(source.filename) else 1,
+    )
+
+
 def _valid_citations(citations: list[str], sources: list[SearchResult]) -> list[str]:
     available = {source.citation_id for source in sources}
     return [item for item in dict.fromkeys(citations) if item in available]
@@ -340,6 +352,7 @@ class LearningIntelligenceService:
                 query=topic_name,
                 limit=6,
             )
+            sources = _prioritize_assessment_sources(sources)
         except ValueError:
             sources = []
             _log_model_event(
@@ -378,7 +391,9 @@ class LearningIntelligenceService:
                     "what to test, and never copy an unsupported diagnosis into the task. "
                     "Rubric points must total 100 and every citation must use a supplied ID. "
                     "When no study material is supplied, use general knowledge and return an "
-                    "empty citations list."
+                    "empty citations list. When the first supplied source is a past exam, "
+                    "assignment, quiz, test, or practice-question document, prefer an original "
+                    "question from that source over inventing a new one. Do not reveal its answer."
                 ),
             },
             {

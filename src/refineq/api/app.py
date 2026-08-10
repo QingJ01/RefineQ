@@ -231,6 +231,7 @@ def create_app(
         knowledge=app.state.knowledge,
         material_deletions=app.state.material_deletions,
         sessions=app.state.sessions,
+        analyses=app.state.material_analyses,
         routing=WorkspaceRoutingIntelligence(
             app.state.model_settings,
             learning_model_transport or OpenAICompatibleStructuredTransport(),

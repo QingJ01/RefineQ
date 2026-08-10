@@ -118,6 +118,7 @@ export function MaterialDropzone({
   topicSuggestions = [],
   acceptingTopicSuggestionId = null,
   onAcceptTopicSuggestion,
+  onAcceptAllTopicSuggestions,
   onUploadActivityChange,
   libraryMaterials = [],
   linkingLibraryMaterialId = null,
@@ -136,6 +137,7 @@ export function MaterialDropzone({
   topicSuggestions?: TopicSuggestion[];
   acceptingTopicSuggestionId?: string | null;
   onAcceptTopicSuggestion?: (suggestion: TopicSuggestion) => void | Promise<void>;
+  onAcceptAllTopicSuggestions?: () => void | Promise<void>;
   onUploadActivityChange?: (active: boolean) => void;
   libraryMaterials?: MaterialRecord[];
   linkingLibraryMaterialId?: string | null;
@@ -502,8 +504,8 @@ export function MaterialDropzone({
             <div>
               <strong>{locale === "zh" ? "资料重点" : "Material priorities"}</strong>
               <p>{locale === "zh"
-                ? "先根据文件名和标签给出建议；点击下方“分析资料”后，会补充正文中的知识点。"
-                : "Initial suggestions come from names and tags. Analyze a file to add topics from its contents."}</p>
+                ? "AI 已从资料中整理出知识点。确认后会把它们分配到未来的学习日程。"
+                : "The Agent found these topics in your material. Confirm them to distribute them across future sessions."}</p>
             </div>
           </div>
           <ul>
@@ -523,6 +525,17 @@ export function MaterialDropzone({
               </li>
             ))}
           </ul>
+          <button
+            type="button"
+            className="primary-action material-topic-confirm"
+            data-testid="accept-all-topics"
+            disabled={acceptingTopicSuggestionId !== null}
+            onClick={() => void onAcceptAllTopicSuggestions?.()}
+          >
+            {acceptingTopicSuggestionId === "all"
+              ? (locale === "zh" ? "正在生成计划…" : "Building plan…")
+              : (locale === "zh" ? "全部加入并生成计划" : "Add all and build plan")}
+          </button>
         </aside>
       )}
 

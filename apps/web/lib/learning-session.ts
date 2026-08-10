@@ -1,7 +1,7 @@
-import type { LearningMode, Locale, StudySession } from "./types";
+import type { LearningEvidence, LearningMode, Locale, StudySession } from "./types";
 
 
-export type LearningSessionStage = "learn" | "practice" | "reflect";
+export type LearningSessionStage = "review" | "learn" | "practice" | "reflect";
 
 export interface LearningSessionStep {
   id: "align" | "learn" | "practice" | "reflect";
@@ -29,63 +29,130 @@ const steps: Record<LearningMode, Record<Locale, LearningSessionStep[]>> = {
   concept: {
     zh: [
       { id: "align", label: "快速回顾", minutes: 5 },
-      { id: "learn", label: "理解概念", minutes: 10 },
-      { id: "practice", label: "主动练习", minutes: 20 },
+      { id: "learn", label: "今天学习", minutes: 10 },
+      { id: "practice", label: "练一练", minutes: 20 },
       { id: "reflect", label: "总结复盘", minutes: 10 },
     ],
     en: [
       { id: "align", label: "Quick review", minutes: 5 },
-      { id: "learn", label: "Understand", minutes: 10 },
-      { id: "practice", label: "Active practice", minutes: 20 },
+      { id: "learn", label: "Learn today", minutes: 10 },
+      { id: "practice", label: "Practice", minutes: 20 },
       { id: "reflect", label: "Wrap up", minutes: 10 },
     ],
   },
   case: {
     zh: [
-      { id: "align", label: "目标校准", minutes: 5 },
-      { id: "learn", label: "案例拆解", minutes: 10 },
-      { id: "practice", label: "实战任务", minutes: 20 },
-      { id: "reflect", label: "反馈复盘", minutes: 10 },
+      { id: "align", label: "快速回顾", minutes: 5 },
+      { id: "learn", label: "今天学习", minutes: 10 },
+      { id: "practice", label: "练一练", minutes: 20 },
+      { id: "reflect", label: "总结复盘", minutes: 10 },
     ],
     en: [
-      { id: "align", label: "Align goal", minutes: 5 },
-      { id: "learn", label: "Analyze case", minutes: 10 },
-      { id: "practice", label: "Apply", minutes: 20 },
-      { id: "reflect", label: "Reflect", minutes: 10 },
+      { id: "align", label: "Quick review", minutes: 5 },
+      { id: "learn", label: "Learn today", minutes: 10 },
+      { id: "practice", label: "Practice", minutes: 20 },
+      { id: "reflect", label: "Wrap up", minutes: 10 },
     ],
   },
   project: {
     zh: [
-      { id: "align", label: "定义产出", minutes: 5 },
-      { id: "learn", label: "方法拆解", minutes: 10 },
-      { id: "practice", label: "项目实战", minutes: 20 },
-      { id: "reflect", label: "作品复盘", minutes: 10 },
+      { id: "align", label: "快速回顾", minutes: 5 },
+      { id: "learn", label: "今天学习", minutes: 10 },
+      { id: "practice", label: "练一练", minutes: 20 },
+      { id: "reflect", label: "总结复盘", minutes: 10 },
     ],
     en: [
-      { id: "align", label: "Define output", minutes: 5 },
-      { id: "learn", label: "Break down", minutes: 10 },
-      { id: "practice", label: "Build", minutes: 20 },
-      { id: "reflect", label: "Review work", minutes: 10 },
+      { id: "align", label: "Quick review", minutes: 5 },
+      { id: "learn", label: "Learn today", minutes: 10 },
+      { id: "practice", label: "Practice", minutes: 20 },
+      { id: "reflect", label: "Wrap up", minutes: 10 },
     ],
   },
   exam: {
     zh: [
       { id: "align", label: "快速回顾", minutes: 5 },
-      { id: "learn", label: "考点梳理", minutes: 10 },
-      { id: "practice", label: "模拟作答", minutes: 20 },
-      { id: "reflect", label: "错题复习", minutes: 10 },
+      { id: "learn", label: "今天学习", minutes: 10 },
+      { id: "practice", label: "练一练", minutes: 20 },
+      { id: "reflect", label: "总结复盘", minutes: 10 },
     ],
     en: [
       { id: "align", label: "Quick review", minutes: 5 },
-      { id: "learn", label: "Key points", minutes: 10 },
-      { id: "practice", label: "Mock answer", minutes: 20 },
+      { id: "learn", label: "Learn today", minutes: 10 },
+      { id: "practice", label: "Practice", minutes: 20 },
       { id: "reflect", label: "Review errors", minutes: 10 },
     ],
   },
 };
 
-export function buildSessionSteps(mode: LearningMode, locale: Locale): LearningSessionStep[] {
-  return steps[mode][locale];
+export function summaryReserveMinutes(totalMinutes: number): number {
+  if (totalMinutes <= 25) return 4;
+  if (totalMinutes <= 60) return 6;
+  if (totalMinutes <= 90) return 8;
+  return 10;
+}
+
+export function buildSessionSteps(
+  mode: LearningMode,
+  locale: Locale,
+  totalMinutes = 45,
+  includeReview = true,
+): LearningSessionStep[] {
+  const labels = steps[mode][locale];
+  const summary = summaryReserveMinutes(totalMinutes);
+  const reviewAllocation = Math.max(2, Math.min(5, Math.round(totalMinutes * 0.1)));
+  const review = includeReview ? reviewAllocation : 0;
+  const learn = Math.max(4, Math.min(20, Math.round(totalMinutes * 0.2)))
+    + (includeReview ? 0 : reviewAllocation);
+  const practice = Math.max(1, totalMinutes - review - learn - summary);
+  const minutes = [review, learn, practice, summary];
+  return labels.map((step, index) => ({ ...step, minutes: minutes[index] }));
+}
+
+export function selectYesterdayEvidence(
+  evidence: readonly LearningEvidence[],
+  now = new Date(),
+): LearningEvidence[] {
+  const yesterdayStart = new Date(now);
+  yesterdayStart.setHours(0, 0, 0, 0);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const todayStart = new Date(yesterdayStart);
+  todayStart.setDate(todayStart.getDate() + 1);
+  return evidence.filter((item) => {
+    if (!item.observed_at || !["attempt", "review", "self_explanation"].includes(item.kind)) {
+      return false;
+    }
+    const observedAt = new Date(item.observed_at);
+    return !Number.isNaN(observedAt.getTime())
+      && observedAt >= yesterdayStart
+      && observedAt < todayStart;
+  });
+}
+
+export function remainingSessionMinutes(
+  startedAt: number,
+  totalMinutes: number,
+  now = Date.now(),
+): number {
+  const elapsedMinutes = Math.max(0, Math.floor((now - startedAt) / 60_000));
+  return Math.max(0, totalMinutes - elapsedMinutes);
+}
+
+export function buildLessonHighlights(text: string, limit = 5): string[] {
+  const candidates = text
+    .replace(/\r/g, "")
+    .split(/\n+|(?<=[。！？；])\s*/)
+    .map((item) => item.replace(/\s+/g, " ").trim())
+    .filter((item) => item.length >= 8 && item.length <= 260);
+  const seen = new Set<string>();
+  const highlights: string[] = [];
+  for (const candidate of candidates) {
+    const key = candidate.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    highlights.push(candidate);
+    if (highlights.length === limit) break;
+  }
+  return highlights;
 }
 
 export function sessionStage(
@@ -94,7 +161,7 @@ export function sessionStage(
 ): LearningSessionStage {
   if (result) return "reflect";
   if (question) return "practice";
-  return "learn";
+  return "review";
 }
 
 export function selectTodayPlanSession(

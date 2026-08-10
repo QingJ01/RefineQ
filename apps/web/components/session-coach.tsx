@@ -15,6 +15,7 @@ import {
 import { FormEvent, useState } from "react";
 
 import { ApiError } from "@/lib/api";
+import { RichText } from "@/components/rich-text";
 import type { CoachActionOutcome } from "@/lib/coach-actions";
 import type {
   AgentReply,
@@ -28,7 +29,7 @@ const copy = {
   zh: {
     title: "RefineQ 教练 · 当前步骤",
     intro: "我会结合当前目标、资料和你的回答，帮助你完成这一步。",
-    suggestions: ["解释这个框架", "给我一个反例", "这题太难，换一道"],
+    suggestions: ["给我一点提示", "换种方式解释", "回看相关内容", "为什么问这道题？"],
     placeholder: "向教练提问…",
     send: "发送",
     error: "暂时无法连接教练，你仍可以继续当前学习任务。",
@@ -48,7 +49,7 @@ const copy = {
   en: {
     title: "RefineQ coach · Current step",
     intro: "I use your goal, sources, and answers to help with this step.",
-    suggestions: ["Explain this framework", "Give me a counterexample", "This is too hard—replace it"],
+    suggestions: ["Give me a hint", "Explain it another way", "Review the related content", "Why ask this question?"],
     placeholder: "Ask your coach…",
     send: "Send",
     error: "The coach is temporarily unavailable. You can continue the current task.",
@@ -284,7 +285,7 @@ export function SessionCoach({
           <h3 id="session-coach-title">{text.title}</h3>
         </div>
       </div>
-      <p className="coach-intro">{reply || text.intro}</p>
+      <RichText className="coach-intro">{reply || text.intro}</RichText>
       {onOpenFullCoach && (
         <button
           type="button"

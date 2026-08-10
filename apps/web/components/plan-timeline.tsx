@@ -26,7 +26,7 @@ export function PlanTimeline({
   t: Translator;
   onUpdateSession?: (
     session: StudySession,
-    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number; topic_id?: string },
   ) => void | boolean | Promise<void | boolean>;
   onStartSession?: (session: StudySession) => void | Promise<void>;
   busySessionId?: string | null;
@@ -37,11 +37,13 @@ export function PlanTimeline({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [plannedAt, setPlannedAt] = useState("");
   const [minutes, setMinutes] = useState(45);
+  const [topicId, setTopicId] = useState("");
 
   function beginEdit(session: StudySession) {
     setEditingId(session.id);
     setPlannedAt(localInputValue(session.planned_at));
     setMinutes(session.minutes);
+    setTopicId(session.topic_id);
   }
 
   async function save(session: StudySession) {
@@ -49,6 +51,7 @@ export function PlanTimeline({
     const saved = await onUpdateSession?.(session, {
       planned_at: new Date(plannedAt).toISOString(),
       minutes,
+      topic_id: topicId,
     });
     if (saved === false) return;
     setEditingId(null);
@@ -103,6 +106,12 @@ export function PlanTimeline({
             <span className="plan-minutes">{row.minutesLabel}</span>
             {editingId === session.id ? (
               <div className="plan-session-editor">
+                <label>
+                  <span>{locale === "zh" ? "学习知识点" : "Topic"}</span>
+                  <select value={topicId} onChange={(event) => setTopicId(event.target.value)}>
+                    {Object.entries(topicLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                  </select>
+                </label>
                 <label>
                   <span>{locale === "zh" ? "日期与时间" : "Date and time"}</span>
                   <input type="datetime-local" value={plannedAt} onChange={(event) => setPlannedAt(event.target.value)} />

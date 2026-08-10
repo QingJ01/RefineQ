@@ -82,6 +82,8 @@ const DEFAULT_LONG_REQUEST_TIMEOUTS: LongRequestTimeouts = {
 
 const MATERIAL_ANALYSIS_RECOVERY_ATTEMPTS = 30;
 const MATERIAL_ANALYSIS_RECOVERY_INTERVAL_MS = 1_500;
+const QUESTION_RECOVERY_ATTEMPTS = 20;
+const QUESTION_RECOVERY_INTERVAL_MS = 1_000;
 
 export class ApiError extends Error {
   constructor(
@@ -542,6 +544,65 @@ export class ApiClient {
     );
   }
 
+  async createWorkspaceQuestionRecovering(
+    token: string,
+    workspaceId: string,
+    options: PracticeRequest = {},
+    signal?: AbortSignal,
+  ): Promise<PracticeQuestion> {
+    try {
+      return await this.createWorkspaceQuestion(token, workspaceId, options, signal);
+    } catch (caught) {
+      const recoverable = caught instanceof ApiError
+        && (caught.status === 408 || caught.status >= 500);
+      if (!recoverable || signal?.aborted) throw caught;
+      try {
+        return await this.waitForPendingWorkspaceQuestion(
+          token,
+          workspaceId,
+          options,
+          signal,
+        );
+      } catch {
+        throw caught;
+      }
+    }
+  }
+
+  async waitForPendingWorkspaceQuestion(
+    token: string,
+    workspaceId: string,
+    expected: PracticeRequest = {},
+    signal?: AbortSignal,
+  ): Promise<PracticeQuestion> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < QUESTION_RECOVERY_ATTEMPTS; attempt += 1) {
+      if (signal?.aborted) throw signal.reason;
+      try {
+        const question = await this.getWorkspaceQuestion(token, workspaceId, signal);
+        const matchesTopic = !expected.topicId || question.topic_id === expected.topicId;
+        const matchesPlanSession = !expected.planSessionId
+          || question.plan_session_id === expected.planSessionId;
+        const matchesReviewSession = !expected.reviewSessionId
+          || question.review_session_id === expected.reviewSessionId;
+        if (matchesTopic && matchesPlanSession && matchesReviewSession) return question;
+        lastError = new ApiError(
+          409,
+          "question_origin_mismatch",
+          "The pending question belongs to another learning session",
+        );
+        if (attempt === QUESTION_RECOVERY_ATTEMPTS - 1) throw lastError;
+      } catch (caught) {
+        lastError = caught;
+        const recoverable = caught instanceof ApiError
+          && (caught.status === 404 || caught.status >= 500);
+        if (!recoverable || attempt === QUESTION_RECOVERY_ATTEMPTS - 1) throw caught;
+      }
+      await new Promise((resolve) => setTimeout(resolve, QUESTION_RECOVERY_INTERVAL_MS));
+    }
+    throw lastError;
+  }
+
   setWorkspaceQuestionSaved(
     token: string,
     workspaceId: string,
@@ -573,6 +634,7 @@ export class ApiClient {
     answer: string,
     attemptId?: string,
     signal?: AbortSignal,
+    timing?: { remainingMinutes: number; summaryReserveMinutes: number },
   ): Promise<AnswerResult> {
     return this.request(
       `/workspaces/${workspaceId}/learning/answer`,
@@ -583,6 +645,8 @@ export class ApiClient {
           attempt_id: attemptId ?? crypto.randomUUID().replaceAll("-", ""),
           question_id: questionId,
           answer,
+          remaining_minutes: timing?.remainingMinutes,
+          summary_reserve_minutes: timing?.summaryReserveMinutes,
         }),
       },
       token,
@@ -606,7 +670,7 @@ export class ApiClient {
     token: string,
     workspaceId: string,
     sessionId: string,
-    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number; topic_id?: string },
   ): Promise<StudySession> {
     return this.request<StudySession>(
       `/workspaces/${workspaceId}/learning/plan/sessions/${sessionId}`,

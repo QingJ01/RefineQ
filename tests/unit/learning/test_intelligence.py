@@ -12,6 +12,7 @@ from refineq.learning.intelligence import (
     GradingModelOutput,
     GradingResult,
     LearningIntelligenceService,
+    _prioritize_assessment_sources,
     fallback_grade,
     fallback_question,
 )
@@ -74,6 +75,27 @@ class FakeModelSettings:
 
 def test_ai_grading_contract_requires_an_explicit_evidence_judgment() -> None:
     assert GradingModelOutput.model_fields["sufficient_evidence"].is_required()
+
+
+def test_assessment_materials_are_prioritized_for_question_generation() -> None:
+    notes = SearchResult(
+        citation_id="notes#0",
+        material_id="notes",
+        filename="lecture-notes.pdf",
+        chunk_index=0,
+        text="Limits lecture",
+        score=0.95,
+    )
+    exam = SearchResult(
+        citation_id="exam#0",
+        material_id="exam",
+        filename="Past Exam 2025.pdf",
+        chunk_index=0,
+        text="Original limits question",
+        score=0.8,
+    )
+
+    assert _prioritize_assessment_sources([notes, exam]) == [exam, notes]
 
 
 def _service(tmp_path: Path, *, configured: bool = True):

@@ -17,7 +17,6 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { BrandMark } from "@/components/brand";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EvidenceLedger } from "@/components/evidence-ledger";
-import { InitialDiagnostic } from "@/components/initial-diagnostic";
 import { LearningHome } from "@/components/learning-home";
 import { LearningReport } from "@/components/learning-report";
 import { LearningSessionCanvas } from "@/components/learning-session-canvas";
@@ -46,7 +45,11 @@ import {
   installHistoryNavigationGuard,
 } from "@/lib/history-navigation-guard";
 import { learningPath, type LearningSection } from "@/lib/learning-routes";
-import { learningModeForActivity } from "@/lib/learning-session";
+import {
+  learningModeForActivity,
+  remainingSessionMinutes,
+  summaryReserveMinutes,
+} from "@/lib/learning-session";
 import { loadModelCapability, refreshModelCapability } from "@/lib/model-capability";
 import { loadNextQuestion } from "@/lib/practice-flow";
 import {
@@ -74,7 +77,6 @@ import type {
   AttemptInsight,
   ExecutableActionProposal,
   AuthResponse,
-  DiagnosticResultInput,
   HomeActionReceipt,
   HomeDispatchResult,
   HomeWorkspaceProposal,
@@ -89,6 +91,7 @@ import type {
   SearchSource,
   StudySession,
   TopicSuggestion,
+  WorkspaceSnapshot,
 } from "@/lib/types";
 import { resolveRequestedWorkspace } from "@/lib/workspace-route-state";
 import {
@@ -181,6 +184,7 @@ export function StudyWorkspace({
   const [homeBusy, setHomeBusy] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [focusedPlanSessionId, setFocusedPlanSessionId] = useState<string | null>(null);
+  const [sessionStartedAt, setSessionStartedAt] = useState(() => Date.now());
   const [planView, setPlanView] = useState<"list" | "calendar">("list");
   const [planSettingsBusy, setPlanSettingsBusy] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -699,7 +703,13 @@ export function StudyWorkspace({
       route: routeForNotice,
       previousWorkspaceId: previousId === target.id ? null : previousId,
     });
-    await openWorkspace(target, token, "today", "push", input.request_id);
+    await openWorkspace(
+      target,
+      token,
+      result.workspace_target.route_action === "created" ? "materials" : "today",
+      "push",
+      input.request_id,
+    );
     return null;
   }
 
@@ -782,7 +792,13 @@ export function StudyWorkspace({
           route: routeForNotice,
           previousWorkspaceId: null,
         });
-        await openWorkspace(target, token, "today", "push", result.request_id);
+        await openWorkspace(
+          target,
+          token,
+          receipt.route.route_action === "created" ? "materials" : "today",
+          "push",
+          result.request_id,
+        );
       }
     }
     return receipt;
@@ -805,7 +821,7 @@ export function StudyWorkspace({
     if (!request.requestId) questionRequestIdRef.current = requestId;
     try {
       await loadNextQuestion(
-        () => api.createWorkspaceQuestion(auth.access_token, workspace.id, {
+        () => api.createWorkspaceQuestionRecovering(auth.access_token, workspace.id, {
           learningMode,
           ...request,
           requestId,
@@ -834,27 +850,6 @@ export function StudyWorkspace({
     }
   }
 
-  async function submitInitialDiagnostic(results: DiagnosticResultInput[]) {
-    if (!auth || !workspace) return;
-    const generation = capturePracticeGeneration();
-    setPracticeBusy(true);
-    setError("");
-    try {
-      await api.submitWorkspaceDiagnostic(auth.access_token, workspace.id, results);
-      if (!isPracticeGenerationCurrent(generation)) return;
-      const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
-      if (!isPracticeGenerationCurrent(generation)) return;
-      setProgress(snapshot.progress);
-      setEvidence(snapshot.evidence);
-      setPlan(snapshot.plan);
-      setNextAction(snapshot.next_action);
-    } catch (caught) {
-      if (isPracticeGenerationCurrent(generation)) reportError(caught);
-    } finally {
-      if (isPracticeGenerationCurrent(generation)) setPracticeBusy(false);
-    }
-  }
-
   async function submitAnswer() {
     if (!auth || !workspace || !question) return;
     const generation = capturePracticeGeneration();
@@ -865,12 +860,19 @@ export function StudyWorkspace({
     attemptIdRef.current ??= crypto.randomUUID().replaceAll("-", "");
     const attemptId = attemptIdRef.current;
     try {
+      const focusedSession = plan?.sessions.find((session) => session.id === focusedPlanSessionId);
+      const sessionMinutes = focusedSession?.minutes ?? plan?.daily_minutes ?? 45;
       const graded = await api.submitWorkspaceAnswer(
           auth.access_token,
           workspace.id,
           question.id,
           answer,
           attemptId,
+          undefined,
+          {
+            remainingMinutes: remainingSessionMinutes(sessionStartedAt, sessionMinutes),
+            summaryReserveMinutes: summaryReserveMinutes(sessionMinutes),
+          },
         );
       if (!isPracticeGenerationCurrent(generation)) return;
       setResult(graded);
@@ -965,7 +967,9 @@ export function StudyWorkspace({
       if (!workspace) return;
       const mode = learningModeForActivity(session.activity ?? "practice");
       setLearningMode(mode);
-      router.push(learningPath(workspace.id, "today"));
+      setFocusedPlanSessionId(session.id);
+      setSessionStartedAt(Date.now());
+      router.push(`${learningPath(workspace.id, "today")}?session=${encodeURIComponent(session.id)}`);
       await getQuestion({
         topicId: session.topic_id,
         planSessionId: session.id,
@@ -979,6 +983,18 @@ export function StudyWorkspace({
         });
       });
     });
+  }
+
+  async function startAlternativeTopicForToday(topicId: string) {
+    const scheduled = nextAction?.action_type === "start_session" && nextAction.target_id
+      ? plan?.sessions.find((session) => session.id === nextAction.target_id)
+      : undefined;
+    if (!scheduled || scheduled.topic_id === topicId) {
+      practiceTopic(topicId);
+      return;
+    }
+    const updated = await updatePlanSession(scheduled, { topic_id: topicId });
+    if (updated) startPlanSession({ ...scheduled, topic_id: topicId });
   }
 
   function retryAttempt(attempt: AttemptInsight) {
@@ -1078,10 +1094,16 @@ export function StudyWorkspace({
           return Array.from(byId.values());
         });
       }
-      await Promise.all([
-        refreshTopicSuggestions(auth.access_token, targetWorkspaceId),
-        refreshNextAction(auth.access_token, targetWorkspaceId),
-      ]);
+      await refreshNextAction(auth.access_token, targetWorkspaceId);
+      void Promise.all(
+        uploaded.map(async (material) => {
+          try {
+            await analyzeMaterial(material);
+          } catch {
+            // The material remains usable even if analysis needs a manual retry.
+          }
+        }),
+      ).then(() => refreshTopicSuggestions(auth.access_token, targetWorkspaceId));
       return uploaded;
     } catch (caught) {
       if (isAbortError(caught)) return [];
@@ -1144,19 +1166,23 @@ export function StudyWorkspace({
     if (!auth || !workspace) throw new Error(t("error"));
     const requestedAt = new Date().toISOString();
     try {
-      return await api.analyzeWorkspaceMaterial(
+      const analysis = await api.analyzeWorkspaceMaterial(
         auth.access_token,
         workspace.id,
         material.id,
       );
+      await refreshTopicSuggestions(auth.access_token, workspace.id);
+      return analysis;
     } catch (analysisError) {
       try {
-        return await api.waitForWorkspaceMaterialAnalysis(
+        const analysis = await api.waitForWorkspaceMaterialAnalysis(
           auth.access_token,
           workspace.id,
           material.id,
           requestedAt,
         );
+        await refreshTopicSuggestions(auth.access_token, workspace.id);
+        return analysis;
       } catch {
         reportError(analysisError);
         throw analysisError;
@@ -1244,6 +1270,31 @@ export function StudyWorkspace({
     }
   }
 
+  async function acceptAllTopicSuggestions() {
+    if (!auth || !workspace || topicSuggestions.length === 0 || acceptingTopicSuggestionId !== null) return;
+    const workspaceId = workspace.id;
+    setAcceptingTopicSuggestionId("all");
+    setError("");
+    try {
+      let latestSnapshot: WorkspaceSnapshot | null = null;
+      for (const suggestion of topicSuggestions) {
+        latestSnapshot = await api.acceptWorkspaceTopicSuggestion(
+          auth.access_token,
+          workspaceId,
+          suggestion.id,
+        );
+      }
+      if (latestSnapshot && workspaceRef.current?.id === workspaceId) {
+        applySnapshot(latestSnapshot);
+        router.push(learningPath(workspaceId, "plan"));
+      }
+    } catch (caught) {
+      if (workspaceRef.current?.id === workspaceId) reportError(caught);
+    } finally {
+      if (workspaceRef.current?.id === workspaceId) setAcceptingTopicSuggestionId(null);
+    }
+  }
+
   async function bulkDeleteMaterials(selected: MaterialRecord[]) {
     if (!auth || !workspace || selected.length === 0) return;
     try {
@@ -1262,13 +1313,14 @@ export function StudyWorkspace({
   }
 
   async function askSessionCoach(message: string) {
+    setError("");
     const pendingTurn = pendingCoachTurn(
       pendingTurnIdRef.current,
       message,
       () => crypto.randomUUID(),
     );
     pendingTurnIdRef.current = pendingTurn;
-    return askCoach(message, {
+    const reply = await askCoach(message, {
       token: auth?.access_token,
       workspaceId: workspace?.id,
       learningMode,
@@ -1279,6 +1331,8 @@ export function StudyWorkspace({
       turnId: pendingTurn.id,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     });
+    setError("");
+    return reply;
   }
 
   async function refreshWorkspaceSnapshot() {
@@ -1400,7 +1454,7 @@ export function StudyWorkspace({
 
   async function updatePlanSession(
     session: StudySession,
-    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number },
+    input: { status?: "planned" | "completed"; planned_at?: string; minutes?: number; topic_id?: string },
   ): Promise<boolean> {
     if (!auth || !workspace) return false;
     setBusySessionId(session.id);
@@ -1412,11 +1466,16 @@ export function StudyWorkspace({
         session.id,
         input,
       );
-      setPlan((current) => current ? {
-        ...current,
-        sessions: current.sessions.map((item) => item.id === updated.id ? updated : item),
-      } : current);
-      await refreshNextAction(auth.access_token, workspace.id);
+      if (input.topic_id) {
+        const snapshot = await api.getWorkspaceSnapshot(auth.access_token, workspace.id);
+        applySnapshot(snapshot);
+      } else {
+        setPlan((current) => current ? {
+          ...current,
+          sessions: current.sessions.map((item) => item.id === updated.id ? updated : item),
+        } : current);
+        await refreshNextAction(auth.access_token, workspace.id);
+      }
       return true;
     } catch (caught) {
       reportError(caught);
@@ -1821,12 +1880,12 @@ export function StudyWorkspace({
           )}
           {error && <div className="error-banner" role="alert" aria-live="polite"><strong>{t("error")}</strong><span>{error}</span>{snapshotConflict && <button type="button" data-testid="resync-workspace" onClick={() => void resyncWorkspace()}>{locale === "zh" ? "重新同步" : "Resync"}</button>}<button aria-label={t("routingDismiss")} onClick={() => { setError(""); setSnapshotConflict(false); }}>×</button></div>}
           {section === "today" && !question && !result && nextAction
-            && progress
-            && (progress.diagnostic_count !== 0 || progress.attempt_count !== 0) && (
+            && progress && (
             <NextActionCard
               locale={locale}
               action={nextAction}
               busy={practiceBusy}
+              topics={progress.topics}
               onUpload={() => navigateWithinWorkspace(learningPath(workspace.id, "materials"))}
               onStartReview={(sessionId, topicId) => {
                 if (topicId) startReviewSession(topicId, sessionId);
@@ -1837,20 +1896,9 @@ export function StudyWorkspace({
               }}
               onRepairPlan={() => navigateWithinWorkspace(learningPath(workspace.id, "plan"))}
               onStartPractice={(topicId) => {
-                if (topicId) practiceTopic(topicId);
+                if (topicId) void startAlternativeTopicForToday(topicId);
                 else void getQuestion({ learningMode });
               }}
-            />
-          )}
-          {section === "today"
-            && progress?.diagnostic_count === 0
-            && progress.attempt_count === 0
-            && (
-            <InitialDiagnostic
-              locale={locale}
-              topics={progress.topics}
-              busy={practiceBusy}
-              onSubmit={submitInitialDiagnostic}
             />
           )}
           {section === "today" && (question || result) && (
@@ -1860,6 +1908,8 @@ export function StudyWorkspace({
               workspace={workspace}
               plan={plan}
               progress={progress}
+              evidence={evidence}
+              beginWithReview
               materials={materials}
               question={question}
               answer={answer}
@@ -1884,11 +1934,20 @@ export function StudyWorkspace({
                   );
                 }
               }}
-              onStartTask={() => { void getQuestion({ learningMode }); }}
-              onStartPlanSession={startPlanSession}
+              onStartTask={() => getQuestion({ learningMode }).then(() => undefined)}
               preferredSessionId={focusedPlanSessionId}
+              sessionStartedAt={sessionStartedAt}
               onSubmit={submitAnswer}
-              onNextTask={() => { runGuardedPracticeAction(() => getQuestion({ learningMode, replace: true }).then(() => undefined)); }}
+              onNextTask={() => {
+                const topicId = result?.session_decision?.topic_id ?? question?.topic_id;
+                runGuardedPracticeAction(() => getQuestion({
+                  topicId,
+                  learningMode,
+                  // A graded answer already clears the pending question on the server.
+                  // Replacing is reserved for the explicit “换一个任务” action.
+                  replace: result ? false : true,
+                }).then(() => undefined));
+              }}
               onRetryTask={() => { if (question) void practiceSavedQuestion(question); }}
               onViewProgress={() => navigateWithinWorkspace(learningPath(workspace.id, "progress"))}
               onToggleSaved={(target, saved) => { void toggleSavedQuestion(target, saved); }}
@@ -1965,6 +2024,7 @@ export function StudyWorkspace({
               topicSuggestions={topicSuggestions}
               acceptingTopicSuggestionId={acceptingTopicSuggestionId}
               onAcceptTopicSuggestion={acceptTopicSuggestion}
+              onAcceptAllTopicSuggestions={acceptAllTopicSuggestions}
               onUploadActivityChange={setUploadInProgress}
                libraryMaterials={libraryMaterials}
                linkingLibraryMaterialId={linkingLibraryMaterialId}

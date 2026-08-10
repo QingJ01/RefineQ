@@ -303,6 +303,8 @@ export interface PracticeQuestion {
   learning_mode?: LearningMode;
   mode?: "ai" | "fallback";
   saved?: boolean;
+  review_session_id?: string | null;
+  plan_session_id?: string | null;
 }
 
 export interface SavedPracticeQuestion extends PracticeQuestion {
@@ -341,6 +343,15 @@ export interface AnswerResult {
   next_review_at?: string | null;
   completed_review_session_id?: string | null;
   completed_plan_session_id?: string | null;
+  session_decision?: {
+    action: "continue_topic" | "next_topic" | "summary";
+    reason: "time_low" | "mastery_low" | "mastery_reached" | "no_next_topic";
+    topic_id?: string | null;
+    estimated_minutes: number;
+    remaining_minutes?: number | null;
+    summary_reserve_minutes: number;
+    target_mastery: number;
+  } | null;
   answer?: string;
   observed_at?: string | null;
   learner_note?: string | null;

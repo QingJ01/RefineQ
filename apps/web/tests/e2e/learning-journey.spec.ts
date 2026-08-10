@@ -14,16 +14,13 @@ const python = process.env.REFINEQ_PYTHON ?? (
 const adminEmail = `admin-e2e-${Date.now()}@example.com`;
 const adminPassword = "correct-horse-battery-staple";
 
-async function completeInitialDiagnostic(page: Page) {
-  const diagnostic = page.getByTestId("initial-diagnostic");
-  await expect(diagnostic).toBeVisible();
-  await diagnostic.locator("summary").click();
-  const answers = diagnostic.locator('input[value="not-yet"]');
-  for (let index = 0; index < await answers.count(); index += 1) {
-    await answers.nth(index).check();
+async function advanceSessionToPractice(page: Page) {
+  if (await page.getByTestId("session-review-stage").isVisible()) {
+    await page.getByTestId("session-finish-review").click();
   }
-  await page.getByTestId("submit-initial-diagnostic").click();
-  await expect(diagnostic).toBeHidden();
+  await expect(page.getByTestId("session-learning-stage")).toBeVisible();
+  await page.getByTestId("session-start-task").click();
+  await expect(page.getByTestId("session-practice-stage")).toBeVisible();
 }
 
 test.beforeAll(() => {
@@ -72,9 +69,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     .fill("Computer Architecture midterm on October 25, 90 minutes a day, starting with pipelines and caches");
   await page.getByTestId("start-learning").click();
 
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await completeInitialDiagnostic(page);
-  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   await expect(page.getByTestId("workspace-route-notice")).toBeVisible();
   await page.getByTestId("workspace-route-notice").getByRole("button").last().click();
   const workspaceTitle = await page.locator(".workspace-switcher > strong").innerText();
@@ -86,7 +81,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       "I want to practice conversational Spanish for my trip on November 15, 30 minutes daily",
     );
     await page.getByTestId("start-learning").click();
-    await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
+    await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
     await expect(page.locator(".workspace-switcher > strong")).not.toHaveText(workspaceTitle);
     const secondWorkspaceUrl = page.url();
     const secondWorkspaceId = new URL(secondWorkspaceUrl).pathname.split("/")[2];
@@ -328,9 +323,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
   });
 
   await test.step("complete two exam-learning tasks", async () => {
-    await page.getByTestId("learning-mode-exam").click();
-    await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+    await advanceSessionToPractice(page);
     await page.screenshot({ path: testInfo.outputPath("exam-learning-practice.png") });
     const firstQuestionId = await page.getByTestId("session-practice-stage").getAttribute("data-question-id");
     expect(firstQuestionId).toBeTruthy();
@@ -407,6 +400,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
     const retryPrompt = await rubric.locator('[data-testid^="attempt-question-"]').innerText();
     await rubric.locator('[data-testid^="retry-attempt-"]').click();
     await expect(page).toHaveURL(/\/today$/);
+    await advanceSessionToPractice(page);
     await expect(page.getByTestId("session-practice-stage")).toContainText(retryPrompt);
   });
 
@@ -421,6 +415,7 @@ test("learner completes and restores a source-grounded exam journey", async ({ p
       ),
     ).toBeVisible();
     await page.getByTestId("nav-today").click();
+    await page.getByTestId("session-coach-disclosure").locator("summary").click();
     await expect(page.locator(".coach-capability-notice")).toBeVisible();
     await expect(page.getByTestId("session-coach-input")).toBeDisabled();
     await expect(page.getByTestId("learning-session-canvas")).toBeVisible();
@@ -921,9 +916,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   );
   await page.getByTestId("start-learning").click();
 
-  await expect(page).toHaveURL(/\/learn\/[^/]+\/today$/);
-  await completeInitialDiagnostic(page);
-  await expect(page.getByTestId("next-action-upload_material")).toBeVisible();
+  await expect(page).toHaveURL(/\/learn\/[^/]+\/materials$/);
   const routeNotice = page.getByTestId("workspace-route-notice");
   if (await routeNotice.isVisible()) await routeNotice.getByRole("button").last().click();
 
@@ -951,12 +944,7 @@ test("mobile learner completes a source-grounded exam loop", async ({ page }, te
   await expect(page.locator(".session-sources")).toContainText(
     "mobile-computer-architecture.txt",
   );
-  await page.getByTestId("learning-mode-exam").click();
-  await expect(page.getByTestId("learning-mode-exam")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(page.getByTestId("session-practice-stage")).toBeVisible();
+  await advanceSessionToPractice(page);
   await page.getByTestId("practice-sources").click();
   await expect(page.getByRole("dialog")).toContainText(
     "mobile-computer-architecture.txt",
