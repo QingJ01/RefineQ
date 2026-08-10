@@ -130,9 +130,7 @@ def test_enabled_mcp_fails_closed_when_bound_account_does_not_exist(tmp_path: Pa
     settings = Settings(
         data_root=tmp_path / "data",
         mcp_enabled=True,
-        mcp_internal_secret=SecretStr(
-            "internal-signing-secret-that-is-long-enough-123456"
-        ),
+        mcp_internal_secret=SecretStr("internal-signing-secret-that-is-long-enough-123456"),
         mcp_account_email="missing@example.com",
         mcp_allowed_hosts="testserver",
         _env_file=None,
@@ -150,10 +148,13 @@ def test_complete_fallback_learning_loop_is_grounded_idempotent_and_resettable(
     app = _app(tmp_path)
     tools = app.state.mcp_tools
     assert app.state.mcp_account.email == MCP_ACCOUNT_EMAIL
-    assert app.state.identity.authenticate(
-        email=MCP_ACCOUNT_EMAIL,
-        password=MCP_ACCOUNT_PASSWORD,
-    ).email == MCP_ACCOUNT_EMAIL
+    assert (
+        app.state.identity.authenticate(
+            email=MCP_ACCOUNT_EMAIL,
+            password=MCP_ACCOUNT_PASSWORD,
+        ).email
+        == MCP_ACCOUNT_EMAIL
+    )
 
     begun = tools.begin_demo(client_run_key="external-evaluator-0001")
     assert begun.simulation is True

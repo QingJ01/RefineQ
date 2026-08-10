@@ -168,10 +168,10 @@ async def test_mcp_gateway_replays_body_then_forwards_client_disconnect() -> Non
         downstream_messages.append(await receive())
         downstream_messages.append(await receive())
 
-    gateway = EvaluationBearerGateway(
+    gateway = AccountBoundMcpGateway(
         streaming_child,
-        secret="s" * 48,
         principal_id="evaluation",
+        account_email="qingj1314@163.com",
         read_limit=10,
         write_limit=10,
         window_seconds=60,
@@ -194,7 +194,7 @@ async def test_mcp_gateway_replays_body_then_forwards_client_disconnect() -> Non
             "type": "http",
             "method": "GET",
             "path": "/mcp",
-            "headers": [(b"authorization", f"Bearer {'s' * 48}".encode())],
+            "headers": [],
             "client": ("127.0.0.1", 1234),
         },
         receive,
@@ -215,10 +215,10 @@ async def test_mcp_gateway_preserves_disconnect_during_partial_body() -> None:
         downstream_messages.append(await receive())
         downstream_messages.append(await asyncio.wait_for(receive(), timeout=0.05))
 
-    gateway = EvaluationBearerGateway(
+    gateway = AccountBoundMcpGateway(
         streaming_child,
-        secret="s" * 48,
         principal_id="evaluation",
+        account_email="qingj1314@163.com",
         read_limit=10,
         write_limit=10,
         window_seconds=60,
@@ -241,7 +241,7 @@ async def test_mcp_gateway_preserves_disconnect_during_partial_body() -> None:
             "type": "http",
             "method": "POST",
             "path": "/mcp",
-            "headers": [(b"authorization", f"Bearer {'s' * 48}".encode())],
+            "headers": [],
             "client": ("127.0.0.1", 1234),
         },
         receive,
