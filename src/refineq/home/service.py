@@ -46,6 +46,7 @@ from refineq.knowledge.index import KnowledgeIndex
 from refineq.learning.models import BKTState, StudyPlan
 from refineq.learning.next_action import select_next_action
 from refineq.learning.service import (
+    DailyCapacityExceededError,
     LearningConflictError,
     LearningService,
     PlanSessionUpdate,
@@ -1544,17 +1545,32 @@ class HomeDispatchService:
         if str(before_record.version) != version:
             raise HomeActionConflictError("Learning plan changed; generate a new preview")
         session_id = proposal.affected_refs[0]
+        is_reschedule = proposal.action_type == "reschedule_session"
         update = PlanSessionUpdate(
             planned_at=(
-                datetime.fromisoformat(str(proposal.after["planned_at"]))
-                if proposal.action_type == "reschedule_session"
-                else None
+                datetime.fromisoformat(str(proposal.after["planned_at"])) if is_reschedule else None
             ),
             minutes=(
                 int(proposal.after["minutes"])
                 if proposal.action_type == "adjust_session_minutes"
                 else None
             ),
+            # The preview already resolved the target instant in the learner's
+            # timezone, so derive the offset from it rather than widening the
+            # confirm contract.
+            timezone_offset_minutes=(
+                int(
+                    datetime.fromisoformat(str(proposal.after["planned_at"]))
+                    .utcoffset()
+                    .total_seconds()
+                    // 60
+                )
+                if is_reschedule and proposal.after.get("planned_at")
+                else 0
+            ),
+            # "Move it to Saturday" must reflow that day rather than dead-end on a
+            # plan whose days are already filled to the budget.
+            displace_on_conflict=is_reschedule,
         )
         try:
             self._learning_service.update_plan_session(
@@ -1564,6 +1580,11 @@ class HomeDispatchService:
                 update,
                 expected_version=before_record.version,
             )
+        except DailyCapacityExceededError:
+            # Budget conflicts carry actionable detail (the full day, the next open
+            # day). Regenerating the preview would fail identically, so surface the
+            # real reason instead of the stale-preview advice.
+            raise
         except LearningConflictError as error:
             raise HomeActionConflictError(
                 "Learning plan changed; generate a new preview"

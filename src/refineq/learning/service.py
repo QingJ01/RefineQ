@@ -317,6 +317,9 @@ class PlanSessionUpdate(BaseModel):
     planned_at: datetime | None = None
     minutes: int | None = Field(default=None, ge=5, le=480)
     timezone_offset_minutes: int = Field(default=0, ge=-840, le=840)
+    # Moving a session to another day reflows that day's pending work instead of
+    # failing, because a generated plan already fills every day to its budget.
+    displace_on_conflict: bool = False
 
 
 class PlanSessionCreate(BaseModel):
@@ -774,6 +777,59 @@ class LearningService:
             },
         )
 
+    @classmethod
+    def _displace_for_move(
+        cls,
+        plan: dict[str, Any],
+        *,
+        target_id: str,
+        new_planned_at: datetime,
+        new_minutes: int,
+        tz_offset_minutes: int,
+    ) -> None:
+        """Make room on the destination day by pushing its pending work later.
+
+        Sessions are displaced one local day at a time, cascading only as far as
+        needed, so the daily budget stays true and no session is silently dropped.
+        """
+
+        daily_minutes = int(plan["daily_minutes"])
+        target_date = _local_date(new_planned_at, tz_offset_minutes)
+
+        def bucket_of(session: dict[str, Any]) -> date:
+            planned_at = session["planned_at"]
+            if isinstance(planned_at, str):
+                planned_at = datetime.fromisoformat(planned_at)
+            return _local_date(planned_at, tz_offset_minutes)
+
+        def pending_on(day: date) -> list[dict[str, Any]]:
+            return [
+                item
+                for item in plan["sessions"]
+                if item.get("id") != target_id
+                and item.get("status") != "completed"
+                and bucket_of(item) == day
+            ]
+
+        day = target_date
+        carried = new_minutes
+        for _ in range(366):
+            occupants = pending_on(day)
+            used = sum(int(item["minutes"]) for item in occupants)
+            if used + carried <= daily_minutes:
+                return
+            # Push the day's latest session forward and re-check the next day.
+            occupants.sort(key=lambda item: str(item["planned_at"]))
+            displaced = occupants[-1]
+            planned_at = displaced["planned_at"]
+            if isinstance(planned_at, str):
+                planned_at = datetime.fromisoformat(planned_at)
+            displaced["planned_at"] = (planned_at + timedelta(days=1)).isoformat()
+            # Only the destination day must also fit the incoming session; the
+            # cascade days just need to fit their own displaced work.
+            day = bucket_of(displaced)
+            carried = 0
+
     def update_plan_session(
         self,
         owner_id: str,
@@ -805,15 +861,36 @@ class LearningService:
                 else:
                     new_planned_at = datetime.fromisoformat(session["planned_at"])
                 new_minutes = payload.minutes if payload.minutes is not None else session["minutes"]
+                moving_day = payload.planned_at is not None and _local_date(
+                    new_planned_at, payload.timezone_offset_minutes
+                ) != _local_date(
+                    datetime.fromisoformat(session["planned_at"]),
+                    payload.timezone_offset_minutes,
+                )
                 if new_status != "completed":
-                    self._assert_daily_capacity(
-                        plan["sessions"],
-                        target_id=session_id,
-                        new_planned_at=new_planned_at,
-                        new_minutes=new_minutes,
-                        daily_minutes=plan["daily_minutes"],
-                        tz_offset_minutes=payload.timezone_offset_minutes,
-                    )
+                    if moving_day and payload.displace_on_conflict:
+                        # Moving a session onto a day is a *move*, not an addition:
+                        # a generated plan already fills every day to the budget, so
+                        # requiring free space would make "move it to Saturday"
+                        # permanently impossible. Push the day's existing pending
+                        # work back to keep the budget true without dead-ending the
+                        # learner.
+                        self._displace_for_move(
+                            plan,
+                            target_id=session_id,
+                            new_planned_at=new_planned_at,
+                            new_minutes=new_minutes,
+                            tz_offset_minutes=payload.timezone_offset_minutes,
+                        )
+                    else:
+                        self._assert_daily_capacity(
+                            plan["sessions"],
+                            target_id=session_id,
+                            new_planned_at=new_planned_at,
+                            new_minutes=new_minutes,
+                            daily_minutes=plan["daily_minutes"],
+                            tz_offset_minutes=payload.timezone_offset_minutes,
+                        )
                 if payload.status is not None:
                     session["status"] = payload.status
                 if payload.planned_at is not None:
